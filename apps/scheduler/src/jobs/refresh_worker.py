@@ -181,7 +181,9 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
                 "ci": p["check_in"], "n": p["nights"], "m": p["meal"], "rm": p["room"],
                 "ad": 2, "dc": "",
                 "puah": p["uah"], "porig": p["usd"], "cur": "USD", "fx": fx,
-                "dl": f"{deep_link_base}?systemKey={p['sk']}",
+                # `?q=` is the farvater-internal booking-preselect param.
+                # See snapshot_farvater for the discovery trail.
+                "dl": f"{deep_link_base}?q={p['sk']}",
                 "raw": json.dumps({
                     "systemKey": p["sk"],
                     "source": "live_refresh",

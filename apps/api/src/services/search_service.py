@@ -167,7 +167,12 @@ async def search_hotels(
             h.stars           AS stars,
             h.destination_id  AS destination_id,
             px.effective_price AS min_price_uah,
-            h.review_score    AS review_score
+            h.review_score    AS review_score,
+            -- Search-result cards need a thumbnail; without one the grid
+            -- looks broken. We pull the whole jsonb (small — usually
+            -- 1 object × ~150 bytes) so the frontend can pick whichever
+            -- index it wants. Empty array = no photo, render placeholder.
+            COALESCE(h.photos_jsonb, '[]'::jsonb) AS photos
         FROM hotels h
         LEFT JOIN destinations d ON d.id = h.destination_id
         {join_clause}
@@ -198,6 +203,9 @@ async def search_hotels(
             review_score=(
                 float(row["review_score"]) if row["review_score"] is not None else None
             ),
+            # asyncpg already decoded the jsonb → Python list; defensive
+            # coalesce in case a future driver returns None instead.
+            photos=list(row["photos"] or []),
         )
         for row in rows
     ]

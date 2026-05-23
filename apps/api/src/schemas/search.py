@@ -26,6 +26,11 @@ class SearchResultItem(BaseModel):
     destination_id: int | None
     min_price_uah: int | None = None
     review_score: float | None = None
+    # Thumbnail for the search-result card. Returned as the full photos_jsonb
+    # list so the frontend can render whichever index it wants (currently
+    # picks [0]). Defaults to an empty list rather than None to keep the
+    # consumer's Array.map() unguarded — far fewer null-checks downstream.
+    photos: list[dict] = []
 
 
 class PaginatedSearchResults(BaseModel):
