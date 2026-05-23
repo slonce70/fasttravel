@@ -124,3 +124,26 @@ export interface SearchParams {
   limit?: number;
   offset?: number;
 }
+
+/** apps/api/src/schemas/destination.py :: RegionOut */
+export interface RegionOut {
+  id: number;
+  region_slug: string;
+  name_uk: string;
+  name_en: string | null;
+  hotel_count: number;
+}
+
+/** apps/api/src/schemas/destination.py :: CountryOut
+ *  A country with its regions and hotel counts. Drives the country selector
+ *  and statically-generated /destinations/[country] pages.
+ */
+export interface CountryOut {
+  id: number;
+  country_iso2: string;
+  country_slug: string;
+  name_uk: string;
+  name_en: string | null;
+  hotel_count: number;
+  regions: RegionOut[];
+}

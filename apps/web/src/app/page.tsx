@@ -1,11 +1,11 @@
 import Link from 'next/link';
 import { Suspense } from 'react';
-import { fetchDeals } from '@/lib/api-client';
+import { fetchDeals, fetchDestinations } from '@/lib/api-client';
 import { Container } from '@/components/layout/Container';
 import { SearchForm } from '@/components/SearchForm';
 import { DealCard } from '@/components/DealCard';
 import { TelegramCta } from '@/components/TelegramCta';
-import type { Deal } from '@/lib/types';
+import type { CountryOut, Deal } from '@/lib/types';
 
 // Revalidate every 10 min — featured deals refresh hourly on the backend.
 export const revalidate = 600;
@@ -20,8 +20,19 @@ async function getFeaturedDeals(): Promise<Deal[]> {
   }
 }
 
+async function getCountries(): Promise<CountryOut[]> {
+  try {
+    return await fetchDestinations({ revalidate: 3600 });
+  } catch {
+    return [];
+  }
+}
+
 export default async function HomePage() {
-  const deals = await getFeaturedDeals();
+  const [deals, countries] = await Promise.all([
+    getFeaturedDeals(),
+    getCountries(),
+  ]);
 
   return (
     <div className="flex flex-col gap-12 pb-12">
@@ -29,17 +40,17 @@ export default async function HomePage() {
       <section className="bg-gradient-to-br from-brand-700 via-brand-800 to-brand-900 pb-12 pt-12 text-white">
         <Container>
           <h1 className="text-3xl font-bold leading-tight text-balance sm:text-5xl">
-            Календар цін на тури в&nbsp;Туреччину
+            Календар цін на тури
           </h1>
           <p className="mt-3 max-w-2xl text-sm text-brand-100 sm:text-lg">
-            Дивись як змінюється ціна тура по днях у одній сітці. Знаходь дні зі
-            знижкою -20% і більше — і одразу йди до оператора.
+            Знаходь дні зі знижкою на курортах України, Туреччини, Єгипту, ОАЕ,
+            Греції та ще десятка напрямків — у єдиній сітці цін.
           </p>
           <div className="mt-6 sm:mt-8">
             {/* useSearchParams() inside SearchForm requires Suspense in Next 15
                 — otherwise the page is forced to dynamic and ISR is lost. */}
             <Suspense fallback={<div className="h-44 rounded-2xl bg-white/10" />}>
-              <SearchForm />
+              <SearchForm countries={countries} />
             </Suspense>
           </div>
         </Container>

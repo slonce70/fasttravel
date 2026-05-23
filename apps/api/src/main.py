@@ -29,6 +29,7 @@ from src.infra.db import dispose_engine
 from src.infra.logging import configure_logging, get_logger
 from src.infra.sentry import configure_sentry
 from src.routers import deals as deals_router
+from src.routers import destinations as destinations_router
 from src.routers import health as health_router
 from src.routers import hotels as hotels_router
 from src.routers import search as search_router
@@ -105,6 +106,7 @@ def create_app() -> FastAPI:
     app.include_router(hotels_router.router)
     app.include_router(search_router.router)
     app.include_router(deals_router.router)
+    app.include_router(destinations_router.router)
 
     # /metrics — Prometheus scrape target.
     Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)

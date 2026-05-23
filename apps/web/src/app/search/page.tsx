@@ -3,8 +3,8 @@ import { Suspense } from 'react';
 import { Container } from '@/components/layout/Container';
 import { HotelCard } from '@/components/HotelCard';
 import { SearchForm } from '@/components/SearchForm';
-import { searchHotels } from '@/lib/api-client';
-import type { SearchParams } from '@/lib/types';
+import { fetchDestinations, searchHotels } from '@/lib/api-client';
+import type { CountryOut, SearchParams } from '@/lib/types';
 
 export const metadata: Metadata = {
   title: 'Пошук турів',
@@ -36,6 +36,37 @@ function toApiParams(sp: RouteSearchParams): SearchParams {
   };
 }
 
+function accusativeCountry(name: string): string {
+  // Same map as SearchForm — duplicated to keep both pure. Tiny enough that
+  // moving to a shared lib would cost more than it's worth.
+  const map: Record<string, string> = {
+    Туреччина: 'Туреччину',
+    Єгипет: 'Єгипет',
+    'ОАЕ': 'ОАЕ',
+    Греція: 'Грецію',
+    Іспанія: 'Іспанію',
+    Болгарія: 'Болгарію',
+    Чорногорія: 'Чорногорію',
+    Хорватія: 'Хорватію',
+    Кіпр: 'Кіпр',
+    Таїланд: 'Таїланд',
+    Мальдіви: 'Мальдіви',
+    Італія: 'Італію',
+    Туніс: 'Туніс',
+    'Домініканська Республіка': 'Домініканську Республіку',
+    Україна: 'Україну',
+  };
+  return map[name] ?? name;
+}
+
+async function getCountries(): Promise<CountryOut[]> {
+  try {
+    return await fetchDestinations({ revalidate: 3600 });
+  } catch {
+    return [];
+  }
+}
+
 export default async function SearchPage({
   searchParams,
 }: {
@@ -44,19 +75,36 @@ export default async function SearchPage({
   const sp = await searchParams;
   const params = toApiParams(sp);
 
-  let results;
-  let error: string | null = null;
-  try {
-    results = await searchHotels(params);
-  } catch (e) {
-    error = e instanceof Error ? e.message : 'Невідома помилка';
-    results = { items: [], total: 0, limit: 20, offset: 0 };
-  }
+  const [countries, searchResult] = await Promise.all([
+    getCountries(),
+    (async () => {
+      try {
+        return { ok: true as const, value: await searchHotels(params) };
+      } catch (e) {
+        return {
+          ok: false as const,
+          error: e instanceof Error ? e.message : 'Невідома помилка',
+        };
+      }
+    })(),
+  ]);
+
+  const results = searchResult.ok
+    ? searchResult.value
+    : { items: [], total: 0, limit: 20, offset: 0 };
+  const error = searchResult.ok ? null : searchResult.error;
+
+  const selectedCountry = params.country
+    ? countries.find((c) => c.country_iso2.toUpperCase() === params.country)
+    : undefined;
+  const heading = selectedCountry
+    ? `Тури в ${accusativeCountry(selectedCountry.name_uk)}`
+    : 'Усі тури';
 
   return (
     <Container className="space-y-6 py-8">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Пошук турів</h1>
+        <h1 className="text-2xl font-bold text-slate-900">{heading}</h1>
         <p className="mt-1 text-sm text-slate-500">
           {error
             ? 'Не вдалося завантажити результати.'
@@ -65,7 +113,11 @@ export default async function SearchPage({
       </div>
 
       <Suspense fallback={<div className="h-44 rounded-2xl bg-white" />}>
-        <SearchForm defaultExpanded />
+        <SearchForm
+          defaultExpanded
+          countries={countries}
+          defaultCountry={params.country}
+        />
       </Suspense>
 
       {error ? (
