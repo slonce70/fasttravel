@@ -158,10 +158,24 @@ _BOILERPLATE_SUBSTRINGS = (
     "гіпермаркет турів",
 )
 
-# "5* - Греція", "3* - Таїланд", "4* в Туреччині" — the title cleaner
+# Titles like "5* - Греція", "APP - Таїланд", "VILLA - Кіпр". The cleaner
 # strips brand prefixes too aggressively on apartment/villa pages, leaving
-# just the rating + country. Bounce these to the URL-slug fallback.
-_RATING_ONLY_TITLE_RE = re.compile(r"^[1-5]\*\s*[-—]?\s*[А-ЯҐЄІЇа-яґєії]+$")
+# just the rating/type + country. Bounce these to the URL-slug fallback.
+_PROPERTY_TYPE_WORDS = (
+    "app", "hotel", "hostel", "host", "villa", "apt", "resort",
+    "guesthouse", "motel", "gh", "hut", "bnb", "h/h",
+)
+_RATING_ONLY_TITLE_RE = re.compile(
+    r"^(?:[1-5]\*|" + "|".join(re.escape(w) for w in _PROPERTY_TYPE_WORDS) + r")"
+    r"\s*[-—]?\s*[А-ЯҐЄІЇа-яґєії]+$",
+    re.IGNORECASE,
+)
+# After the separator-splitter strips " - Country", we can end up with
+# bare property-type words ("VILLA", "APP"). Treat those as boilerplate too.
+_BARE_PROPERTY_TYPE_RE = re.compile(
+    r"^(?:" + "|".join(re.escape(w) for w in _PROPERTY_TYPE_WORDS) + r")$",
+    re.IGNORECASE,
+)
 
 
 def _looks_like_farvater_boilerplate(value: str) -> bool:
@@ -175,7 +189,10 @@ def _looks_like_farvater_boilerplate(value: str) -> bool:
         or normalized.endswith("farvater travel")
     ):
         return True
-    if _RATING_ONLY_TITLE_RE.match(value.strip()):
+    stripped = value.strip()
+    if _RATING_ONLY_TITLE_RE.match(stripped):
+        return True
+    if _BARE_PROPERTY_TYPE_RE.match(stripped):
         return True
     return any(s in normalized for s in _BOILERPLATE_SUBSTRINGS)
 
