@@ -44,43 +44,60 @@ _WARM_SQL = text(
         hotel_id, operator_id, check_in, nights, meal_plan,
         price_uah, baseline_p50, discount_pct, deep_link, source
     )
-    SELECT
-        cp.hotel_id,
-        cp.operator_id,
-        cp.check_in,
-        cp.nights,
-        cp.meal_plan,
-        cp.price_uah,
-        pb.p50,
-        ROUND(100 * (1 - cp.price_uah::numeric / pb.p50), 2) AS discount_pct,
-        cp.deep_link,
-        -- Tag the deal's provenance so the Telegram broadcast can filter
-        -- (migration 004). farvater deep-links are unmistakable; anything
-        -- else is either synthetic seed (NULL stays NULL → broadcast
-        -- skips) or a future operator (handled then).
-        CASE
-            WHEN cp.deep_link LIKE '%farvater.travel%' THEN 'farvater_scrape'
-            ELSE NULL
-        END AS source
-    FROM current_prices cp
-    JOIN price_baselines pb
-        ON  pb.hotel_id        = cp.hotel_id
-        AND pb.nights          = cp.nights
-        AND pb.meal_plan       = cp.meal_plan
-        AND pb.check_in_month  = EXTRACT(MONTH FROM cp.check_in)::int
-    WHERE cp.price_uah < pb.p15
-      AND cp.price_uah < pb.p50 * 0.85
-      AND (pb.p50 - cp.price_uah) >= 2000
-      AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
-                          AND CURRENT_DATE + INTERVAL '90 days'
-      AND pb.observation_count >= 10
-      AND NOT EXISTS (
-          SELECT 1
-          FROM deals d
-          WHERE d.hotel_id   = cp.hotel_id
-            AND d.detected_at >= NOW() - make_interval(hours => :cooldown_hours)
-      )
-    ORDER BY ROUND(100 * (1 - cp.price_uah::numeric / pb.p50), 2) DESC
+    -- DISTINCT ON (hotel_id) collapses per-hotel candidates to the single
+    -- highest-discount row. Without it the NOT EXISTS sub-query — which
+    -- can't see rows being inserted in the same statement — lets the same
+    -- hotel produce N deals (one per qualifying check_in/nights/meal).
+    SELECT DISTINCT ON (cand.hotel_id)
+        cand.hotel_id,
+        cand.operator_id,
+        cand.check_in,
+        cand.nights,
+        cand.meal_plan,
+        cand.price_uah,
+        cand.p50,
+        cand.discount_pct,
+        cand.deep_link,
+        cand.source
+    FROM (
+        SELECT
+            cp.hotel_id,
+            cp.operator_id,
+            cp.check_in,
+            cp.nights,
+            cp.meal_plan,
+            cp.price_uah,
+            pb.p50,
+            ROUND(100 * (1 - cp.price_uah::numeric / pb.p50), 2) AS discount_pct,
+            cp.deep_link,
+            -- Tag the deal's provenance so the Telegram broadcast can filter
+            -- (migration 004). farvater deep-links are unmistakable; anything
+            -- else is either synthetic seed (NULL stays NULL → broadcast
+            -- skips) or a future operator (handled then).
+            CASE
+                WHEN cp.deep_link LIKE '%farvater.travel%' THEN 'farvater_scrape'
+                ELSE NULL
+            END AS source
+        FROM current_prices cp
+        JOIN price_baselines pb
+            ON  pb.hotel_id        = cp.hotel_id
+            AND pb.nights          = cp.nights
+            AND pb.meal_plan       = cp.meal_plan
+            AND pb.check_in_month  = EXTRACT(MONTH FROM cp.check_in)::int
+        WHERE cp.price_uah < pb.p15
+          AND cp.price_uah < pb.p50 * 0.85
+          AND (pb.p50 - cp.price_uah) >= 2000
+          AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
+                              AND CURRENT_DATE + INTERVAL '90 days'
+          AND pb.observation_count >= 10
+          AND NOT EXISTS (
+              SELECT 1
+              FROM deals d
+              WHERE d.hotel_id   = cp.hotel_id
+                AND d.detected_at >= NOW() - make_interval(hours => :cooldown_hours)
+          )
+    ) cand
+    ORDER BY cand.hotel_id, cand.discount_pct DESC
     LIMIT :max_per_run
     RETURNING id, hotel_id, discount_pct
     """
@@ -114,39 +131,46 @@ _COLD_START_SQL = text(
         hotel_id, operator_id, check_in, nights, meal_plan,
         price_uah, baseline_p50, discount_pct, deep_link, source
     )
-    SELECT
-        cp.hotel_id,
-        cp.operator_id,
-        cp.check_in,
-        cp.nights,
-        cp.meal_plan,
-        cp.price_uah,
-        pa.avg_price AS baseline_p50,
-        ROUND(100 * (1 - cp.price_uah::numeric / pa.avg_price), 2) AS discount_pct,
-        cp.deep_link,
-        -- See _WARM_SQL above for the rationale.
-        CASE
-            WHEN cp.deep_link LIKE '%farvater.travel%' THEN 'farvater_scrape'
-            ELSE NULL
-        END AS source
-    FROM current_prices cp
-    JOIN hotels h    ON h.id = cp.hotel_id AND h.is_active
-    JOIN peer_avg pa ON pa.nights = cp.nights
-                    AND pa.meal_plan = cp.meal_plan
-                    AND pa.stars_bucket  = COALESCE(h.stars, 0)
-                    AND pa.destination_id = h.destination_id
-    WHERE cp.price_uah < pa.avg_price * 0.70
-      -- Removed absolute 25 000 UAH cap — Maldives/UAE baseline is much
-      -- higher and we want luxury deals through too.
-      AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
-                          AND CURRENT_DATE + INTERVAL '90 days'
-      AND NOT EXISTS (
-          SELECT 1
-          FROM deals d
-          WHERE d.hotel_id   = cp.hotel_id
-            AND d.detected_at >= NOW() - make_interval(hours => :cooldown_hours)
-      )
-    ORDER BY ROUND(100 * (1 - cp.price_uah::numeric / pa.avg_price), 2) DESC
+    -- DISTINCT ON (hotel_id): same cooldown-within-batch issue as warm mode —
+    -- without it the cold-start rule emits one row per qualifying check_in.
+    SELECT DISTINCT ON (cand.hotel_id)
+        cand.hotel_id, cand.operator_id, cand.check_in, cand.nights, cand.meal_plan,
+        cand.price_uah, cand.baseline_p50, cand.discount_pct, cand.deep_link, cand.source
+    FROM (
+        SELECT
+            cp.hotel_id,
+            cp.operator_id,
+            cp.check_in,
+            cp.nights,
+            cp.meal_plan,
+            cp.price_uah,
+            pa.avg_price AS baseline_p50,
+            ROUND(100 * (1 - cp.price_uah::numeric / pa.avg_price), 2) AS discount_pct,
+            cp.deep_link,
+            -- See _WARM_SQL above for the rationale.
+            CASE
+                WHEN cp.deep_link LIKE '%farvater.travel%' THEN 'farvater_scrape'
+                ELSE NULL
+            END AS source
+        FROM current_prices cp
+        JOIN hotels h    ON h.id = cp.hotel_id AND h.is_active
+        JOIN peer_avg pa ON pa.nights = cp.nights
+                        AND pa.meal_plan = cp.meal_plan
+                        AND pa.stars_bucket  = COALESCE(h.stars, 0)
+                        AND pa.destination_id = h.destination_id
+        WHERE cp.price_uah < pa.avg_price * 0.70
+          -- Removed absolute 25 000 UAH cap — Maldives/UAE baseline is much
+          -- higher and we want luxury deals through too.
+          AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
+                              AND CURRENT_DATE + INTERVAL '90 days'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM deals d
+              WHERE d.hotel_id   = cp.hotel_id
+                AND d.detected_at >= NOW() - make_interval(hours => :cooldown_hours)
+          )
+    ) cand
+    ORDER BY cand.hotel_id, cand.discount_pct DESC
     LIMIT :max_per_run
     RETURNING id, hotel_id, discount_pct
     """
