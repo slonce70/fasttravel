@@ -127,8 +127,17 @@ async def search_hotels(
     # Common WHERE fragments. We use CAST(:x AS TYPE) IS NULL so asyncpg
     # can infer parameter types when the filter is absent (same pattern
     # used in calendar_service.get_offers).
+    #
+    # `has_active_prices` filter: only surface hotels that have at least one
+    # recent (≤14d) price observation. After the synthetic-data purge we
+    # have ~652 fv-* hotels in the catalog but only ~148 have prices today;
+    # showing the empty ones in search results creates a "ghost catalog"
+    # experience (cards with no min_price_uah, dead-ends on click). The
+    # catalog snapshot job keeps `last_seen_at` fresh; the price snapshot
+    # job flips `has_active_prices` true/false. Search trusts that flag.
     base_where = """
         h.is_active = true
+        AND h.has_active_prices = true
         AND (CAST(:country AS CHAR(2)) IS NULL
              OR d.country_iso2 = CAST(:country AS CHAR(2)))
         AND (CAST(:stars_min AS INTEGER) IS NULL

@@ -69,6 +69,12 @@ def _row_to_dealout(row) -> DealOut:  # type: ignore[no-untyped-def]
     )
 
 
+# Whitelist of provenances that may be shown publicly. Mirrors the
+# filter applied by post_deals (Telegram broadcast). Anything outside
+# this set — synthetic seeds, legacy NULL — stays internal.
+_REAL_DEAL_SOURCES = ("farvater_scrape", "live_refresh", "ittour")
+
+
 async def list_deals(
     session: AsyncSession,
     country_iso2: str | None = None,
@@ -79,6 +85,10 @@ async def list_deals(
         select(*_select_deal_columns())
         .join(Hotel, Hotel.id == Deal.hotel_id)
         .outerjoin(Destination, Destination.id == Hotel.destination_id)
+        # Public-only: hide synthetic / legacy deals. Same predicate the
+        # Telegram broadcaster uses, so the UI feed and the channel
+        # stay in sync.
+        .where(Deal.source.in_(_REAL_DEAL_SOURCES))
     )
     if country_iso2:
         # When filtering by country we need destination to exist + match,

@@ -48,4 +48,10 @@ class Deal(Base):
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     telegram_msg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
+    # Provenance — added in migration 004. Used by the public /api/deals
+    # endpoint and the Telegram broadcaster to hide synthetic / demo rows.
+    # Real values today: 'farvater_scrape', 'live_refresh', 'ittour'.
+    # NULL = legacy / unknown → treated as non-real and filtered out.
+    source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     operator: Mapped["Operator"] = relationship(back_populates="deals")
