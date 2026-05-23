@@ -89,7 +89,11 @@ _WARM_SQL = text(
           AND (pb.p50 - cp.price_uah) >= 2000
           AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
                               AND CURRENT_DATE + INTERVAL '90 days'
-          AND pb.observation_count >= 10
+          -- Warm threshold relaxed from 10 → 5: the price_baselines MV
+      -- carries genuine farvater observations now (no synthetic seed),
+      -- so 5 same-month-same-meal-same-nights points already form a
+      -- usable median for the per-hotel signal.
+      AND pb.observation_count >= 5
           AND NOT EXISTS (
               SELECT 1
               FROM deals d
@@ -111,13 +115,22 @@ _WARM_SQL = text(
 # meaningful downstream. discount_pct uses the same formula.
 _COLD_START_SQL = text(
     """
-    WITH peer_avg AS (
+    -- Peer stats per (nights, meal, stars, destination) bucket. We compute
+    -- both the median (p50) and a robust spread (p25..p75) so the deal
+    -- threshold can scale with each bucket's natural price variance — a
+    -- single overpriced 5* villa shouldn't bend an Aegean-Bay 3* avg.
+    --
+    -- COUNT(*) >= 5 keeps the bucket statistically usable. Below that the
+    -- median is just a single arbitrary row.
+    WITH peer_stats AS (
         SELECT
             cp.nights,
             cp.meal_plan,                          -- group by meal so BB doesn't undercut AI
             COALESCE(h.stars, 0) AS stars_bucket,  -- 0 = "unknown" (e.g. villas)
             h.destination_id,
-            AVG(cp.price_uah)::int AS avg_price
+            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cp.price_uah)::int  AS p50,
+            PERCENTILE_CONT(0.15) WITHIN GROUP (ORDER BY cp.price_uah)::int AS p15,
+            COUNT(*)                                                         AS sample_n
         FROM current_prices cp
         JOIN hotels h ON h.id = cp.hotel_id
         WHERE h.is_active
@@ -125,7 +138,7 @@ _COLD_START_SQL = text(
           AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
                               AND CURRENT_DATE + INTERVAL '90 days'
         GROUP BY cp.nights, cp.meal_plan, COALESCE(h.stars, 0), h.destination_id
-        HAVING COUNT(*) >= 3
+        HAVING COUNT(*) >= 5
     )
     INSERT INTO deals (
         hotel_id, operator_id, check_in, nights, meal_plan,
@@ -144,8 +157,8 @@ _COLD_START_SQL = text(
             cp.nights,
             cp.meal_plan,
             cp.price_uah,
-            pa.avg_price AS baseline_p50,
-            ROUND(100 * (1 - cp.price_uah::numeric / pa.avg_price), 2) AS discount_pct,
+            ps.p50 AS baseline_p50,
+            ROUND(100 * (1 - cp.price_uah::numeric / ps.p50), 2) AS discount_pct,
             cp.deep_link,
             -- See _WARM_SQL above for the rationale.
             CASE
@@ -153,14 +166,21 @@ _COLD_START_SQL = text(
                 ELSE NULL
             END AS source
         FROM current_prices cp
-        JOIN hotels h    ON h.id = cp.hotel_id AND h.is_active
-        JOIN peer_avg pa ON pa.nights = cp.nights
-                        AND pa.meal_plan = cp.meal_plan
-                        AND pa.stars_bucket  = COALESCE(h.stars, 0)
-                        AND pa.destination_id = h.destination_id
-        WHERE cp.price_uah < pa.avg_price * 0.70
-          -- Removed absolute 25 000 UAH cap — Maldives/UAE baseline is much
-          -- higher and we want luxury deals through too.
+        JOIN hotels h     ON h.id = cp.hotel_id AND h.is_active
+        JOIN peer_stats ps ON ps.nights = cp.nights
+                          AND ps.meal_plan = cp.meal_plan
+                          AND ps.stars_bucket = COALESCE(h.stars, 0)
+                          AND ps.destination_id = h.destination_id
+        WHERE
+          -- Two stacked conditions — must beat BOTH:
+          --   1. p15  → "lower than the cheapest 15% of peers"
+          --   2. p50 × 0.75 → "at least 25% below the median"
+          -- Stacking them filters out cases where p15 ≈ p50 (tight
+          -- peer group with one outlier dragging it down).
+          cp.price_uah <= ps.p15
+          AND cp.price_uah < ps.p50 * 0.75
+          -- Absolute headroom so we don't show "-30% on a 1200 UAH bus tour".
+          AND (ps.p50 - cp.price_uah) >= 3000
           AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
                               AND CURRENT_DATE + INTERVAL '90 days'
           AND NOT EXISTS (
@@ -213,6 +233,17 @@ async def detect_deals(
 ) -> int:
     """Insert new deals based on current prices vs. baselines.
 
+    Hybrid execution (default):
+      1. Warm SQL runs first — uses each hotel's own price history. These
+         are the most trustworthy deals because the baseline is the hotel's
+         own median, not a peer-group estimate that may be biased.
+      2. Cold SQL fills the remainder of `max_per_run` with peer-comparison
+         deals. The shared cooldown table prevents the same hotel from
+         showing up in both modes.
+
+    The Redis `flag:cold_start` toggle still forces cold-only behaviour
+    (legacy bootstrap mode for empty databases).
+
     Args:
         cooldown_hours: how long to suppress repeat deals per hotel.
         max_per_run: cap inserts per tick.
@@ -220,16 +251,36 @@ async def detect_deals(
 
     Returns: number of new deals inserted.
     """
-    cold = force_cold_start if force_cold_start is not None else await _is_cold_start_mode()
-    mode = "cold_start" if cold else "warm"
+    cold_only = (
+        force_cold_start
+        if force_cold_start is not None
+        else await _is_cold_start_mode()
+    )
 
     async with async_session_factory() as db:
         try:
-            inserted = await _run_query(
-                db,
-                cold_start=cold,
-                cooldown_hours=cooldown_hours,
-                max_per_run=max_per_run,
+            warm_rows: list[tuple[int, int, float]] = []
+            if not cold_only:
+                # Try warm first — capped at max_per_run so cold can fill.
+                warm_rows = await _run_query(
+                    db,
+                    cold_start=False,
+                    cooldown_hours=cooldown_hours,
+                    max_per_run=max_per_run,
+                )
+            cold_budget = max_per_run - len(warm_rows)
+            cold_rows: list[tuple[int, int, float]] = []
+            if cold_budget > 0:
+                cold_rows = await _run_query(
+                    db,
+                    cold_start=True,
+                    cooldown_hours=cooldown_hours,
+                    max_per_run=cold_budget,
+                )
+            inserted = warm_rows + cold_rows
+            mode = (
+                "cold_only" if cold_only
+                else f"hybrid(warm={len(warm_rows)},cold={len(cold_rows)})"
             )
         except Exception:
             await db.rollback()
