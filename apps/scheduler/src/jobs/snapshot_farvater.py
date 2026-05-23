@@ -158,6 +158,11 @@ _BOILERPLATE_SUBSTRINGS = (
     "гіпермаркет турів",
 )
 
+# "5* - Греція", "3* - Таїланд", "4* в Туреччині" — the title cleaner
+# strips brand prefixes too aggressively on apartment/villa pages, leaving
+# just the rating + country. Bounce these to the URL-slug fallback.
+_RATING_ONLY_TITLE_RE = re.compile(r"^[1-5]\*\s*[-—]?\s*[А-ЯҐЄІЇа-яґєії]+$")
+
 
 def _looks_like_farvater_boilerplate(value: str) -> bool:
     normalized = value.strip().lower()
@@ -169,6 +174,8 @@ def _looks_like_farvater_boilerplate(value: str) -> bool:
         or normalized.startswith("від farvater")
         or normalized.endswith("farvater travel")
     ):
+        return True
+    if _RATING_ONLY_TITLE_RE.match(value.strip()):
         return True
     return any(s in normalized for s in _BOILERPLATE_SUBSTRINGS)
 
@@ -323,6 +330,64 @@ async def _list_country_hotels(client: httpx.AsyncClient,
             seen.add(path)
             out.append(path)
     return out
+
+
+# Sitemap index — has 9 hotel-page shards × ~50k URLs each ≈ 420k total.
+# The /uk/hotelscatalog/strana-X/ page only exposes farvater's curated
+# top ~67 per country, so the sitemap is the only way to reach the long tail.
+SITEMAP_INDEX_URL = "https://farvater.travel/sitemap.xml"
+_SHARD_RE = re.compile(r"<loc>(https://farvater\.travel/[^<]*sitemap-hotelpages-\d+\.xml)</loc>")
+_HOTEL_LOC_RE = re.compile(
+    r"<loc>https://farvater\.travel(/uk/hotel/([a-z]{2,3})/[a-z0-9-]+/)</loc>",
+    re.IGNORECASE,
+)
+
+
+async def _list_sitemap_hotels(
+    client: httpx.AsyncClient, iso2_filter: set[str] | None = None,
+) -> dict[str, list[str]]:
+    """Return `{iso2: [url_path, ...]}` from farvater's hotelpages sitemap.
+
+    Pass `iso2_filter` (uppercase) to keep only countries you care about.
+    The sitemap holds ~420k URLs across 9 shards; without a filter you'll
+    cap RAM somewhere awful and burn an afternoon. Defaults to *all* — the
+    caller must opt out explicitly.
+    """
+    idx = await client.get(
+        SITEMAP_INDEX_URL,
+        headers={"User-Agent": USER_AGENT},
+        timeout=30,
+    )
+    idx.raise_for_status()
+    shards = _SHARD_RE.findall(idx.text)
+    log.info("farvater.sitemap.shards_found", count=len(shards))
+
+    by_iso: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for shard_url in shards:
+        try:
+            r = await client.get(
+                shard_url,
+                headers={"User-Agent": USER_AGENT},
+                timeout=60,
+            )
+            r.raise_for_status()
+        except Exception as exc:
+            log.warning("farvater.sitemap.shard_failed", url=shard_url, error=str(exc))
+            continue
+        added = 0
+        for m in _HOTEL_LOC_RE.finditer(r.text):
+            path, iso = m.group(1), m.group(2).upper()
+            if iso2_filter and iso not in iso2_filter:
+                continue
+            if path in seen:
+                continue
+            seen.add(path)
+            by_iso.setdefault(iso, []).append(path)
+            added += 1
+        log.info("farvater.sitemap.shard_done", url=shard_url, kept=added,
+                 cumulative=len(seen))
+    return by_iso
 
 
 async def _fetch_hotel_meta(client: httpx.AsyncClient, url_path: str,
