@@ -23,9 +23,23 @@ type RouteSearchParams = {
   meal_plan?: string;
   price_max?: string;
   stars_min?: string;
+  // #28: pax composition. Backend ignores these for now (MV doesn't index by
+  // pax); we pass them through so the future ittour adapter — which DOES
+  // honour pax — gets them for free without another schema change.
+  adults?: string;
+  kids?: string; // comma-separated ages: "5,7,9"
   limit?: string;
   offset?: string;
 };
+
+function parseKids(raw: string | undefined): number[] | undefined {
+  if (!raw) return undefined;
+  const ages = raw
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n >= 1 && n <= 17);
+  return ages.length > 0 ? ages : undefined;
+}
 
 function toApiParams(sp: RouteSearchParams): SearchParams {
   return {
@@ -35,6 +49,8 @@ function toApiParams(sp: RouteSearchParams): SearchParams {
     meal_plan: sp.meal_plan || undefined,
     price_max: sp.price_max ? Number(sp.price_max) : undefined,
     stars_min: sp.stars_min ? Number(sp.stars_min) : undefined,
+    adults: sp.adults ? Number(sp.adults) : undefined,
+    kids: parseKids(sp.kids),
     limit: sp.limit ? Number(sp.limit) : 20,
     offset: sp.offset ? Number(sp.offset) : 0,
   };
@@ -117,11 +133,7 @@ export default async function SearchPage({
       </div>
 
       <Suspense fallback={<div className="h-44 rounded-2xl bg-white" />}>
-        <SearchForm
-          defaultExpanded
-          countries={countries}
-          defaultCountry={params.country}
-        />
+        <SearchForm countries={countries} defaultCountry={params.country} />
       </Suspense>
 
       {error ? (

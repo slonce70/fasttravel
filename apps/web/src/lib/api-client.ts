@@ -191,7 +191,16 @@ export async function searchHotels(
 ): Promise<PaginatedSearchResults> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+    if (v === undefined || v === null || v === '') continue;
+    // Arrays (e.g. `kids: [5,7,9]`) → "5,7,9". Backend currently ignores
+    // pax params (see #28 comment in SearchParams); the future ittour
+    // adapter will parse them. Empty arrays are skipped to keep URLs clean.
+    if (Array.isArray(v)) {
+      if (v.length === 0) continue;
+      qs.set(k, v.join(','));
+    } else {
+      qs.set(k, String(v));
+    }
   }
   const path = qs.toString() ? `/api/search?${qs.toString()}` : '/api/search';
   return apiFetch<PaginatedSearchResults>(path, opts);

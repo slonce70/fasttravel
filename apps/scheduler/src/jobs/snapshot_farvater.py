@@ -292,6 +292,11 @@ async def _country_dest_id(db: AsyncSession, iso2: str) -> int | None:
 
 async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
                         dest_id: int | None) -> int:
+    """Upsert one hotel and stamp `last_seen_at = NOW()` — this is the
+    catalog-freshness heartbeat that both `snapshot_catalog_farvater` and
+    `snapshot_farvater` share. `last_priced_at` / `has_active_prices` are
+    bumped separately by `_mark_priced` only when new prices land.
+    """
     slug = _make_slug(hotel.country_iso2, hotel.url_path)
     existing = (await db.execute(
         text("SELECT id FROM hotels WHERE canonical_slug = :s"),
@@ -307,6 +312,7 @@ async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
                         photos_jsonb = CAST(:p AS jsonb),
                         description_uk = :d,
                         stars = COALESCE(:stars, stars),
+                        last_seen_at = NOW(),
                         last_updated = NOW()
                     WHERE id = :id"""),
             {
@@ -326,14 +332,53 @@ async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
         text("""INSERT INTO hotels (
                   canonical_slug, name_uk, name_en, stars, destination_id,
                   description_uk, photos_jsonb, amenities, review_score,
-                  review_count, is_active, last_updated)
+                  review_count, is_active, last_seen_at, last_updated)
                 VALUES (:slug, :n, :n, :stars, :dest, :d, CAST(:p AS jsonb),
-                        '{}', NULL, 0, TRUE, NOW())
+                        '{}', NULL, 0, TRUE, NOW(), NOW())
                 RETURNING id"""),
         {"slug": slug, "n": hotel.name, "stars": hotel.stars, "dest": dest_id,
          "d": hotel.description, "p": photos},
     )).first()
     return row[0]
+
+
+async def _mark_priced(db: AsyncSession, hotel_db_id: int) -> None:
+    """Flip a hotel into the live-priced cohort.
+
+    Called only when `_insert_prices` actually wrote new rows — runs that
+    fetched and dedup'd to zero shouldn't claim the hotel has fresh
+    prices. Keeps `has_active_prices` honest as a search-time gate.
+    """
+    await db.execute(
+        text("""UPDATE hotels
+                SET last_priced_at = NOW(),
+                    has_active_prices = TRUE
+                WHERE id = :id"""),
+        {"id": hotel_db_id},
+    )
+
+
+async def _decay_active_prices(db: AsyncSession,
+                               stale_after_days: int = 7) -> int:
+    """Flip hotels back to `has_active_prices = FALSE` once their
+    `last_priced_at` ages past the threshold. Returns the number of
+    hotels demoted in this pass.
+
+    Runs at the tail of `snapshot_farvater` so the search gate stays in
+    sync without needing a separate cleanup job. `last_seen_at` is left
+    alone — the hotel still exists in the catalog; only its price
+    freshness is in question.
+    """
+    res = await db.execute(
+        text("""UPDATE hotels
+                SET has_active_prices = FALSE
+                WHERE has_active_prices = TRUE
+                  AND (last_priced_at IS NULL
+                       OR last_priced_at < NOW()
+                          - make_interval(days => :d))"""),
+        {"d": stale_after_days},
+    )
+    return res.rowcount or 0
 
 
 async def _upsert_mapping(db: AsyncSession, hotel_db_id: int,
@@ -457,6 +502,10 @@ async def _process_hotel(
         hotel_db_id = await _upsert_hotel(db, meta, dest_id)
         await _upsert_mapping(db, hotel_db_id, operator_id, meta)
         inserted = await _insert_prices(db, hotel_db_id, operator_id, meta, all_prices)
+        # Only flip the live-prices flag when we actually wrote new rows.
+        # A dedup-only pass shouldn't pretend the hotel is fresh-priced.
+        if inserted > 0:
+            await _mark_priced(db, hotel_db_id)
         await db.commit()
     log.info("farvater.hotel.done", hotel=meta.name[:60],
              hotel_key=meta.hotel_id, calendar=len(all_prices),
@@ -519,6 +568,16 @@ async def snapshot_farvater(*, max_hotels_per_country: int | None = None) -> int
                         "price_baselines"):
                 await db.execute(text(f"REFRESH MATERIALIZED VIEW {mv}"))
             await db.commit()
+
+        # Decay the search gate for hotels that stopped surfacing prices.
+        # Run after the MV refresh so the cohort the next /search hits is
+        # consistent with the freshly written observations.
+        async with async_session_factory() as db:
+            decayed = await _decay_active_prices(db)
+            await db.commit()
+        log.info("farvater.snapshot.decayed",
+                 hotels_demoted=decayed,
+                 threshold_days=7)
 
         async with async_session_factory() as db:
             await _record_run(db, operator_id, "success", total_inserted,

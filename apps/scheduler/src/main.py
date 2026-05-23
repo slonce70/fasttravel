@@ -1,11 +1,18 @@
 """Scheduler entrypoint — wires AsyncIOScheduler to all periodic jobs.
 
 Schedule (Europe/Kyiv):
-- snapshot_stub        — 06:00 / 18:00 (price ingest placeholder until clients ship)
-- refresh_views        — hourly at :05
-- detect_deals         — hourly at :10
-- post_deals           — every 15 min
-- cleanup_partitions   — daily at 03:00
+- snapshot_stub             — 04:00 (price ingest placeholder until clients ship)
+- snapshot_catalog_farvater — 03:00 (P1-1: catalog HTML-only daily crawl)
+- snapshot_farvater         — 06:00 / 18:00 (full catalog+price snapshot)
+- snapshot_hot              — hourly :30 (P1-3: top-N viewed → refresh queue)
+- refresh_views             — hourly :05
+- detect_deals              — hourly :10
+- post_deals                — every 15 min
+- cleanup_partitions        — daily at 03:00 (NB: shares slot with catalog;
+                              both are idempotent and partman is cheap)
+
+Plus a long-running async task:
+- refresh_worker_loop       — drains `refresh:queue` via BRPOP (P1-4)
 
 Single-process for MVP. When the workload grows we split each job into
 its own container (or move heavy ingest jobs to a dedicated worker pool).
@@ -27,7 +34,10 @@ from src.jobs import (
     detect_deals,
     post_deals,
     refresh_views,
+    refresh_worker_loop,
+    snapshot_catalog_farvater,
     snapshot_farvater,
+    snapshot_hot,
     snapshot_stub,
 )
 
@@ -56,6 +66,15 @@ def _build_scheduler() -> AsyncIOScheduler:
         id="snapshot_farvater",
         name="snapshot_farvater (06:00 + 18:00 Kyiv)",
     )
+    # Catalog-only HTML refresh — runs daily before the price job, keeps
+    # `hotels.last_seen_at` fresh across the whole catalog without paying
+    # for per-hotel price calendar POSTs.
+    scheduler.add_job(
+        snapshot_catalog_farvater,
+        CronTrigger(hour=3, minute=0, timezone=TIMEZONE),
+        id="snapshot_catalog_farvater",
+        name="snapshot_catalog_farvater (daily 03:00 Kyiv)",
+    )
     scheduler.add_job(
         snapshot_stub,
         CronTrigger(hour=4, minute=0, timezone=TIMEZONE),
@@ -75,6 +94,15 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(minute=10, timezone=TIMEZONE),
         id="detect_deals",
         name="detect_deals (hourly :10)",
+    )
+    # Hot-priority sweep — runs at :30 so it doesn't collide with the
+    # MV refresh (:05) or the deal detector (:10). Pushes top-N viewed
+    # hotels onto `refresh:queue` for the worker to drain.
+    scheduler.add_job(
+        snapshot_hot,
+        CronTrigger(minute=30, timezone=TIMEZONE),
+        id="snapshot_hot",
+        name="snapshot_hot (hourly :30)",
     )
     scheduler.add_job(
         post_deals,
@@ -102,6 +130,13 @@ async def main() -> None:
     jobs = [(j.id, str(j.next_run_time)) for j in scheduler.get_jobs()]
     log.info("scheduler.started", timezone=TIMEZONE, jobs=jobs)
 
+    # Spawn the persistent refresh worker (P1-4). It's not a cron job —
+    # it BRPOPs `refresh:queue` continuously so user-triggered refreshes
+    # survive an API restart and don't depend on FastAPI's BackgroundTasks.
+    worker_task = asyncio.create_task(
+        refresh_worker_loop(), name="refresh_worker_loop"
+    )
+
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -111,6 +146,14 @@ async def main() -> None:
         await stop_event.wait()
     finally:
         log.info("scheduler.stopping")
+        # Cancel the worker first so an in-flight BRPOP unblocks cleanly
+        # before we tear down the scheduler.
+        worker_task.cancel()
+        try:
+            await worker_task
+        except (asyncio.CancelledError, Exception) as exc:  # noqa: BLE001
+            if not isinstance(exc, asyncio.CancelledError):
+                log.warning("refresh_worker.shutdown_error", error=str(exc))
         scheduler.shutdown(wait=False)
         log.info("scheduler.stopped")
 

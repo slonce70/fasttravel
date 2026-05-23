@@ -79,6 +79,14 @@ _SELECT_UNPOSTED = text(
     LEFT JOIN destinations country ON country.id = region.parent_id
     JOIN operators o            ON o.id = d.operator_id
     WHERE d.posted_at IS NULL
+      -- migration 004 added `source`. NULL = synthetic seed (demo data)
+      -- and must NEVER be broadcast — those would mis-advertise prices
+      -- that don't exist. Real ingest paths set source explicitly:
+      --   'farvater_scrape'  — twice-daily snapshot
+      --   'live_refresh'     — on-demand /api/hotels/{id}/refresh
+      --   'ittour'           — direct partner API (future)
+      AND d.source IS NOT NULL
+      AND d.source IN ('farvater_scrape', 'live_refresh', 'ittour')
     ORDER BY d.detected_at DESC
     LIMIT :lim
     """
