@@ -141,6 +141,14 @@ export interface SearchParams {
   meal_plan?: string;
   price_max?: number;
   stars_min?: number;
+  /**
+   * #28 pax composition. Adults defaults to 2 in the form; kids is an array
+   * of ages (1-17) — length is the kid count. Backend currently ignores
+   * these (the MV pre-aggregates one canonical pax); the future ittour
+   * adapter will honour them.
+   */
+  adults?: number;
+  kids?: number[];
   limit?: number;
   offset?: number;
 }

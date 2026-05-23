@@ -3,7 +3,10 @@ from src.jobs.cleanup_partitions import cleanup_partitions
 from src.jobs.detect_deals import detect_deals
 from src.jobs.post_deals import post_deals
 from src.jobs.refresh_views import refresh_views
+from src.jobs.refresh_worker import refresh_worker_loop
+from src.jobs.snapshot_catalog_farvater import snapshot_catalog_farvater
 from src.jobs.snapshot_farvater import snapshot_farvater
+from src.jobs.snapshot_hot import snapshot_hot
 from src.jobs.snapshot_stub import snapshot_stub
 
 __all__ = [
@@ -11,6 +14,9 @@ __all__ = [
     "detect_deals",
     "post_deals",
     "refresh_views",
+    "refresh_worker_loop",
+    "snapshot_catalog_farvater",
     "snapshot_farvater",
+    "snapshot_hot",
     "snapshot_stub",
 ]

@@ -42,7 +42,7 @@ _WARM_SQL = text(
     """
     INSERT INTO deals (
         hotel_id, operator_id, check_in, nights, meal_plan,
-        price_uah, baseline_p50, discount_pct, deep_link
+        price_uah, baseline_p50, discount_pct, deep_link, source
     )
     SELECT
         cp.hotel_id,
@@ -53,7 +53,15 @@ _WARM_SQL = text(
         cp.price_uah,
         pb.p50,
         ROUND(100 * (1 - cp.price_uah::numeric / pb.p50), 2) AS discount_pct,
-        cp.deep_link
+        cp.deep_link,
+        -- Tag the deal's provenance so the Telegram broadcast can filter
+        -- (migration 004). farvater deep-links are unmistakable; anything
+        -- else is either synthetic seed (NULL stays NULL → broadcast
+        -- skips) or a future operator (handled then).
+        CASE
+            WHEN cp.deep_link LIKE '%farvater.travel%' THEN 'farvater_scrape'
+            ELSE NULL
+        END AS source
     FROM current_prices cp
     JOIN price_baselines pb
         ON  pb.hotel_id        = cp.hotel_id
@@ -104,7 +112,7 @@ _COLD_START_SQL = text(
     )
     INSERT INTO deals (
         hotel_id, operator_id, check_in, nights, meal_plan,
-        price_uah, baseline_p50, discount_pct, deep_link
+        price_uah, baseline_p50, discount_pct, deep_link, source
     )
     SELECT
         cp.hotel_id,
@@ -115,7 +123,12 @@ _COLD_START_SQL = text(
         cp.price_uah,
         pa.avg_price AS baseline_p50,
         ROUND(100 * (1 - cp.price_uah::numeric / pa.avg_price), 2) AS discount_pct,
-        cp.deep_link
+        cp.deep_link,
+        -- See _WARM_SQL above for the rationale.
+        CASE
+            WHEN cp.deep_link LIKE '%farvater.travel%' THEN 'farvater_scrape'
+            ELSE NULL
+        END AS source
     FROM current_prices cp
     JOIN hotels h    ON h.id = cp.hotel_id AND h.is_active
     JOIN peer_avg pa ON pa.nights = cp.nights

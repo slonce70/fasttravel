@@ -8,10 +8,11 @@ resolve slug -> id via GET /api/hotels/{slug} and reuse the id thereafter.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
-from datetime import date
+from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +33,16 @@ router = APIRouter(prefix="/api/hotels", tags=["hotels"])
 # a flash crowd, and keeps response time predictable.
 REFRESH_MIN_INTERVAL_S = 300  # 5 min
 
+# Hot-priority signal. Each calendar view bumps `hot:hotel:{id}` with a
+# 24h TTL — the scheduler's `snapshot_hot` job reads these counters
+# hourly to decide which hotels to re-fetch ahead of schedule. TTL keeps
+# the set self-cleaning so stale interest decays naturally.
+HOT_KEY_TTL_S = 86400
+# Persistent refresh queue. `POST /refresh` LPUSHes here; the scheduler's
+# `refresh_worker_loop` BRPOPs. Survives API restarts (which FastAPI's
+# `BackgroundTasks` did not).
+REFRESH_QUEUE_KEY = "refresh:queue"
+
 
 @router.get("/{slug}", response_model=HotelOut)
 async def get_hotel(slug: str, session: AsyncSession = Depends(get_db)) -> HotelOut:
@@ -41,6 +52,21 @@ async def get_hotel(slug: str, session: AsyncSession = Depends(get_db)) -> Hotel
     if hotel is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="hotel not found")
     return HotelOut.model_validate(hotel)
+
+
+async def _bump_hot_counter(hotel_id: int) -> None:
+    """Fire-and-forget INCR on `hot:hotel:{id}` with a sliding 24h TTL.
+
+    Failures are swallowed — Redis being down must not break the calendar
+    response. The hot-priority pass is best-effort by design.
+    """
+    try:
+        redis = get_redis()
+        key = f"hot:hotel:{hotel_id}"
+        await redis.incr(key)
+        await redis.expire(key, HOT_KEY_TTL_S)
+    except Exception as exc:  # noqa: BLE001 — telemetry only
+        log.debug("hot_counter.bump_failed", hotel_id=hotel_id, error=str(exc))
 
 
 @router.get("/{hotel_id}/calendar", response_model=list[CalendarDay])
@@ -58,6 +84,9 @@ async def hotel_calendar(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="`to` must be >= `from`")
     if (to_date - from_date).days > 180:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="window too wide (max 180 days)")
+    # Record interest *before* the read so a slow DB query still earns
+    # the hotel its hot-priority score for the next sweep.
+    asyncio.create_task(_bump_hot_counter(hotel_id))
     return await get_calendar(session, hotel_id, from_date, to_date, meal_plan=meal_plan)
 
 
@@ -215,18 +244,22 @@ async def _refresh_one_hotel(hotel_id: int, farvater_key: str) -> None:
 @router.post("/{hotel_id}/refresh", response_model=RefreshResponse)
 async def trigger_refresh(
     hotel_id: int,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ) -> RefreshResponse:
-    """Stale-while-revalidate: queue a background live-price fetch.
+    """Stale-while-revalidate: enqueue a background live-price fetch.
 
     Returns immediately with `queued=true` so the client can render cached
     data without waiting. UI is expected to re-query the calendar after
     ~`eta_seconds`.
 
     Rate-limited per hotel via Redis. Two requests within 5 minutes for the
-    same hotel collapse to one background job — the second caller gets
+    same hotel collapse to one queued job — the second caller gets
     `queued=false` and current cached data is already fresh enough.
+
+    Job is pushed onto the persistent Redis list `refresh:queue` and
+    drained by `apps/scheduler/src/jobs/refresh_worker.py` — so a
+    refresh survives the API process restarting (unlike the previous
+    in-process `BackgroundTasks` implementation).
     """
     # Sanity check the hotel exists, and grab its farvater mapping if any.
     row = (await session.execute(
@@ -262,5 +295,23 @@ async def trigger_refresh(
         return RefreshResponse(queued=False, eta_seconds=0,
                                 reason="recently_refreshed")
 
-    background.add_task(_refresh_one_hotel, hotel_id, str(farvater_key))
+    payload = json.dumps({
+        "hotel_id": hotel_id,
+        "farvater_key": str(farvater_key),
+        "requested_at": datetime.now(UTC).isoformat(),
+        "trigger": "user",
+    })
+    try:
+        await redis.lpush(REFRESH_QUEUE_KEY, payload)
+    except Exception as exc:  # noqa: BLE001 — drop lock so user can retry
+        log.error("refresh.enqueue_failed", hotel_id=hotel_id, error=str(exc))
+        try:
+            await redis.delete(cache_key)
+        except Exception:  # noqa: BLE001
+            pass
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="refresh queue unavailable",
+        ) from exc
+
     return RefreshResponse(queued=True, eta_seconds=10)
