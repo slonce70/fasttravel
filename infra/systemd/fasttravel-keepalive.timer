@@ -1,0 +1,16 @@
+# ============================================================================
+# Fires keepalive every hour at :07 (offset to avoid contention with the
+# top-of-hour refresh job in APScheduler).
+# ============================================================================
+[Unit]
+Description=Hourly FastTravel keepalive
+Requires=fasttravel-keepalive.service
+
+[Timer]
+OnCalendar=*-*-* *:07:00
+Persistent=true
+AccuracySec=1min
+Unit=fasttravel-keepalive.service
+
+[Install]
+WantedBy=timers.target

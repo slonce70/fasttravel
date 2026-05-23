@@ -1,0 +1,100 @@
+# Nightly sitemap regeneration.
+#
+# Flow (target / not yet implemented end-to-end):
+#   1. SSH to VPS, run the sitemap generator inside the api container.
+#   2. Pick up sitemap.xml from the runner, push it to the R2 bucket that
+#      Cloudflare Pages serves from (or to the Pages project directly).
+#   3. (Optional) Ping Google / IndexNow.
+#
+# MVP placeholder: we stand up the trigger + secrets gate so the schedule is
+# in place. Real implementation lands when apps/api/scripts/generate_sitemap.py
+# exists and the R2/Pages destination is decided.
+# TODO(devops): wire the SSH + rclone steps once:
+#   - apps/api/scripts/generate_sitemap.py is implemented, OR
+#   - the api exposes POST /api/admin/sitemap/regenerate with admin auth.
+
+name: Nightly Sitemap
+
+on:
+  schedule:
+    # 02:00 UTC = 04:00 Europe/Kyiv (summer). Off-peak.
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-sitemap
+  cancel-in-progress: false
+
+jobs:
+  sitemap:
+    name: regenerate + upload sitemap
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+      DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_SITEMAP_BUCKET: ${{ secrets.R2_SITEMAP_BUCKET }}
+
+    steps:
+      - name: Gate — skip when VPS / R2 secrets missing
+        id: gate
+        run: |
+          if [ -z "${DEPLOY_SSH_HOST}" ] || [ -z "${R2_ACCOUNT_ID}" ] || [ -z "${R2_SITEMAP_BUCKET}" ]; then
+            echo "Skipping: deploy/R2 secrets not configured (local-first phase)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Placeholder — print TODO
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          echo "==> Sitemap regeneration not yet implemented."
+          echo "    Implement apps/api/scripts/generate_sitemap.py, then update this workflow"
+          echo "    to ssh + run it and rclone the output to r2:${R2_SITEMAP_BUCKET}/sitemap.xml."
+
+      # ---------------------------------------------------------------------
+      # Real implementation (uncomment when the script / endpoint lands):
+      # ---------------------------------------------------------------------
+      # - name: Configure SSH
+      #   if: steps.gate.outputs.skip != 'true'
+      #   run: |
+      #     mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      #     echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_sitemap
+      #     chmod 600 ~/.ssh/id_sitemap
+      #     ssh-keyscan -H "${DEPLOY_SSH_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+      #
+      # - name: Generate sitemap on VPS and pull it down
+      #   if: steps.gate.outputs.skip != 'true'
+      #   run: |
+      #     ssh -i ~/.ssh/id_sitemap "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" \
+      #       "cd /opt/fasttravel && docker compose exec -T api \
+      #          python -m scripts.generate_sitemap > /tmp/sitemap.xml"
+      #     scp -i ~/.ssh/id_sitemap \
+      #       "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}:/tmp/sitemap.xml" ./sitemap.xml
+      #
+      # - name: Upload to R2
+      #   if: steps.gate.outputs.skip != 'true'
+      #   run: |
+      #     curl -fsSL https://rclone.org/install.sh | sudo bash
+      #     mkdir -p ~/.config/rclone
+      #     cat > ~/.config/rclone/rclone.conf <<EOF
+      #     [r2]
+      #     type = s3
+      #     provider = Cloudflare
+      #     access_key_id = ${R2_ACCESS_KEY_ID}
+      #     secret_access_key = ${R2_SECRET_ACCESS_KEY}
+      #     endpoint = https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+      #     EOF
+      #     rclone copyto ./sitemap.xml "r2:${R2_SITEMAP_BUCKET}/sitemap.xml" \
+      #       --s3-no-check-bucket
+      #
+      # - name: Ping Google (optional)
+      #   if: steps.gate.outputs.skip != 'true'
+      #   continue-on-error: true
+      #   run: |
+      #     curl -fsS "https://www.google.com/ping?sitemap=https://fasttravel.com.ua/sitemap.xml"

@@ -1,0 +1,12 @@
+name = "fasttravel-web"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".vercel/output/static"
+
+# Production (custom domain set up in Cloudflare Pages dashboard).
+[env.production.vars]
+NEXT_PUBLIC_API_URL = "https://api.fasttravel.com.ua"
+
+# Preview deploys (PR branches).
+[env.preview.vars]
+NEXT_PUBLIC_API_URL = "https://staging-api.fasttravel.com.ua"

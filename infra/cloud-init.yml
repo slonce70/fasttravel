@@ -1,0 +1,199 @@
+#cloud-config
+# ============================================================================
+# FastTravel — Oracle Cloud VM bootstrap.
+# Idempotent: re-running this (or cloud-init clean + reboot) does not break
+# anything; every shell command checks before mutating.
+#
+# Installs: Docker CE, docker compose plugin, nginx, certbot, fail2ban,
+# ufw, base CLI tools. Hardens SSH (key-only, no root). Pre-pulls images.
+# Creates a 4 GB swap file and a non-root `fasttravel` user with sudo.
+# Sets timezone to Europe/Kyiv (so systemd OnCalendar uses local time).
+# ============================================================================
+
+timezone: Europe/Kyiv
+locale: en_US.UTF-8
+
+# --- Users ------------------------------------------------------------------
+users:
+  - default
+  - name: fasttravel
+    gecos: FastTravel app user
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: [sudo, docker]
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys: []   # populated below from the ubuntu user keys
+
+# --- Packages (base set; Docker is added later via official script) ---------
+package_update: true
+package_upgrade: true
+package_reboot_if_required: true
+
+packages:
+  - ca-certificates
+  - curl
+  - wget
+  - gnupg
+  - lsb-release
+  - apt-transport-https
+  - software-properties-common
+  - nginx
+  - libnginx-mod-http-brotli   # brotli module — without this the nginx conf won't start
+  - certbot
+  - python3-certbot-nginx
+  - fail2ban
+  - ufw
+  - htop
+  - vim
+  - tmux
+  - jq
+  - git
+  - unzip
+  - tzdata
+
+# --- Swap (4 GB) ------------------------------------------------------------
+swap:
+  filename: /swapfile
+  size: 4G
+  maxsize: 4G
+
+# --- Files ------------------------------------------------------------------
+write_files:
+
+  # SSH hardening drop-in. Keeps default port 22 — change to 22022 if desired,
+  # but remember to also update: ufw rule (below), OCI security list, fail2ban jail.
+  - path: /etc/ssh/sshd_config.d/99-fasttravel.conf
+    permissions: "0644"
+    owner: root:root
+    content: |
+      # FastTravel SSH hardening
+      PasswordAuthentication no
+      ChallengeResponseAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      PubkeyAuthentication yes
+      MaxAuthTries 3
+      LoginGraceTime 30
+      ClientAliveInterval 300
+      ClientAliveCountMax 2
+      # Uncomment to move SSH to 22022 (also update ufw, OCI security list, fail2ban):
+      # Port 22022
+
+  # fail2ban jail for SSH.
+  - path: /etc/fail2ban/jail.d/sshd.local
+    permissions: "0644"
+    owner: root:root
+    content: |
+      [sshd]
+      enabled  = true
+      port     = ssh
+      logpath  = %(sshd_log)s
+      backend  = systemd
+      maxretry = 4
+      findtime = 10m
+      bantime  = 1h
+
+  # ufw post-rules: explicit DENY all not covered by allow.
+  - path: /etc/ufw/applications.d/fasttravel
+    permissions: "0644"
+    content: |
+      [FastTravel-Web]
+      title=FastTravel HTTP/HTTPS
+      description=Reverse proxy to FastAPI
+      ports=80,443/tcp
+
+  # Health-check + auto-restart of the docker-compose stack.
+  # Idempotent — only restarts when /health is unreachable.
+  - path: /usr/local/bin/fasttravel-healthcheck.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      # If the FastAPI health endpoint is unreachable for 3 retries (5s each),
+      # restart the docker-compose stack.
+      set -u
+      url="http://127.0.0.1:8000/health"
+      ok=0
+      for _ in 1 2 3; do
+        if curl -fsS --max-time 5 "$url" >/dev/null 2>&1; then
+          ok=1
+          break
+        fi
+        sleep 5
+      done
+      if [ "$ok" -eq 0 ]; then
+        logger -t fasttravel-healthcheck "API unhealthy, restarting docker-compose stack"
+        systemctl restart fasttravel-stack.service || true
+      fi
+
+  # Marker file so we can tell at a glance whether cloud-init completed.
+  - path: /etc/fasttravel-bootstrap.version
+    permissions: "0644"
+    content: |
+      bootstrap=2026-05-23-v1
+      reapply_safe=yes
+
+# --- Run commands (ordered, idempotent) -------------------------------------
+runcmd:
+
+  # 1) Mirror the ubuntu user's SSH keys onto the fasttravel user so they can
+  #    log in directly without going through `sudo -u`.
+  - |
+    if [ -f /home/ubuntu/.ssh/authorized_keys ] && [ ! -s /home/fasttravel/.ssh/authorized_keys ]; then
+      install -d -m 700 -o fasttravel -g fasttravel /home/fasttravel/.ssh
+      install -m 600 -o fasttravel -g fasttravel \
+        /home/ubuntu/.ssh/authorized_keys /home/fasttravel/.ssh/authorized_keys
+    fi
+
+  # 2) Install Docker CE + compose plugin via official script (idempotent — the
+  #    script checks if docker is already present).
+  - |
+    if ! command -v docker >/dev/null 2>&1; then
+      curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+      sh /tmp/get-docker.sh
+      rm -f /tmp/get-docker.sh
+    fi
+  - systemctl enable --now docker
+  - usermod -aG docker fasttravel || true
+  - usermod -aG docker ubuntu     || true
+
+  # 3) Configure ufw (idempotent — `ufw allow` is a no-op if rule exists).
+  - ufw --force reset
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp comment 'SSH'
+  - ufw allow 80/tcp comment 'HTTP'
+  - ufw allow 443/tcp comment 'HTTPS'
+  # - ufw allow 22022/tcp comment 'SSH alt'   # uncomment if you switch to 22022
+  - ufw --force enable
+
+  # 4) Enable & start fail2ban.
+  - systemctl enable --now fail2ban
+
+  # 5) Reload SSH with the hardening drop-in.
+  - sshd -t && systemctl reload ssh
+
+  # 6) Pre-pull Docker images we know we'll need (warm cache, faster first deploy).
+  - docker pull postgres:16-alpine || true
+  - docker pull redis:7-alpine     || true
+  - docker pull nginx:alpine       || true
+
+  # 7) Healthcheck cron — runs every minute as root via system crontab.
+  - |
+    if ! grep -q fasttravel-healthcheck /etc/crontab; then
+      echo '* * * * * root /usr/local/bin/fasttravel-healthcheck.sh' >> /etc/crontab
+    fi
+
+  # 8) Prepare app directory tree (compose file goes here in the deploy step).
+  - install -d -m 755 -o fasttravel -g fasttravel /opt/fasttravel
+  - install -d -m 755 -o fasttravel -g fasttravel /opt/fasttravel/data
+  - install -d -m 755 -o fasttravel -g fasttravel /opt/fasttravel/logs
+
+  # 9) Mark cloud-init complete in a file the runbook can probe.
+  - date -Iseconds > /etc/fasttravel-bootstrap.completed
+
+# --- Final message ----------------------------------------------------------
+final_message: |
+  FastTravel bootstrap finished at $TIMESTAMP after $UPTIME seconds.
+  Next step: SSH in as fasttravel, copy docker-compose.prod.yml + .env to
+  /opt/fasttravel, then `docker compose up -d`.

@@ -1,0 +1,43 @@
+import type { Metadata } from 'next';
+import { Container } from '@/components/layout/Container';
+import { DealsFeed } from './DealsFeed';
+import { fetchDeals } from '@/lib/api-client';
+
+export const metadata: Metadata = {
+  title: 'Гарячі знижки на тури',
+  description: 'Усі знайдені аномалії в цінах на тури в Туреччину.',
+};
+
+// SSR з 5-хв ревалідацією — баланс свіжість/CDN-кеш.
+export const revalidate = 300;
+
+export default async function DealsPage() {
+  let initial;
+  let error: string | null = null;
+  try {
+    initial = await fetchDeals({ limit: 50 }, { revalidate: 300 });
+  } catch (e) {
+    error = e instanceof Error ? e.message : 'Невідома помилка';
+    initial = { items: [], total: 0, limit: 50, offset: 0 };
+  }
+
+  return (
+    <Container className="space-y-6 py-8">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Гарячі знижки</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Усього виявлено {initial.total}{' '}
+          {initial.total === 1 ? 'знижку' : initial.total < 5 ? 'знижки' : 'знижок'}.
+        </p>
+      </div>
+
+      {error ? (
+        <div className="rounded-xl bg-white p-10 text-center text-sm text-danger-600 ring-1 ring-slate-200">
+          Не вдалося завантажити дані: {error}
+        </div>
+      ) : (
+        <DealsFeed initial={initial} />
+      )}
+    </Container>
+  );
+}

@@ -1,0 +1,67 @@
+# Poetry chosen over pip-tools because:
+#   1. It generates a strict lock file (poetry.lock) for reproducible builds.
+#   2. `poetry export -f requirements.txt` plays cleanly with multi-stage
+#      Docker builds (we only need the runtime deps in the final image).
+#   3. Better tooling around dev/test/prod dep groups than pip-tools.
+#   4. Strong AI-agent familiarity — generation quality is high.
+[tool.poetry]
+name = "fasttravel-api"
+version = "0.1.0"
+description = "FastTravel HTTP API — read-only endpoints over hotels / calendar / deals"
+authors = ["FastTravel <hi@fasttravel.com.ua>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = "^0.115.0"
+uvicorn = {extras = ["standard"], version = "^0.32.0"}
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.36"}
+alembic = "^1.13.3"
+asyncpg = "^0.30.0"
+# Sync driver — used only by Alembic for offline mode and by ad-hoc scripts.
+psycopg = {extras = ["binary"], version = "^3.2.3"}
+redis = "^5.2.0"
+pydantic = "^2.9.2"
+pydantic-settings = "^2.6.0"
+structlog = "^24.4.0"
+sentry-sdk = {extras = ["fastapi"], version = "^2.18.0"}
+prometheus-fastapi-instrumentator = "^7.0.0"
+python-multipart = "^0.0.20"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.3"
+pytest-asyncio = "^0.24.0"
+httpx = "^0.27.2"
+ruff = "^0.7.4"
+mypy = "^1.13.0"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+# `slow` marks long-running tests (e.g. tests/test_seed.py) that we skip in CI.
+# Run them locally with `pytest -m slow`.
+markers = [
+    "slow: long-running tests (DB seed, etc.); not run in CI by default",
+]
+# Default: skip slow tests. Override with `pytest -m slow` to run them.
+addopts = "-m 'not slow'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,18 @@
+# Terraform state — contains live infrastructure data, never commit.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Local plan output
+*.tfplan
+
+# Real variables file (secrets live here)
+terraform.tfvars
+*.auto.tfvars
+
+# Local provider cache
+.terraform/
+.terraformrc
+terraform.rc
+
+# Keep the lock file (.terraform.lock.hcl) committed — it pins provider versions.
