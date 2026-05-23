@@ -9,7 +9,11 @@ from __future__ import annotations
 
 
 def test_jobs_importable():
-    """All job entrypoints must import cleanly — catches refactor breakage."""
+    """All job entrypoints must import cleanly — catches refactor breakage.
+
+    `src.jobs.__init__` re-exports the functions themselves (not the
+    modules), so we import them directly and assert they're callable.
+    """
     from src.jobs import (
         cleanup_partitions,
         detect_deals,
@@ -18,12 +22,11 @@ def test_jobs_importable():
         snapshot_stub,
     )
 
-    # Each module must expose an async callable named identically.
-    assert callable(cleanup_partitions.cleanup_partitions)
-    assert callable(detect_deals.detect_deals)
-    assert callable(post_deals.post_deals)
-    assert callable(refresh_views.refresh_views)
-    assert callable(snapshot_stub.snapshot_stub)
+    assert callable(cleanup_partitions)
+    assert callable(detect_deals)
+    assert callable(post_deals)
+    assert callable(refresh_views)
+    assert callable(snapshot_stub)
 
 
 def test_main_module_importable():

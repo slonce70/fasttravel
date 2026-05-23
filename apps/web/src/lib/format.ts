@@ -3,9 +3,10 @@
  * the site is single-locale (uk) so the cost/benefit doesn't justify it yet.
  */
 
+// Use a plain number formatter and append "₴" by hand. Default
+// uk-UA currency symbol flips between "₴" and "грн" depending on the
+// Node.js ICU build, which breaks visual consistency between SSR pages.
 const PRICE_FMT = new Intl.NumberFormat('uk-UA', {
-  style: 'currency',
-  currency: 'UAH',
   maximumFractionDigits: 0,
 });
 
@@ -24,7 +25,7 @@ const DATE_SHORT_FMT = new Intl.DateTimeFormat('uk-UA', {
 /** "22 400 ₴" */
 export function formatPrice(uah: number | null | undefined): string {
   if (uah == null) return '—';
-  return PRICE_FMT.format(uah);
+  return `${PRICE_FMT.format(uah)} ₴`;
 }
 
 /**
