@@ -16,8 +16,11 @@ export const dynamic = 'force-dynamic';
 
 type RouteSearchParams = {
   country?: string;
-  check_in_min?: string;
-  check_in_max?: string;
+  // Phase 2 P0-1: backend now takes a single `check_in` (the day the user
+  // wants to fly out) + `nights` + `meal_plan` rather than a date range.
+  check_in?: string;
+  nights?: string;
+  meal_plan?: string;
   price_max?: string;
   stars_min?: string;
   limit?: string;
@@ -27,8 +30,9 @@ type RouteSearchParams = {
 function toApiParams(sp: RouteSearchParams): SearchParams {
   return {
     country: sp.country?.toUpperCase(),
-    check_in_min: sp.check_in_min || undefined,
-    check_in_max: sp.check_in_max || undefined,
+    check_in: sp.check_in || undefined,
+    nights: sp.nights ? Number(sp.nights) : undefined,
+    meal_plan: sp.meal_plan || undefined,
     price_max: sp.price_max ? Number(sp.price_max) : undefined,
     stars_min: sp.stars_min ? Number(sp.stars_min) : undefined,
     limit: sp.limit ? Number(sp.limit) : 20,

@@ -79,11 +79,13 @@ export interface CalendarParams {
   from: string; // ISO date
   to: string;
   /**
-   * NOTE: the backend `/calendar` endpoint does NOT accept `nights` or
-   * `meal` filters on MVP (see apps/api/src/routers/hotels.py). The response
-   * carries min_7n/min_10n/min_14n columns and the UI picks the right one.
-   * Meal-plan filtering happens only at the offers endpoint.
+   * Optional meal-plan filter forwarded as `?meal=` to the backend (post
+   * migration 002). When omitted the response carries the MIN across all
+   * meal plans for each day. The `nights` selector is still client-side
+   * — the response carries min_7n/min_10n/min_14n columns.
+   * See apps/api/src/services/calendar_service.py.
    */
+  mealPlan?: string;
 }
 
 export async function fetchCalendar(
@@ -91,8 +93,9 @@ export async function fetchCalendar(
   params: CalendarParams,
   opts: FetchOptions = {},
 ): Promise<CalendarDay[]> {
-  const qs = new URLSearchParams({ from: params.from, to: params.to }).toString();
-  return apiFetch<CalendarDay[]>(`/api/hotels/${hotelId}/calendar?${qs}`, opts);
+  const qs = new URLSearchParams({ from: params.from, to: params.to });
+  if (params.mealPlan) qs.set('meal', params.mealPlan);
+  return apiFetch<CalendarDay[]>(`/api/hotels/${hotelId}/calendar?${qs.toString()}`, opts);
 }
 
 export interface OffersParams {

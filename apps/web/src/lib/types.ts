@@ -54,11 +54,14 @@ export interface Hotel {
 }
 
 /** apps/api/src/schemas/calendar.py :: CalendarDay
- *  One row per (hotel, check_in_date) with min-price buckets for each
- *  nights duration. UI selects which bucket to render from `nights` prop.
+ *  One row per (hotel, check_in_date[, meal_plan]) with min-price buckets
+ *  for each nights duration. UI selects which bucket to render from the
+ *  `nights` prop. `meal_plan` echoes the `?meal=` filter when supplied;
+ *  null when the backend re-aggregated across plans.
  */
 export interface CalendarDay {
   check_in: string; // ISO date (YYYY-MM-DD)
+  meal_plan: string | null;
   min_price_uah: number | null;
   min_7n: number | null;
   min_10n: number | null;
@@ -130,8 +133,12 @@ export interface PaginatedSearchResults {
 
 export interface SearchParams {
   country?: string;
-  check_in_min?: string;
-  check_in_max?: string;
+  /** ISO date (YYYY-MM-DD) — narrows results to hotels with prices on this day. */
+  check_in?: string;
+  /** Tour duration; 7/10/14 use dedicated MV columns, others fall back to MIN. */
+  nights?: number;
+  /** Meal plan code (`AI`, `HB`, `BB`, ...) — see migration 002. */
+  meal_plan?: string;
   price_max?: number;
   stars_min?: number;
   limit?: number;

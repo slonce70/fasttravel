@@ -48,13 +48,17 @@ async def hotel_calendar(
     hotel_id: int,
     from_date: date = Query(alias="from"),
     to_date: date = Query(alias="to"),
+    # `?meal=AI` narrows the heatmap to one meal-plan; omitted = MIN
+    # across meal plans (backwards-compatible). See migration 002 + the
+    # docstring in calendar_service.get_calendar for the dual-shape rules.
+    meal_plan: str | None = Query(default=None, alias="meal", max_length=16),
     session: AsyncSession = Depends(get_db),
 ) -> list[CalendarDay]:
     if to_date < from_date:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="`to` must be >= `from`")
     if (to_date - from_date).days > 180:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="window too wide (max 180 days)")
-    return await get_calendar(session, hotel_id, from_date, to_date)
+    return await get_calendar(session, hotel_id, from_date, to_date, meal_plan=meal_plan)
 
 
 @router.get("/{hotel_id}/offers", response_model=list[OfferOut])

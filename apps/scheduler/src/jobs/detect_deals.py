@@ -89,17 +89,17 @@ _COLD_START_SQL = text(
     WITH peer_avg AS (
         SELECT
             cp.nights,
-            h.stars,
+            cp.meal_plan,                          -- group by meal so BB doesn't undercut AI
+            COALESCE(h.stars, 0) AS stars_bucket,  -- 0 = "unknown" (e.g. villas)
             h.destination_id,
             AVG(cp.price_uah)::int AS avg_price
         FROM current_prices cp
         JOIN hotels h ON h.id = cp.hotel_id
         WHERE h.is_active
-          AND h.stars IS NOT NULL
           AND h.destination_id IS NOT NULL
           AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
                               AND CURRENT_DATE + INTERVAL '90 days'
-        GROUP BY cp.nights, h.stars, h.destination_id
+        GROUP BY cp.nights, cp.meal_plan, COALESCE(h.stars, 0), h.destination_id
         HAVING COUNT(*) >= 3
     )
     INSERT INTO deals (
@@ -119,10 +119,12 @@ _COLD_START_SQL = text(
     FROM current_prices cp
     JOIN hotels h    ON h.id = cp.hotel_id AND h.is_active
     JOIN peer_avg pa ON pa.nights = cp.nights
-                    AND pa.stars  = h.stars
+                    AND pa.meal_plan = cp.meal_plan
+                    AND pa.stars_bucket  = COALESCE(h.stars, 0)
                     AND pa.destination_id = h.destination_id
     WHERE cp.price_uah < pa.avg_price * 0.70
-      AND cp.price_uah < 25000
+      -- Removed absolute 25 000 UAH cap — Maldives/UAE baseline is much
+      -- higher and we want luxury deals through too.
       AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
                           AND CURRENT_DATE + INTERVAL '90 days'
       AND NOT EXISTS (

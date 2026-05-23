@@ -86,6 +86,18 @@ TITLE_RE = re.compile(r'<title>([^<]+)</title>', re.IGNORECASE)
 DESC_RE = re.compile(r'<meta name="description" content="([^"]+)"', re.IGNORECASE)
 OG_IMG_RE = re.compile(r'<meta property="og:image" content="([^"]+)"', re.IGNORECASE)
 
+# Star rating. Primary signal: JSON-LD `"starRating":{"ratingValue":"N"}`
+# (present on most rated farvater hotels). Fallback: H1/title pattern like
+# `Sunset 3*` / `Pickalbatros Vita Resort - Portofino 5*` — digit must be
+# preceded by whitespace or `-` and immediately followed by `*` to avoid
+# false positives on years / model numbers. Constrained to [1-5] because
+# `hotels.stars` carries `CHECK (stars BETWEEN 1 AND 5)`.
+STAR_JSONLD_RE = re.compile(
+    r'"starRating"\s*:\s*\{[^}]*?"ratingValue"\s*:\s*"?([1-5])"?',
+    re.IGNORECASE,
+)
+STAR_TITLE_RE = re.compile(r'[\s\-]([1-5])\*')
+
 OPERATOR_CODE = "farvater"
 
 
@@ -98,6 +110,7 @@ class HotelMeta:
     country_iso2: str
     photo_url: str
     description: str
+    stars: int | None      # 1..5 when extractable; None for villas/apartments
 
 
 @dataclass
@@ -132,6 +145,25 @@ def _clean_title(raw: str) -> str:
 def _make_slug(country_iso2: str, url_path: str) -> str:
     tail = url_path.rstrip("/").rsplit("/", 1)[-1]
     return f"fv-{country_iso2.lower()}-{tail}"[:140]
+
+
+def _extract_stars(html: str) -> int | None:
+    """Return 1..5 if a star rating is unambiguous in the page, else None.
+
+    JSON-LD `starRating` is preferred — it's the schema.org canonical and
+    farvater emits it for rated hotels. Falls back to the `N*` suffix in
+    H1/title for hotels where JSON-LD is missing. Apartments / villas
+    legitimately have no rating and return None (the DB column is nullable).
+    """
+    m = STAR_JSONLD_RE.search(html)
+    if m:
+        return int(m.group(1))
+    title = TITLE_RE.search(html)
+    if title:
+        t = STAR_TITLE_RE.search(title.group(1))
+        if t:
+            return int(t.group(1))
+    return None
 
 
 # ── network ──────────────────────────────────────────────────────────────
@@ -176,6 +208,7 @@ async def _fetch_hotel_meta(client: httpx.AsyncClient, url_path: str,
         country_iso2=iso2,
         photo_url=(img_m.group(1) if img_m else "")[:512],
         description=(desc_m.group(1) if desc_m else "")[:1000],
+        stars=_extract_stars(html),
     )
 
 
@@ -265,12 +298,15 @@ async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
         {"s": slug},
     )).first()
     if existing:
-        # Keep clean name + fresh photo/description.
+        # Keep clean name + fresh photo/description. `stars` is COALESCEd so
+        # a one-off regex miss on a future page render never wipes a value
+        # we previously extracted — extraction is monotonic.
         await db.execute(
             text("""UPDATE hotels
                     SET name_uk = :n, name_en = :n,
                         photos_jsonb = CAST(:p AS jsonb),
                         description_uk = :d,
+                        stars = COALESCE(:stars, stars),
                         last_updated = NOW()
                     WHERE id = :id"""),
             {
@@ -278,6 +314,7 @@ async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
                 "p": json.dumps([{"url": hotel.photo_url, "alt": hotel.name}]
                                  if hotel.photo_url else []),
                 "d": hotel.description,
+                "stars": hotel.stars,
             },
         )
         return existing[0]
@@ -290,10 +327,10 @@ async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
                   canonical_slug, name_uk, name_en, stars, destination_id,
                   description_uk, photos_jsonb, amenities, review_score,
                   review_count, is_active, last_updated)
-                VALUES (:slug, :n, :n, NULL, :dest, :d, CAST(:p AS jsonb),
+                VALUES (:slug, :n, :n, :stars, :dest, :d, CAST(:p AS jsonb),
                         '{}', NULL, 0, TRUE, NOW())
                 RETURNING id"""),
-        {"slug": slug, "n": hotel.name, "dest": dest_id,
+        {"slug": slug, "n": hotel.name, "stars": hotel.stars, "dest": dest_id,
          "d": hotel.description, "p": photos},
     )).first()
     return row[0]

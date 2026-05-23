@@ -8,11 +8,13 @@
  * shows the per-night minimum price as a compact label (e.g. "22.4к"). Days
  * flagged as deals get a 🔥 emoji indicator.
  *
- * API contract: GET /api/hotels/{id}/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD
- *   - Backend does NOT filter by nights/mealPlan on this endpoint (it returns
- *     min_7n/min_10n/min_14n columns); we pick the field based on the
- *     `nights` prop. `mealPlan` is reserved for the offers fetch.
- *   - See apps/api/src/routers/hotels.py.
+ * API contract: GET /api/hotels/{id}/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD[&meal=AI]
+ *   - `mealPlan` is forwarded as `?meal=` so the backend narrows the MV to
+ *     that meal-plan (post migration 002). Omitting it returns the
+ *     across-plans MIN per day.
+ *   - `nights` is still client-side: the response carries
+ *     min_7n/min_10n/min_14n columns and we pick the field here.
+ *   - See apps/api/src/routers/hotels.py + services/calendar_service.py.
  */
 
 import { useMemo, useState } from 'react';
@@ -45,7 +47,7 @@ export interface PriceCalendarProps {
 export function PriceCalendar({
   hotelId,
   nights,
-  mealPlan: _mealPlan,
+  mealPlan,
   horizonDays = 90,
   onDateSelect,
 }: PriceCalendarProps) {
@@ -57,9 +59,12 @@ export function PriceCalendar({
   const toIso = isoDate(to);
 
   const { data, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
-    queryKey: ['calendar', hotelId, fromIso, toIso],
+    // mealPlan participates in the queryKey so toggling AI↔HB refetches
+    // (otherwise TanStack would serve the cached AI prices when the user
+    // flips to HB and the heatmap would lie).
+    queryKey: ['calendar', hotelId, fromIso, toIso, mealPlan],
     queryFn: ({ signal }) =>
-      fetchCalendar(hotelId, { from: fromIso, to: toIso }, { signal }),
+      fetchCalendar(hotelId, { from: fromIso, to: toIso, mealPlan }, { signal }),
     // Short staleTime so the on-mount background refresh (HotelView triggers
     // a fresh farvater scrape via POST .../refresh) can pull updated prices
     // into the UI without a hard reload. See #25.
@@ -77,7 +82,7 @@ export function PriceCalendar({
         <h2 className="text-lg font-semibold text-slate-800">
           Календар цін{' '}
           <span className="text-sm font-normal text-slate-500">
-            ({nights} ночей, {_mealPlan})
+            ({nights} ночей, {mealPlan})
           </span>
         </h2>
         <Legend />
