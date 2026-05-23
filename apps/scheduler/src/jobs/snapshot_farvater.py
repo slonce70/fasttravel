@@ -35,6 +35,7 @@ in Europe/Kyiv. A standalone CLI is provided for ad-hoc runs.
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import re
 from contextlib import asynccontextmanager
@@ -126,19 +127,92 @@ class PriceRow:
 
 
 # ── helpers ──────────────────────────────────────────────────────────────
-def _clean_title(raw: str) -> str:
+def _name_from_url_path(url_path: str) -> str:
+    tail = url_path.rstrip("/").rsplit("/", 1)[-1]
+    return " ".join(part.capitalize() for part in tail.split("-") if part)
+
+
+_BOILERPLATE_SUBSTRINGS = (
+    "ціни на відпочинок",
+    "ціна на відпочинок",
+    "замовити тур",
+    "купити тур",
+    "тур в готель",
+    "гіпермаркет турів",
+)
+
+
+def _looks_like_farvater_boilerplate(value: str) -> bool:
+    normalized = value.strip().lower()
+    if (
+        len(normalized) <= 3
+        or normalized in {"- farvater travel", "farvater travel"}
+        or normalized.startswith("-")
+        or normalized.startswith("(ex")
+        or normalized.startswith("від farvater")
+        or normalized.endswith("farvater travel")
+    ):
+        return True
+    return any(s in normalized for s in _BOILERPLATE_SUBSTRINGS)
+
+
+_DESC_BOILERPLATE_MARKERS = (
+    "гіпермаркет турів",
+    "замовити тур",
+    "купити тур",
+    "фарватер",
+    "farvater",
+    "❶ціни",
+    "❶цени",
+    "❷фото",
+    "❸отзиви",
+    "❸відгуки",
+)
+
+
+def _clean_description(raw: str | None) -> str | None:
+    """Drop farvater's meta-description boilerplate.
+
+    The site emits descriptions like
+    "🌴 Готель X 4 ★ в Y - замовити тур в готель X. ❶Цени ❷Фото ❸Отзиви туристів.
+     Гіпермаркет турів №❶ ☛ Фарватер." — useful to no real user.
+
+    Returns the cleaned text or None when the description is just SEO chum.
+    """
+    if not raw:
+        return None
+    text = html.unescape(raw).strip()
+    if not text:
+        return None
+    low = text.lower()
+    boilerplate_hits = sum(1 for m in _DESC_BOILERPLATE_MARKERS if m in low)
+    if boilerplate_hits >= 2:
+        return None
+    return text[:1000]
+
+
+def _clean_title(raw: str, fallback_url_path: str | None = None) -> str:
     """farvater titles look like 'ᐉ Pickalbatros Vita ✈ Ціни ... ☛ Farvater'.
     Pull the hotel-name segment; fall back to the canonical_slug if we strike out.
     """
-    t = re.sub(r'^[ᐉ\s]+', '', raw.strip())
+    # Two unescape passes: HTML rendered with double-escape (&amp;#39;) shows
+    # up occasionally in farvater pages. Idempotent on clean text.
+    t = html.unescape(html.unescape(re.sub(r'^[ᐉ\s]+', '', raw.strip())))
     m = re.search(r'(?:готель|hotel)\s+(.+)', t, re.IGNORECASE)
     if m:
         t = m.group(1)
+    t = re.sub(r'\s*\((?:наприклад|например|example)\b.*$', '', t, flags=re.IGNORECASE)
     for sep in ('✈', '★', '☛', '☆', '·', ' - ', '|', ','):
         i = t.find(sep)
         if i > 3:
             t = t[:i]
     cleaned = t.strip()
+    if not _looks_like_farvater_boilerplate(cleaned):
+        return cleaned
+    if fallback_url_path:
+        fallback = _name_from_url_path(fallback_url_path)
+        if fallback:
+            return fallback
     return cleaned if len(cleaned) > 3 else raw.strip()
 
 
@@ -204,10 +278,10 @@ async def _fetch_hotel_meta(client: httpx.AsyncClient, url_path: str,
     return HotelMeta(
         hotel_id=int(hid.group(1)),
         url_path=url_path.rstrip("/"),
-        name=_clean_title(title_m.group(1)) if title_m else f"Hotel {hid.group(1)}",
+        name=_clean_title(title_m.group(1), url_path) if title_m else _name_from_url_path(url_path),
         country_iso2=iso2,
         photo_url=(img_m.group(1) if img_m else "")[:512],
-        description=(desc_m.group(1) if desc_m else "")[:1000],
+        description=_clean_description(desc_m.group(1) if desc_m else None) or "",
         stars=_extract_stars(html),
     )
 
