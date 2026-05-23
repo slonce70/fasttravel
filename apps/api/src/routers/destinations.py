@@ -68,13 +68,26 @@ _ALL_COUNTRIES_SQL = text(
         LEFT JOIN hotels h ON h.destination_id = d.id
         WHERE d.parent_id IS NOT NULL
         GROUP BY d.id
+    ),
+    -- Hotels can be linked directly to the country-level destination too
+    -- (no region was matched at ingest time). Count those into the country
+    -- total so destinations pages don't show "0 готелів" when there are
+    -- in fact 66 active hotels for Turkey.
+    country_direct_counts AS (
+        SELECT d.id AS country_id,
+               COALESCE(COUNT(h.id) FILTER (WHERE h.is_active), 0) AS direct_hotel_count
+        FROM destinations d
+        LEFT JOIN hotels h ON h.destination_id = d.id
+        WHERE d.parent_id IS NULL
+        GROUP BY d.id
     )
     SELECT
         c.id            AS country_id,
         c.country_iso2,
         c.name_uk       AS country_name_uk,
         c.name_en       AS country_name_en,
-        COALESCE(SUM(r.hotel_count), 0)::int AS country_hotel_count,
+        (COALESCE(SUM(r.hotel_count), 0) + COALESCE(MAX(cdc.direct_hotel_count), 0))::int
+            AS country_hotel_count,
         COALESCE(
             json_agg(
                 json_build_object(
@@ -90,6 +103,7 @@ _ALL_COUNTRIES_SQL = text(
         ) AS regions
     FROM country c
     LEFT JOIN region_counts r ON r.parent_id = c.id
+    LEFT JOIN country_direct_counts cdc ON cdc.country_id = c.id
     GROUP BY c.id, c.country_iso2, c.name_uk, c.name_en
     ORDER BY country_hotel_count DESC, c.name_uk
     """
