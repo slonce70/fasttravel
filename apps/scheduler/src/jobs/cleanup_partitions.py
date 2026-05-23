@@ -38,7 +38,13 @@ _CONFIGURE_RETENTION = text(
     """
 )
 
-_RUN_MAINTENANCE = text("CALL partman.run_maintenance_proc()")
+# `partman.run_maintenance_proc()` is a PROCEDURE — it COMMITs internally and
+# therefore cannot run inside a SQLAlchemy/asyncpg transaction. We use the
+# functional form which is transaction-safe; pg_partman 5.x exposes both
+# (proc is preferred at the psql prompt; function from app code).
+_RUN_MAINTENANCE = text(
+    "SELECT partman.run_maintenance(p_analyze := false, p_jobmon := false)"
+)
 
 # Fallback: enumerate child partitions and drop those whose name suffix
 # (pg_partman naming convention: parent_pYYYY_MM_DD) is older than the
@@ -54,9 +60,9 @@ _FALLBACK_LIST_OLD = text(
     WHERE parent.relname = 'price_observations'
       AND child.relname  ~ '^price_observations_p[0-9_]+$'
       AND to_date(
-            substring(child.relname FROM 'p([0-9_]+)$'),
-            'YYYY_MM_DD'
-          ) < (CURRENT_DATE - (:retention_days || ' days')::interval)
+            substring(child.relname FROM 'p([0-9]+)$'),
+            'YYYYMMDD'
+          ) < (CURRENT_DATE - make_interval(days => :retention_days))
     """
 )
 
