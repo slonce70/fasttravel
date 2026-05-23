@@ -50,6 +50,12 @@ SLUG_TO_ISO2: dict[str, str] = {v: k for k, v in ISO2_TO_SLUG.items()}
 
 _ALL_COUNTRIES_SQL = text(
     """
+    -- We only count hotels with has_active_prices=true. The catalog
+    -- (snapshot_catalog_farvater) adds every hotel farvater lists, but
+    -- many sit there with no operator inventory — they show 0 results
+    -- when a user actually searches. Counting them would inflate the
+    -- destination headline and break the trust contract with
+    -- /search results (which only surfaces priced hotels).
     WITH country AS (
         SELECT id, country_iso2, name_uk, name_en
         FROM destinations
@@ -63,19 +69,24 @@ _ALL_COUNTRIES_SQL = text(
             d.name_uk,
             d.name_en,
             d.parent_id,
-            COALESCE(COUNT(h.id) FILTER (WHERE h.is_active), 0) AS hotel_count
+            COALESCE(
+                COUNT(h.id) FILTER (WHERE h.is_active AND h.has_active_prices),
+                0
+            ) AS hotel_count
         FROM destinations d
         LEFT JOIN hotels h ON h.destination_id = d.id
         WHERE d.parent_id IS NOT NULL
         GROUP BY d.id
     ),
-    -- Hotels can be linked directly to the country-level destination too
-    -- (no region was matched at ingest time). Count those into the country
-    -- total so destinations pages don't show "0 готелів" when there are
-    -- in fact 66 active hotels for Turkey.
+    -- Hotels can also be linked directly to the country-level destination
+    -- (no region matched at ingest time). Same has_active_prices filter
+    -- so the total stays consistent with what /search returns.
     country_direct_counts AS (
         SELECT d.id AS country_id,
-               COALESCE(COUNT(h.id) FILTER (WHERE h.is_active), 0) AS direct_hotel_count
+               COALESCE(
+                   COUNT(h.id) FILTER (WHERE h.is_active AND h.has_active_prices),
+                   0
+               ) AS direct_hotel_count
         FROM destinations d
         LEFT JOIN hotels h ON h.destination_id = d.id
         WHERE d.parent_id IS NULL
@@ -98,7 +109,7 @@ _ALL_COUNTRIES_SQL = text(
                     'hotel_count',  r.hotel_count
                 )
                 ORDER BY r.hotel_count DESC, r.name_uk
-            ) FILTER (WHERE r.id IS NOT NULL),
+            ) FILTER (WHERE r.id IS NOT NULL AND r.hotel_count > 0),
             '[]'::json
         ) AS regions
     FROM country c
