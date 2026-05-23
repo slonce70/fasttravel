@@ -112,6 +112,39 @@ export async function fetchOffers(
   return apiFetch<Offer[]>(`/api/hotels/${hotelId}/offers?${qs.toString()}`, opts);
 }
 
+/**
+ * Fire-and-(softly)-forget POST that asks the backend to refetch live prices
+ * for a single hotel from farvater.travel. Returns metadata about the queued
+ * job (or `null` on any non-2xx — refresh is a best-effort UX nicety, not a
+ * blocking dependency).
+ *
+ * Backend endpoint: `POST /api/hotels/{id}/refresh` (added in #25).
+ * If the endpoint isn't deployed yet we get a 404 → caller treats as no-op.
+ */
+export interface RefreshResponse {
+  queued: boolean;
+  eta_seconds?: number;
+}
+
+export async function triggerHotelRefresh(
+  hotelId: number,
+  opts: FetchOptions = {},
+): Promise<RefreshResponse | null> {
+  const url = `${API_BASE}/api/hotels/${hotelId}/refresh`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      signal: opts.signal,
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as RefreshResponse;
+  } catch {
+    // Network error, abort, CORS — refresh is best-effort, swallow.
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Deals
 // ---------------------------------------------------------------------------
