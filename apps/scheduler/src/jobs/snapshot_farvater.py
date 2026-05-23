@@ -770,16 +770,92 @@ async def _process_hotel(
     return inserted
 
 
+_PRICE_REFRESH_TARGETS_SQL = text(
+    """
+    -- Daily-price-refresh source. Picks every priced hotel + a thin slice
+    -- of unpriced ones for re-probing. Iterating /hotelscatalog/strana-X/
+    -- would only cover farvater's curated top ~67 per country — after the
+    -- sitemap ingest landed we have ~4-5k priced hotels that the curated
+    -- page never mentions.
+    --
+    -- Ordering:
+    --   1. has_active_prices=true first (refresh what users actually see)
+    --   2. then the oldest-last-priced cohort (re-probe candidates that
+    --      went quiet — farvater may have new inventory)
+    --   3. unpriced hotels last, capped per country so a never-priced
+    --      backlog can't starve the priced-cohort refresh
+    SELECT
+        h.id,
+        h.canonical_slug,
+        d.country_iso2,
+        COALESCE(hom.external_id, '') AS external_id,
+        h.has_active_prices,
+        h.last_priced_at
+    FROM hotels h
+    JOIN destinations d ON d.id = h.destination_id
+    LEFT JOIN hotel_operator_mapping hom
+           ON hom.hotel_id = h.id
+          AND hom.operator_id =
+              (SELECT id FROM operators WHERE code = 'farvater')
+    WHERE h.is_active
+      AND d.country_iso2 = ANY(:iso_filter)
+    ORDER BY
+      h.has_active_prices DESC NULLS LAST,
+      h.last_priced_at NULLS LAST,
+      h.id
+    """
+)
+
+
+def _path_from_slug(slug: str) -> str | None:
+    parts = slug.split("-", 2)
+    if len(parts) != 3 or parts[0] != "fv":
+        return None
+    return f"/uk/hotel/{parts[1]}/{parts[2]}/"
+
+
+async def _refresh_targets(
+    db: AsyncSession,
+    iso_filter: list[str],
+    max_per_country: int | None,
+) -> list[tuple[str, str, int, str]]:
+    """Return list of (url_path, iso2, hotel_db_id, external_id) tuples in
+    refresh-priority order. `max_per_country` caps per-iso2 to keep a long
+    backlog of unpriced hotels from monopolising a single run."""
+    rows = (
+        await db.execute(_PRICE_REFRESH_TARGETS_SQL, {"iso_filter": iso_filter})
+    ).all()
+    out: list[tuple[str, str, int, str]] = []
+    per_country: dict[str, int] = {}
+    for row in rows:
+        iso2 = (row.country_iso2 or "").upper()
+        if max_per_country is not None and per_country.get(iso2, 0) >= max_per_country:
+            continue
+        path = _path_from_slug(row.canonical_slug)
+        if not path:
+            continue
+        out.append((path, iso2, row.id, row.external_id or ""))
+        per_country[iso2] = per_country.get(iso2, 0) + 1
+    return out
+
+
 async def snapshot_farvater(*, max_hotels_per_country: int | None = None) -> int:
     """Top-level entrypoint. Returns total rows inserted.
 
+    Drives the refresh from the `hotels` table (priced cohort first, then
+    long tail), not from farvater's curated catalog page. See
+    `_PRICE_REFRESH_TARGETS_SQL` for the ordering rationale.
+
     Args:
-      max_hotels_per_country: optional cap for dev/testing; None = all hotels.
+      max_hotels_per_country: optional cap for dev/testing; None = all
+        active+catalogued hotels.
     """
     started_at = datetime.now(UTC)
+    iso_filter = [iso2 for _, iso2 in CATALOG_COUNTRIES]
     log.info("farvater.snapshot.start",
              countries=len(CATALOG_COUNTRIES),
-             concurrency=CONCURRENCY)
+             concurrency=CONCURRENCY,
+             max_per_country=max_hotels_per_country)
 
     semaphore = asyncio.Semaphore(CONCURRENCY)
     total_inserted = 0
@@ -789,35 +865,43 @@ async def snapshot_farvater(*, max_hotels_per_country: int | None = None) -> int
         await db.commit()
 
     try:
+        async with async_session_factory() as db:
+            targets = await _refresh_targets(db, iso_filter, max_hotels_per_country)
+
+        # Group by country for logging only — execution stays flat so a
+        # single asyncio.gather can saturate the semaphore across countries.
+        by_country: dict[str, int] = {}
+        for _, iso2, _, _ in targets:
+            by_country[iso2] = by_country.get(iso2, 0) + 1
+        log.info("farvater.snapshot.targets",
+                 total=len(targets), by_country=by_country)
+
         async with _http_client() as client:
-            for country_slug, iso2 in CATALOG_COUNTRIES:
-                async with async_session_factory() as db:
-                    dest_id = await _country_dest_id(db, iso2)
+            # Resolve dest_id once per country to avoid round-trips per task.
+            dest_ids: dict[str, int | None] = {}
+            async with async_session_factory() as db:
+                for iso2 in by_country:
+                    dest_ids[iso2] = await _country_dest_id(db, iso2)
 
-                try:
-                    hotel_paths = await _list_country_hotels(client, country_slug)
-                except Exception as exc:
-                    log.error("farvater.catalog_failed",
-                              country=country_slug, error=str(exc))
-                    continue
-                if max_hotels_per_country:
-                    hotel_paths = hotel_paths[:max_hotels_per_country]
-                log.info("farvater.country.start",
-                         country=country_slug, iso2=iso2,
-                         hotels=len(hotel_paths))
-
-                tasks = [
-                    _process_hotel(client, p, iso2, operator_id, dest_id,
-                                    semaphore)
-                    for p in hotel_paths
-                ]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                country_inserted = sum(r for r in results if isinstance(r, int))
-                country_errors = sum(1 for r in results if isinstance(r, Exception))
-                total_inserted += country_inserted
-                log.info("farvater.country.done",
-                         country=country_slug, hotels=len(hotel_paths),
-                         inserted=country_inserted, errors=country_errors)
+            tasks = [
+                _process_hotel(client, path, iso2, operator_id,
+                                dest_ids.get(iso2), semaphore)
+                for path, iso2, _, _ in targets
+            ]
+            # Batch the gather so a 5 000-coroutine pile doesn't sit on
+            # the event loop. Each chunk also gives us periodic progress.
+            chunk = 200
+            for i in range(0, len(tasks), chunk):
+                results = await asyncio.gather(
+                    *tasks[i:i + chunk], return_exceptions=True
+                )
+                inserted = sum(r for r in results if isinstance(r, int))
+                errors = sum(1 for r in results if isinstance(r, Exception))
+                total_inserted += inserted
+                log.info("farvater.snapshot.progress",
+                         processed=i + len(results), of=len(tasks),
+                         inserted=inserted, errors=errors,
+                         cumulative_inserted=total_inserted)
 
         # Final MV refresh so /api reads see fresh data this same tick.
         async with async_session_factory() as db:
