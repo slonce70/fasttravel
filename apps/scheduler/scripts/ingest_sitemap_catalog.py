@@ -1,66 +1,134 @@
-"""One-off long-tail catalog ingest from farvater's sitemap.
+"""One-off long-tail catalog + price ingest from farvater's sitemap.
 
-The daily `snapshot_catalog_farvater` walks `/uk/hotelscatalog/strana-X/`
-which exposes only farvater's curated top ~67 hotels per country. The
-sitemap holds the long tail — ~420k URLs across 9 shards, of which
-~57k belong to our 11 target countries.
+Walks farvater's sitemap (9 shards, ~57k URLs across our 11 countries),
+upserts hotel meta with gallery + reviews, AND probes the price calendar
+inline. Hotels with inventory get `has_active_prices=true` and full
+price_observations the same pass — no need to wait for the next
+snapshot_farvater tick.
 
-Run from inside the scheduler container:
+Tuned for throughput. The daily snapshot uses CONCURRENCY=3 / DELAY=1s
+because it runs unattended in prod. This script is an *operator* one-off
+so it bumps both: CONCURRENCY=12 / DELAY=0.05s ≈ 30-50 req/s effective.
 
-    docker exec -d -w /app ft_scheduler python scripts/ingest_sitemap_catalog.py
+Runtime estimate: ~30-45 min for the full 57k catalog (vs ~8 hrs serial).
+Cloudflare in front of farvater rarely rate-limits at this rate; if you
+see 429s or 503s drop CONCURRENCY first, DELAY second.
 
-Throttled to `PER_REQUEST_DELAY_S` (1s by default). Skips hotels already
-ingested (matched on `canonical_slug`) so re-running is cheap. Records
-progress to `scrape_runs` with source='catalog_sitemap'.
+Usage from inside the scheduler container:
 
-Expected runtime for 57k new URLs: ~16 hours wall clock with concurrency=3.
-Safe to interrupt — only completed hotels persist. On restart, the slug
-dedup means previously-fetched hotels are skipped.
-
-Pass an integer arg to cap (`python scripts/ingest_sitemap_catalog.py 500`).
+    docker exec -d -w /app ft_scheduler python scripts/ingest_sitemap_catalog.py [CAP]
 """
 from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import text
 
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
-from src.jobs.snapshot_catalog_farvater import (
-    CONCURRENCY,
-    PER_REQUEST_DELAY_S,
-    SCRAPE_SOURCE as _DAILY_SOURCE,
-    _process_catalog_hotel,
-    _record_run,
-)
 from src.jobs.snapshot_farvater import (
     CATALOG_COUNTRIES,
+    CHECK_IN_OFFSETS_DAYS,
     _country_dest_id,
     _ensure_operator,
+    _fetch_calendar,
+    _fetch_hotel_meta,
     _http_client,
+    _insert_prices,
     _list_sitemap_hotels,
     _make_slug,
+    _mark_priced,
+    _upsert_hotel,
+    _upsert_mapping,
 )
 
 log = get_logger(__name__)
 
+# Aggressive operator-driven tuning. See module docstring.
+CONCURRENCY = 12
+PER_REQUEST_DELAY_S = 0.05
+# We probe a *subset* of CHECK_IN_OFFSETS_DAYS during the long-tail pass
+# to keep the per-hotel cost down. Hotels we want full coverage on get
+# revisited by the regular snapshot_farvater the next morning.
+PROBE_OFFSETS = [14, 30, 60]
 SCRAPE_SOURCE = "catalog_sitemap"
 
 
-async def _already_ingested(canonical_slugs: list[str]) -> set[str]:
-    if not canonical_slugs:
+async def _already_ingested(slugs: list[str]) -> set[str]:
+    if not slugs:
         return set()
     async with async_session_factory() as db:
         rows = (
             await db.execute(
                 text("SELECT canonical_slug FROM hotels WHERE canonical_slug = ANY(:s)"),
-                {"s": canonical_slugs},
+                {"s": slugs},
             )
         ).all()
     return {r.canonical_slug for r in rows}
+
+
+async def _process_hotel(
+    client,
+    url_path: str,
+    iso2: str,
+    operator_id: int,
+    dest_id: int | None,
+    semaphore: asyncio.Semaphore,
+) -> tuple[int, int]:
+    """Fetch meta + probe a few calendar dates. Returns (hotel_seen, price_rows)."""
+    async with semaphore:
+        await asyncio.sleep(PER_REQUEST_DELAY_S)
+        meta = await _fetch_hotel_meta(client, url_path, iso2)
+        if meta is None:
+            return (0, 0)
+
+        # Persist meta first — even if calendar probe fails the catalog row stays.
+        async with async_session_factory() as db:
+            hotel_db_id = await _upsert_hotel(db, meta, dest_id)
+            await _upsert_mapping(db, hotel_db_id, operator_id, meta)
+            await db.commit()
+
+        # Probe a small set of check-in dates. PROBE_OFFSETS skips offsets
+        # the daily snapshot already covers densely (3, 45, 75) so we
+        # broaden coverage without exact duplication.
+        all_prices = []
+        seen_keys: set[str] = set()
+        for offset in PROBE_OFFSETS:
+            await asyncio.sleep(PER_REQUEST_DELAY_S)
+            chunk = await _fetch_calendar(
+                client, meta.hotel_id, date.today() + timedelta(days=offset)
+            )
+            new = [r for r in chunk if r.system_key not in seen_keys]
+            all_prices.extend(new)
+            seen_keys.update(r.system_key for r in new)
+
+    if all_prices:
+        async with async_session_factory() as db:
+            inserted = await _insert_prices(
+                db, hotel_db_id, operator_id, meta, all_prices
+            )
+            if inserted > 0:
+                await _mark_priced(db, hotel_db_id)
+            await db.commit()
+        log.info("sitemap.hotel.priced", hotel=meta.name[:50],
+                 hotel_key=meta.hotel_id, inserted=inserted, raw=len(all_prices))
+        return (1, inserted)
+
+    log.info("sitemap.hotel.no_inventory", hotel=meta.name[:50],
+             hotel_key=meta.hotel_id)
+    return (1, 0)
+
+
+async def _refresh_views() -> None:
+    async with async_session_factory() as db:
+        for mv in ("current_prices", "hotel_calendar_prices", "price_baselines"):
+            try:
+                await db.execute(text(f"REFRESH MATERIALIZED VIEW {mv}"))
+            except Exception as exc:
+                log.warning("sitemap.mv_refresh_failed", mv=mv, error=str(exc))
+        await db.commit()
 
 
 async def main(cap: int | None) -> None:
@@ -71,77 +139,71 @@ async def main(cap: int | None) -> None:
         operator_id = await _ensure_operator(db)
         await db.commit()
 
-    total_seen = 0
-    try:
-        async with _http_client() as client:
-            by_iso = await _list_sitemap_hotels(client, iso2_filter=iso_filter)
-            total_urls = sum(len(v) for v in by_iso.values())
-            log.info("sitemap.discovered", countries=len(by_iso),
-                     total_urls=total_urls, by_country={k: len(v) for k, v in by_iso.items()})
+    seen_hotels = 0
+    inserted_prices = 0
 
-            sem = asyncio.Semaphore(CONCURRENCY)
+    async with _http_client() as client:
+        by_iso = await _list_sitemap_hotels(client, iso2_filter=iso_filter)
+        total_urls = sum(len(v) for v in by_iso.values())
+        log.info("sitemap.discovered", countries=len(by_iso),
+                 total_urls=total_urls,
+                 by_country={k: len(v) for k, v in by_iso.items()})
 
-            for iso2, paths in by_iso.items():
-                async with async_session_factory() as db:
-                    dest_id = await _country_dest_id(db, iso2)
+        sem = asyncio.Semaphore(CONCURRENCY)
 
-                # Skip hotels we already have. Cheap O(N) batched query.
-                slugs = [_make_slug(iso2, p) for p in paths]
-                existing = await _already_ingested(slugs)
-                fresh = [
-                    p for p, s in zip(paths, slugs) if s not in existing
-                ]
-                if cap is not None and total_seen + len(fresh) > cap:
-                    fresh = fresh[: max(0, cap - total_seen)]
+        for iso2, paths in by_iso.items():
+            async with async_session_factory() as db:
+                dest_id = await _country_dest_id(db, iso2)
 
-                log.info("sitemap.country.start", iso2=iso2,
-                         in_sitemap=len(paths), already=len(existing), fresh=len(fresh))
-                if not fresh:
-                    continue
+            slugs = [_make_slug(iso2, p) for p in paths]
+            existing = await _already_ingested(slugs)
+            fresh = [p for p, s in zip(paths, slugs) if s not in existing]
 
-                tasks = [
-                    _process_catalog_hotel(client, p, iso2, operator_id, dest_id, sem)
-                    for p in fresh
-                ]
-                # Drain in batches so a single shard's failures don't tank everything.
-                batch = 50
-                seen_country = 0
-                for i in range(0, len(tasks), batch):
-                    chunk = tasks[i:i + batch]
-                    results = await asyncio.gather(*chunk, return_exceptions=True)
-                    seen_country += sum(r for r in results if isinstance(r, int))
-                    total_seen += sum(r for r in results if isinstance(r, int))
-                    log.info("sitemap.country.progress", iso2=iso2,
-                             processed=i + len(chunk), of=len(fresh),
-                             seen_country=seen_country, total=total_seen)
-                    if cap is not None and total_seen >= cap:
-                        break
+            if cap is not None and seen_hotels + len(fresh) > cap:
+                fresh = fresh[: max(0, cap - seen_hotels)]
 
-                if cap is not None and total_seen >= cap:
-                    log.info("sitemap.cap_reached", cap=cap)
+            log.info("sitemap.country.start", iso2=iso2,
+                     in_sitemap=len(paths), already=len(existing), fresh=len(fresh))
+            if not fresh:
+                continue
+
+            tasks = [
+                _process_hotel(client, p, iso2, operator_id, dest_id, sem)
+                for p in fresh
+            ]
+
+            # Drain in batches of ~200 to keep memory bounded and surface progress.
+            batch = 200
+            country_priced = 0
+            for i in range(0, len(tasks), batch):
+                chunk = tasks[i:i + batch]
+                results = await asyncio.gather(*chunk, return_exceptions=True)
+                for r in results:
+                    if isinstance(r, tuple):
+                        seen_hotels += r[0]
+                        inserted_prices += r[1]
+                        if r[1] > 0:
+                            country_priced += 1
+                log.info("sitemap.country.progress", iso2=iso2,
+                         processed=i + len(chunk), of=len(fresh),
+                         priced_country=country_priced,
+                         total_priced_inserted=inserted_prices,
+                         total_hotels=seen_hotels)
+                if cap is not None and seen_hotels >= cap:
                     break
 
-        async with async_session_factory() as db:
-            await _record_run(db, operator_id, "success", total_seen, started_at=started_at)
-            # Override the run row's source after insert so dashboards split
-            # the long-tail ingest from the daily catalog pass.
-            await db.execute(
-                text(
-                    """UPDATE scrape_runs SET source = :src
-                       WHERE source = :old AND started_at = :s"""
-                ),
-                {"src": SCRAPE_SOURCE, "old": _DAILY_SOURCE, "s": started_at},
-            )
-            await db.commit()
-        log.info("sitemap.done", total=total_seen)
+            # Refresh MVs per-country so the UI starts showing the new
+            # priced cohort as the run progresses, not only at the end.
+            await _refresh_views()
+            log.info("sitemap.country.mv_refreshed", iso2=iso2)
 
-    except Exception as exc:
-        async with async_session_factory() as db:
-            await _record_run(db, operator_id, "failed", total_seen,
-                              error=str(exc), started_at=started_at)
-            await db.commit()
-        log.error("sitemap.failed", error=str(exc))
-        raise
+            if cap is not None and seen_hotels >= cap:
+                log.info("sitemap.cap_reached", cap=cap)
+                break
+
+    elapsed = (datetime.now(UTC) - started_at).total_seconds()
+    log.info("sitemap.done", total_hotels=seen_hotels,
+             total_priced_rows=inserted_prices, elapsed_s=int(elapsed))
 
 
 if __name__ == "__main__":
