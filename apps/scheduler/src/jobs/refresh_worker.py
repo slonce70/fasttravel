@@ -114,8 +114,19 @@ async def _fetch_hotel_prices(hotel_id: int, farvater_key: str) -> list[dict]:
     return all_prices
 
 
+# 12h dedup — mirrors apps/scheduler/src/jobs/snapshot_farvater.py::_insert_prices.
+# Without this, hot-priority + user refresh + nightly snapshot inside the same
+# 12h window double-write every row and poison the price_baselines percentiles.
+DEDUP_WINDOW_HOURS = 12
+
+
 async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
-    """Write fetched prices + refresh hotel-page MVs. Returns rows inserted."""
+    """Write fetched prices + refresh hotel-page MVs. Returns rows inserted.
+
+    Applies the same 12h dedup as `snapshot_farvater._insert_prices` — a
+    user-triggered refresh that lands inside the scheduled snapshot's window
+    must not double-count.
+    """
     if not prices:
         return 0
 
@@ -128,9 +139,29 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
             return 0
         op_id = op_row[0]
 
+        # Dedup against everything we wrote for this hotel inside the window.
+        existing = (await db.execute(
+            text("""SELECT check_in, nights, meal_plan, price_uah
+                    FROM price_observations
+                    WHERE hotel_id = :h AND operator_id = :op
+                      AND observed_at >= NOW() - make_interval(hours => :hh)"""),
+            {"h": hotel_id, "op": op_id, "hh": DEDUP_WINDOW_HOURS},
+        )).all()
+        existing_keys: set[tuple] = {(r[0], r[1], r[2], r[3]) for r in existing}
+        fresh = [
+            p for p in prices
+            if (p["check_in"], p["nights"], p["meal"], p["uah"]) not in existing_keys
+        ]
+        if not fresh:
+            log.info(
+                "refresh_worker.all_deduped",
+                hotel_id=hotel_id, seen_in_last_12h=len(prices),
+            )
+            return 0
+
         observed_at = datetime.now(UTC)
-        fx = (Decimal(prices[0]["uah"]) / Decimal(prices[0]["usd"])
-              if prices[0]["usd"] else Decimal("41.5"))
+        fx = (Decimal(fresh[0]["uah"]) / Decimal(fresh[0]["usd"])
+              if fresh[0]["usd"] else Decimal("41.5"))
 
         deep_link_base = (await db.execute(
             text("""SELECT 'https://farvater.travel/uk/hotel/'
@@ -156,7 +187,7 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
                     "source": "live_refresh",
                 }),
             }
-            for p in prices
+            for p in fresh
         ]
         await db.execute(
             text("""INSERT INTO price_observations
@@ -168,11 +199,6 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
                             :puah, :porig, :cur, :fx, :dl, CAST(:raw AS jsonb))"""),
             payload,
         )
-        # Same MV scope as the original API-side refresh — only the views
-        # the hotel page actually reads. price_baselines stays out;
-        # baselines need the hourly batch tick to recompute coherently.
-        await db.execute(text("REFRESH MATERIALIZED VIEW current_prices"))
-        await db.execute(text("REFRESH MATERIALIZED VIEW hotel_calendar_prices"))
         # Hotel just produced fresh prices — bump the search-gate flags.
         await db.execute(
             text("""UPDATE hotels
@@ -182,6 +208,25 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
             {"id": hotel_id},
         )
         await db.commit()
+
+    # REFRESH MV CONCURRENTLY — non-blocking for ongoing reads. UNIQUE
+    # indexes on these MVs (migration 001 lines 330/357) make CONCURRENTLY
+    # legal; non-CONCURRENT here would take an AccessExclusiveLock and
+    # block every /api/hotels/{id}/calendar request, which is exactly the
+    # DoS the security audit flagged. CONCURRENTLY can't run inside a tx
+    # so we use a fresh AUTOCOMMIT connection. price_baselines stays out
+    # — baselines need the hourly batch tick to recompute coherently.
+    from src.infra.db import async_engine
+    async with async_engine.connect() as raw_conn:
+        ac = await raw_conn.execution_options(isolation_level="AUTOCOMMIT")
+        try:
+            await ac.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY current_prices"))
+            await ac.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY hotel_calendar_prices"))
+        except Exception as exc:  # noqa: BLE001 — MV un-primed → fall back to plain
+            log.warning("refresh_worker.mv_refresh_fallback", error=str(exc))
+            await ac.execute(text("REFRESH MATERIALIZED VIEW current_prices"))
+            await ac.execute(text("REFRESH MATERIALIZED VIEW hotel_calendar_prices"))
+
     return len(payload)
 
 
