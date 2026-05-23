@@ -122,6 +122,9 @@ export interface SearchResultItem {
   destination_id: number | null;
   min_price_uah: number | null;
   review_score: number | null;
+  // Thumbnail set, same shape as HotelOut.photos_jsonb. The card picks
+  // photos[0]; empty array → placeholder graphic.
+  photos: HotelPhoto[];
 }
 
 export interface PaginatedSearchResults {

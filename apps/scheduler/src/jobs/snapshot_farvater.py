@@ -303,23 +303,31 @@ async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
         {"s": slug},
     )).first()
     if existing:
-        # Keep clean name + fresh photo/description. `stars` is COALESCEd so
-        # a one-off regex miss on a future page render never wipes a value
-        # we previously extracted — extraction is monotonic.
+        # All extracted-from-HTML fields are *monotonic*: a one-off regex miss
+        # on a future page render must never wipe a value we previously had.
+        # We send NULL for fields we couldn't extract this run; the SQL uses
+        # NULLIF + COALESCE so existing non-empty values win over fresh empties.
+        new_photos = (
+            json.dumps([{"url": hotel.photo_url, "alt": hotel.name}])
+            if hotel.photo_url else None
+        )
+        new_desc = hotel.description if hotel.description else None
+        new_name = hotel.name if (hotel.name and len(hotel.name) > 3) else None
         await db.execute(
             text("""UPDATE hotels
-                    SET name_uk = :n, name_en = :n,
-                        photos_jsonb = CAST(:p AS jsonb),
-                        description_uk = :d,
-                        stars = COALESCE(:stars, stars),
-                        last_seen_at = NOW(),
-                        last_updated = NOW()
+                    SET name_uk        = COALESCE(:n, name_uk),
+                        name_en        = COALESCE(:n, name_en),
+                        photos_jsonb   = COALESCE(CAST(:p AS jsonb), photos_jsonb),
+                        description_uk = COALESCE(:d, description_uk),
+                        stars          = COALESCE(:stars, stars),
+                        last_seen_at   = NOW(),
+                        last_updated   = NOW()
                     WHERE id = :id"""),
             {
-                "id": existing[0], "n": hotel.name,
-                "p": json.dumps([{"url": hotel.photo_url, "alt": hotel.name}]
-                                 if hotel.photo_url else []),
-                "d": hotel.description,
+                "id": existing[0],
+                "n": new_name,
+                "p": new_photos,
+                "d": new_desc,
                 "stars": hotel.stars,
             },
         )
@@ -429,7 +437,13 @@ async def _insert_prices(db: AsyncSession, hotel_db_id: int,
             "ci": r.check_in, "n": r.nights, "m": r.meal_plan, "rm": r.room_category,
             "ad": 2, "dc": "",
             "puah": r.price_uah, "porig": r.price_usd, "cur": "USD", "fx": fx,
-            "dl": f"{deep_link_base}?systemKey={r.system_key}",
+            # `?q=<systemKey>` is farvater's internal booking-preselect
+            # param — discovered via tools/explore/explore_price_grid.py:
+            # every price cell in farvater's own grid is
+            # `<a href=".../?q=2m...c25">`. We previously used `?systemKey=`
+            # which farvater silently ignored, leaving the user on the
+            # generic hotel page instead of the per-operator offer.
+            "dl": f"{deep_link_base}?q={r.system_key}",
             "raw": json.dumps({"systemKey": r.system_key,
                                 "source": "farvater_scrape"}),
         }
