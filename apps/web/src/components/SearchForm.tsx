@@ -34,8 +34,14 @@ export function SearchForm({
   const initialCountry = (params.get('country') ?? defaultCountry ?? '').toUpperCase();
 
   const [country, setCountry] = useState(initialCountry);
-  const [checkInMin, setCheckInMin] = useState(params.get('check_in_min') ?? '');
-  const [checkInMax, setCheckInMax] = useState(params.get('check_in_max') ?? '');
+  // Phase 2 P0-1 collapsed the old date range (check_in_min/max) into a
+  // single check_in. The backend now narrows to that specific day via
+  // INNER JOIN on hotel_calendar_prices(hotel_id, check_in). Read either
+  // the new `check_in` param or the legacy `check_in_min` to preserve
+  // bookmarks while old URLs cycle out.
+  const [checkIn, setCheckIn] = useState(
+    params.get('check_in') ?? params.get('check_in_min') ?? '',
+  );
   const [priceMax, setPriceMax] = useState(params.get('price_max') ?? '');
   const [starsMin, setStarsMin] = useState(params.get('stars_min') ?? '');
 
@@ -52,8 +58,7 @@ export function SearchForm({
     e.preventDefault();
     const qs = new URLSearchParams();
     if (country) qs.set('country', country);
-    if (checkInMin) qs.set('check_in_min', checkInMin);
-    if (checkInMax) qs.set('check_in_max', checkInMax);
+    if (checkIn) qs.set('check_in', checkIn);
     if (priceMax) qs.set('price_max', priceMax);
     if (starsMin) qs.set('stars_min', starsMin);
     const query = qs.toString();
@@ -106,19 +111,11 @@ export function SearchForm({
             ))}
           </select>
         </Field>
-        <Field label="Заїзд від">
+        <Field label="Дата заїзду">
           <input
             type="date"
-            value={checkInMin}
-            onChange={(e) => setCheckInMin(e.target.value)}
-            className="input"
-          />
-        </Field>
-        <Field label="Заїзд до">
-          <input
-            type="date"
-            value={checkInMax}
-            onChange={(e) => setCheckInMax(e.target.value)}
+            value={checkIn}
+            onChange={(e) => setCheckIn(e.target.value)}
             className="input"
           />
         </Field>
