@@ -86,6 +86,20 @@ HOTEL_ID_RE = re.compile(r'hotelId:(\d+)')
 TITLE_RE = re.compile(r'<title>([^<]+)</title>', re.IGNORECASE)
 DESC_RE = re.compile(r'<meta name="description" content="([^"]+)"', re.IGNORECASE)
 OG_IMG_RE = re.compile(r'<meta property="og:image" content="([^"]+)"', re.IGNORECASE)
+# Pulls all unique hotel-photo UUIDs farvater renders on the page. The
+# extractor is intentionally permissive — same UUID appears as `?size=catalog`,
+# `?size=detail`, `?size=original` in different DOM positions. We strip the
+# query string and dedupe so photos_jsonb stores stable, normalised URLs.
+GALLERY_RE = re.compile(
+    r'img\d?\.farvater\.travel/hotelimages/([a-f0-9-]{20,})', re.IGNORECASE
+)
+# JSON-LD `<script type="application/ld+json">{...}</script>` is the canonical
+# place farvater emits structured data (description, aggregateRating). We pick
+# the first block — it's always the Hotel object.
+JSONLD_RE = re.compile(
+    r'<script type="application/ld\+json">\s*(\{.*?\})\s*</script>',
+    re.DOTALL | re.IGNORECASE,
+)
 
 # Star rating. Primary signal: JSON-LD `"starRating":{"ratingValue":"N"}`
 # (present on most rated farvater hotels). Fallback: H1/title pattern like
@@ -112,6 +126,9 @@ class HotelMeta:
     photo_url: str
     description: str
     stars: int | None      # 1..5 when extractable; None for villas/apartments
+    photos: list[str]      # all gallery URLs (dedup'd, normalised)
+    review_score: float | None  # aggregateRating.ratingValue, 0..10
+    review_count: int      # aggregateRating.reviewCount
 
 
 @dataclass
@@ -221,6 +238,58 @@ def _make_slug(country_iso2: str, url_path: str) -> str:
     return f"fv-{country_iso2.lower()}-{tail}"[:140]
 
 
+def _extract_gallery(html_text: str) -> list[str]:
+    """Pull all unique `img4.farvater.travel/hotelimages/{uuid}` URLs.
+
+    farvater duplicates each UUID at three sizes (catalog/detail/original)
+    plus inline `background:url(...)` references. We normalise to a single
+    `?size=original` URL per UUID, preserving page order so the og:image
+    naturally tends to sort first.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in GALLERY_RE.finditer(html_text):
+        uid = m.group(1).lower()
+        if uid in seen:
+            continue
+        seen.add(uid)
+        out.append(f"https://img4.farvater.travel/hotelimages/{uid}?size=original")
+    return out
+
+
+def _parse_jsonld(html_text: str) -> dict | None:
+    """Best-effort JSON-LD parse. farvater emits one `Hotel` block per page;
+    if it parses cleanly we get description + aggregateRating for free.
+    Returns None on any error — callers fall through to other signals.
+    """
+    m = JSONLD_RE.search(html_text)
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(1))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _review_from_jsonld(data: dict | None) -> tuple[float | None, int]:
+    if not data:
+        return (None, 0)
+    agg = data.get("aggregateRating") or {}
+    try:
+        score_raw = agg.get("ratingValue")
+        score = float(score_raw) if score_raw is not None else None
+    except (TypeError, ValueError):
+        score = None
+    try:
+        count = int(agg.get("reviewCount") or 0)
+    except (TypeError, ValueError):
+        count = 0
+    if score is not None and not (0 <= score <= 10):
+        score = None
+    return (score, count)
+
+
 def _extract_stars(html: str) -> int | None:
     """Return 1..5 if a star rating is unambiguous in the page, else None.
 
@@ -267,22 +336,40 @@ async def _fetch_hotel_meta(client: httpx.AsyncClient, url_path: str,
     if r.status_code != 200:
         log.warning("farvater.hotel_fetch_http", url=url, status=r.status_code)
         return None
-    html = r.text
-    hid = HOTEL_ID_RE.search(html)
+    page = r.text
+    hid = HOTEL_ID_RE.search(page)
     if not hid:
         log.warning("farvater.no_hotel_id_in_html", url=url)
         return None
-    title_m = TITLE_RE.search(html)
-    desc_m = DESC_RE.search(html)
-    img_m = OG_IMG_RE.search(html)
+    title_m = TITLE_RE.search(page)
+    desc_m = DESC_RE.search(page)
+    img_m = OG_IMG_RE.search(page)
+    jsonld = _parse_jsonld(page)
+    # Prefer JSON-LD description — it's the real "this hotel is ..."
+    # human text farvater editors wrote, not the SEO chum meta tag.
+    jsonld_desc = (jsonld or {}).get("description") if jsonld else None
+    description = (
+        _clean_description(jsonld_desc)
+        or _clean_description(desc_m.group(1) if desc_m else None)
+        or ""
+    )
+    gallery = _extract_gallery(page)
+    og_url = (img_m.group(1) if img_m else "")[:512]
+    # og:image first so the hero photo stays consistent across pages.
+    if og_url and og_url not in gallery:
+        gallery = [og_url] + gallery
+    review_score, review_count = _review_from_jsonld(jsonld)
     return HotelMeta(
         hotel_id=int(hid.group(1)),
         url_path=url_path.rstrip("/"),
         name=_clean_title(title_m.group(1), url_path) if title_m else _name_from_url_path(url_path),
         country_iso2=iso2,
-        photo_url=(img_m.group(1) if img_m else "")[:512],
-        description=_clean_description(desc_m.group(1) if desc_m else None) or "",
-        stars=_extract_stars(html),
+        photo_url=og_url,
+        description=description,
+        stars=_extract_stars(page),
+        photos=gallery[:30],   # cap so a future site rewrite can't blow up the row
+        review_score=review_score,
+        review_count=review_count,
     )
 
 
@@ -376,24 +463,41 @@ async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
         text("SELECT id FROM hotels WHERE canonical_slug = :s"),
         {"s": slug},
     )).first()
+    new_photos_list = [{"url": u, "alt": hotel.name} for u in hotel.photos]
+    # Fall back to single og:image when gallery extraction yielded nothing
+    # — better that than wiping a previously-extracted gallery on a transient
+    # regex miss.
+    if not new_photos_list and hotel.photo_url:
+        new_photos_list = [{"url": hotel.photo_url, "alt": hotel.name}]
+    new_photos = json.dumps(new_photos_list) if new_photos_list else None
+
     if existing:
         # All extracted-from-HTML fields are *monotonic*: a one-off regex miss
         # on a future page render must never wipe a value we previously had.
         # We send NULL for fields we couldn't extract this run; the SQL uses
-        # NULLIF + COALESCE so existing non-empty values win over fresh empties.
-        new_photos = (
-            json.dumps([{"url": hotel.photo_url, "alt": hotel.name}])
-            if hotel.photo_url else None
-        )
+        # COALESCE so existing non-empty values win over fresh empties.
         new_desc = hotel.description if hotel.description else None
         new_name = hotel.name if (hotel.name and len(hotel.name) > 3) else None
+        # photos_jsonb: only overwrite when the new pull is at least as wide
+        # as what's stored. A one-photo run shouldn't clobber a 20-photo
+        # gallery we already have on file.
         await db.execute(
-            text("""UPDATE hotels
+            text("""WITH new_p AS (SELECT CAST(:p AS jsonb) AS v)
+                    UPDATE hotels
                     SET name_uk        = COALESCE(:n, name_uk),
                         name_en        = COALESCE(:n, name_en),
-                        photos_jsonb   = COALESCE(CAST(:p AS jsonb), photos_jsonb),
+                        photos_jsonb   = CASE
+                            WHEN (SELECT v FROM new_p) IS NULL THEN photos_jsonb
+                            WHEN photos_jsonb IS NULL THEN (SELECT v FROM new_p)
+                            WHEN jsonb_array_length((SELECT v FROM new_p))
+                                 >= jsonb_array_length(photos_jsonb)
+                              THEN (SELECT v FROM new_p)
+                            ELSE photos_jsonb
+                        END,
                         description_uk = COALESCE(:d, description_uk),
                         stars          = COALESCE(:stars, stars),
+                        review_score   = COALESCE(:rs, review_score),
+                        review_count   = GREATEST(review_count, COALESCE(:rc, 0)),
                         last_seen_at   = NOW(),
                         last_updated   = NOW()
                     WHERE id = :id"""),
@@ -403,23 +507,23 @@ async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
                 "p": new_photos,
                 "d": new_desc,
                 "stars": hotel.stars,
+                "rs": hotel.review_score,
+                "rc": hotel.review_count,
             },
         )
         return existing[0]
 
-    photos = json.dumps(
-        [{"url": hotel.photo_url, "alt": hotel.name}] if hotel.photo_url else []
-    )
     row = (await db.execute(
         text("""INSERT INTO hotels (
                   canonical_slug, name_uk, name_en, stars, destination_id,
                   description_uk, photos_jsonb, amenities, review_score,
                   review_count, is_active, last_seen_at, last_updated)
                 VALUES (:slug, :n, :n, :stars, :dest, :d, CAST(:p AS jsonb),
-                        '{}', NULL, 0, TRUE, NOW(), NOW())
+                        '{}', :rs, :rc, TRUE, NOW(), NOW())
                 RETURNING id"""),
         {"slug": slug, "n": hotel.name, "stars": hotel.stars, "dest": dest_id,
-         "d": hotel.description, "p": photos},
+         "d": hotel.description, "p": new_photos or "[]",
+         "rs": hotel.review_score, "rc": hotel.review_count},
     )).first()
     return row[0]
 
