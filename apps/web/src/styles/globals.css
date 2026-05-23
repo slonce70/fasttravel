@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    font-family: var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  /* Tighter focus ring for keyboard nav across the app. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-600 ring-offset-2 ring-offset-white;
+  }
+}
+
+@layer components {
+  .skeleton {
+    @apply animate-shimmer rounded bg-gradient-to-r from-slate-200 via-slate-100 to-slate-200 bg-[length:800px_100%];
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* react-day-picker base reset — we override most styles via DayButton and
+   classNames overrides, but keep the layout primitives. */
+.rdp-root {
+  --rdp-cell-size: 56px;
+  --rdp-accent-color: theme('colors.brand.600');
+  --rdp-background-color: theme('colors.brand.50');
+}
+
+.rdp-month {
+  @apply rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200;
+}
+
+.rdp-month_caption {
+  @apply mb-3 text-center text-base font-semibold capitalize text-slate-700;
+}
+
+.rdp-weekdays {
+  @apply mb-2 text-xs font-medium uppercase tracking-wide text-slate-400;
+}

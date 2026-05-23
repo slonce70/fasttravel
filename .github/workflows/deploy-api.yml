@@ -1,0 +1,197 @@
+# Deploy backend services (api, bot, scheduler) to the VPS via SSH.
+#
+# Trigger: push to main, but only when backend or infra files change.
+# Frontend is deployed separately by the Cloudflare Pages git integration.
+#
+# Flow:
+#   1. Build api/bot/scheduler images, tag with both `sha-<short>` and `latest`,
+#      push to GitHub Container Registry (ghcr.io/<owner>/<repo>-<service>).
+#   2. SSH into the VPS, pull the new images, run alembic migrations once,
+#      then `docker compose up -d` only the backend services.
+#   3. Verify /health responds 200 and report container state.
+#
+# Required GitHub secrets:
+#   DEPLOY_SSH_HOST          — VPS IP / hostname
+#   DEPLOY_SSH_USER          — SSH user (e.g. fasttravel)
+#   DEPLOY_SSH_KEY           — Private key (OpenSSH PEM)
+#   DEPLOY_SSH_KNOWN_HOSTS   — Output of `ssh-keyscan <host>` (optional, TOFU fallback)
+#   DEPLOY_NOTIFY_WEBHOOK    — Optional Slack/Discord webhook for failure alerts
+#
+# Graceful skip: if DEPLOY_SSH_HOST is empty (local-first phase, no VPS yet),
+# the whole job no-ops. Images are NOT built or pushed in that case to save
+# minutes and avoid polluting GHCR with unused tags.
+
+name: Deploy API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "apps/bot/**"
+      - "apps/scheduler/**"
+      - "apps/ingest/**"
+      - "infra/**"
+      - "docker-compose.yml"
+      - "docker-compose.prod.yml"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch:
+
+concurrency:
+  # Only one deploy at a time. Don't cancel — let the in-flight deploy finish.
+  group: deploy-api-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write   # required to push to ghcr.io
+
+jobs:
+  deploy:
+    name: build + push + ssh deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
+      DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+      REGISTRY: ghcr.io
+      IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+
+    steps:
+      - name: Gate — skip when VPS secrets missing (local-first phase)
+        id: gate
+        run: |
+          if [ -z "${DEPLOY_SSH_HOST}" ]; then
+            echo "Skipping deploy: DEPLOY_SSH_HOST secret not set (local-first phase)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        if: steps.gate.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: steps.gate.outputs.skip != 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        if: steps.gate.outputs.skip != 'true'
+        id: tags
+        run: |
+          # Lowercase the prefix — GHCR requires it.
+          PREFIX=$(echo "${IMAGE_PREFIX}" | tr '[:upper:]' '[:lower:]')
+          SHA="${GITHUB_SHA::7}"
+          echo "prefix=${PREFIX}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push api
+        if: steps.gate.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/api
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.prefix }}-api:${{ steps.tags.outputs.sha }}
+            ${{ steps.tags.outputs.prefix }}-api:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Build and push bot
+        if: steps.gate.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/bot
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.prefix }}-bot:${{ steps.tags.outputs.sha }}
+            ${{ steps.tags.outputs.prefix }}-bot:latest
+          cache-from: type=gha,scope=bot
+          cache-to: type=gha,mode=max,scope=bot
+
+      - name: Build and push scheduler
+        if: steps.gate.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          # Build context is ./apps (one level above) because the scheduler
+          # Dockerfile vendors apps/bot/src/publishers/. See apps/scheduler/Dockerfile.
+          context: ./apps
+          file: ./apps/scheduler/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.prefix }}-scheduler:${{ steps.tags.outputs.sha }}
+            ${{ steps.tags.outputs.prefix }}-scheduler:latest
+          cache-from: type=gha,scope=scheduler
+          cache-to: type=gha,mode=max,scope=scheduler
+
+      - name: Configure SSH
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          if [ -n "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" ]; then
+            echo "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "${DEPLOY_SSH_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Deploy on VPS
+        if: steps.gate.outputs.skip != 'true'
+        id: ssh_deploy
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_deploy -o BatchMode=yes \
+            "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" bash -se <<'REMOTE'
+          set -euo pipefail
+          cd /opt/fasttravel
+
+          echo "==> git pull"
+          git pull --ff-only origin main
+
+          echo "==> docker compose pull (backend services)"
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml pull api bot scheduler
+
+          echo "==> alembic upgrade head"
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm api \
+            alembic upgrade head
+
+          echo "==> recreate backend containers"
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps api bot scheduler
+
+          echo "==> container state"
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+
+          echo "==> health check"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsS http://localhost:8000/health > /dev/null; then
+              echo "Health check OK on attempt $i"
+              exit 0
+            fi
+            echo "Health check attempt $i failed, retrying in 3s..."
+            sleep 3
+          done
+          echo "Health check failed after 10 attempts"
+          exit 1
+          REMOTE
+
+      - name: Notify on failure (optional webhook)
+        if: failure() && steps.gate.outputs.skip != 'true' && env.NOTIFY != ''
+        env:
+          NOTIFY: ${{ secrets.DEPLOY_NOTIFY_WEBHOOK }}
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\":\"FastTravel deploy failed: ${{ github.repository }}@${{ github.sha }} — see ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            "${NOTIFY}" || true

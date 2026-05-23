@@ -1,0 +1,122 @@
+# Dependabot config — keeps deps fresh across every package manager we use.
+#
+# Cadence:
+#   - Python/npm/Docker on app code: weekly (Monday 09:00 Kyiv).
+#   - Terraform / GitHub Actions: monthly (less churn, more review burden).
+#
+# All PRs are grouped where possible to keep noise low. Major-version bumps
+# require manual review (default behaviour: separate PR per major).
+
+version: 2
+
+updates:
+  # ---------- Python (Poetry) ----------
+  - package-ecosystem: pip
+    directory: /apps/api
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"      # 07:00 UTC ≈ 09:00 Kyiv (summer)
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python", "backend"]
+    commit-message:
+      prefix: "chore(deps/api)"
+    groups:
+      api-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: pip
+    directory: /apps/scheduler
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python", "scheduler"]
+    commit-message:
+      prefix: "chore(deps/scheduler)"
+    groups:
+      scheduler-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # apps/bot doesn't have a pyproject.toml yet; once it does, add a block here.
+
+  # ---------- npm (pnpm) ----------
+  - package-ecosystem: npm
+    directory: /apps/web
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "javascript", "frontend"]
+    commit-message:
+      prefix: "chore(deps/web)"
+    groups:
+      web-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # React 19 RC pin lives in package.json — let humans bump it.
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+
+  # ---------- Docker base images ----------
+  - package-ecosystem: docker
+    directory: /apps/api
+    schedule:
+      interval: weekly
+      day: monday
+    labels: ["dependencies", "docker"]
+    commit-message:
+      prefix: "chore(deps/docker)"
+
+  - package-ecosystem: docker
+    directory: /apps/bot
+    schedule:
+      interval: weekly
+      day: monday
+    labels: ["dependencies", "docker"]
+    commit-message:
+      prefix: "chore(deps/docker)"
+
+  - package-ecosystem: docker
+    directory: /apps/scheduler
+    schedule:
+      interval: weekly
+      day: monday
+    labels: ["dependencies", "docker"]
+    commit-message:
+      prefix: "chore(deps/docker)"
+
+  - package-ecosystem: docker
+    directory: /infra/postgres
+    schedule:
+      interval: weekly
+      day: monday
+    labels: ["dependencies", "docker"]
+    commit-message:
+      prefix: "chore(deps/docker)"
+
+  # ---------- Terraform ----------
+  - package-ecosystem: terraform
+    directory: /infra/terraform
+    schedule:
+      interval: monthly
+    labels: ["dependencies", "terraform", "infra"]
+    commit-message:
+      prefix: "chore(deps/terraform)"
+
+  # ---------- GitHub Actions ----------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "chore(deps/actions)"
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]

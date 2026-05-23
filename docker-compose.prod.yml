@@ -1,0 +1,57 @@
+# Production overlay. Apply with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Differences from dev:
+#   - Postgres and Redis ports are NOT published (only reachable inside the
+#     fasttravel network). External tools must SSH-tunnel.
+#   - nginx reverse-proxy in front of the API, with LE certs mounted in.
+#   - Grafana NOT published either; reach via the nginx config.
+#   - API and bot pull images instead of building (built in CI and pushed).
+
+services:
+  postgres:
+    ports: []     # remove host-port publishing
+    # In prod, mount a custom postgresql.conf overlay if needed:
+    # volumes:
+    #   - ./infra/postgres/postgresql.prod.conf:/etc/postgresql/postgresql.conf:ro
+
+  redis:
+    ports: []
+
+  api:
+    # Use registry image built by CI in prod.
+    # image: ghcr.io/your-org/fasttravel-api:latest
+    ports: []     # only nginx fronts the API
+    environment:
+      ENVIRONMENT: prod
+
+  bot:
+    # image: ghcr.io/your-org/fasttravel-bot:latest
+    environment:
+      ENVIRONMENT: prod
+
+  scheduler:
+    # image: ghcr.io/your-org/fasttravel-scheduler:latest
+    environment:
+      ENVIRONMENT: prod
+
+  prometheus:
+    ports: []
+
+  grafana:
+    ports: []
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ft_nginx
+    restart: unless-stopped
+    volumes:
+      - ./infra/nginx:/etc/nginx/conf.d:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+    networks:
+      - fasttravel

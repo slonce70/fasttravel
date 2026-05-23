@@ -1,0 +1,30 @@
+# CODEOWNERS — auto-assigns reviewers based on path globs.
+#
+# TODO(setup): replace @YOUR_USERNAME with the actual GitHub handle(s) after
+# repo init. Multiple owners possible: `* @alice @bob`. Teams use @org/team-slug.
+#
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+
+# Default owner for everything not matched below.
+* @YOUR_USERNAME
+
+# Backend services
+/apps/api/         @YOUR_USERNAME
+/apps/scheduler/   @YOUR_USERNAME
+/apps/bot/         @YOUR_USERNAME
+/apps/ingest/      @YOUR_USERNAME
+
+# Frontend
+/apps/web/         @YOUR_USERNAME
+
+# Infrastructure
+/infra/            @YOUR_USERNAME
+/docker-compose.yml      @YOUR_USERNAME
+/docker-compose.prod.yml @YOUR_USERNAME
+
+# CI / repo meta
+/.github/          @YOUR_USERNAME
+
+# Architecture / decisions — gate behind explicit review.
+/docs/ARCHITECTURE.md @YOUR_USERNAME
+/docs/DECISIONS.md    @YOUR_USERNAME

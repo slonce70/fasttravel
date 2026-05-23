@@ -1,0 +1,157 @@
+# Weekly security scan — runs Trivy on built Docker images and pip/npm audits.
+#
+# Trigger:
+#   - Schedule: every Monday at 04:00 UTC.
+#   - workflow_dispatch for ad-hoc runs.
+#
+# Failure policy: jobs report findings to the GitHub Security tab (SARIF
+# upload) and to the run log, but do NOT fail the workflow on findings.
+# We surface them; the human triages. Tighten to fail-on-critical once we
+# have a clean baseline.
+
+name: Security Scan
+
+on:
+  schedule:
+    # Monday 04:00 UTC.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # For uploading Trivy SARIF results to the Security tab.
+  security-events: write
+
+concurrency:
+  group: security-scan
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+  POETRY_VERSION: "1.8.4"
+  PNPM_VERSION: "9.12.0"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Trivy: scan every locally-built Docker image for CRITICAL/HIGH CVEs.
+  # ---------------------------------------------------------------------------
+  trivy-images:
+    name: trivy image scan — ${{ matrix.image.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: api
+            context: ./apps/api
+            file: ./apps/api/Dockerfile
+            tag: fasttravel/api:scan
+          - name: bot
+            context: ./apps/bot
+            file: ./apps/bot/Dockerfile
+            tag: fasttravel/bot:scan
+          - name: scheduler
+            context: ./apps
+            file: ./apps/scheduler/Dockerfile
+            tag: fasttravel/scheduler:scan
+          - name: postgres
+            context: ./infra/postgres
+            file: ./infra/postgres/Dockerfile
+            tag: fasttravel/postgres:scan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image locally
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+          push: false
+          load: true
+          tags: ${{ matrix.image.tag }}
+
+      - name: Trivy scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ matrix.image.tag }}
+          format: sarif
+          output: trivy-${{ matrix.image.name }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0"   # do not fail; we report via SARIF
+
+      - name: Upload SARIF to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.image.name }}.sarif
+          category: trivy-${{ matrix.image.name }}
+
+  # ---------------------------------------------------------------------------
+  # pip-audit: scan every Python service's installed deps.
+  # ---------------------------------------------------------------------------
+  pip-audit:
+    name: pip-audit — ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, scheduler]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry + pip-audit
+        run: |
+          pip install "poetry==${{ env.POETRY_VERSION }}" pip-audit
+
+      - name: Install service deps
+        working-directory: apps/${{ matrix.service }}
+        run: poetry install --no-root --only main
+
+      - name: Run pip-audit (informational)
+        working-directory: apps/${{ matrix.service }}
+        # `|| true` keeps the job green; findings show in the log.
+        # Tighten to fail-on-vuln once we have a clean baseline.
+        run: poetry run pip-audit --strict || true
+
+  # ---------------------------------------------------------------------------
+  # npm audit on the web app.
+  # ---------------------------------------------------------------------------
+  npm-audit:
+    name: pnpm audit — web
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install deps
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Audit (high + critical, informational)
+        # `|| true` so we don't gate on transitive deps we can't immediately
+        # upgrade. The log surfaces the findings.
+        run: pnpm audit --audit-level high || true

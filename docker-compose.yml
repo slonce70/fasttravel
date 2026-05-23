@@ -1,0 +1,165 @@
+# Local-dev compose. Production overrides live in docker-compose.prod.yml.
+#
+# Usage:
+#   cp .env.example .env
+#   docker compose up -d postgres redis
+#   docker compose run --rm api alembic upgrade head
+#   docker compose up
+#
+# Production:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+name: fasttravel
+
+networks:
+  fasttravel:
+    driver: bridge
+
+volumes:
+  pg_data:
+  redis_data:
+  grafana_data:
+  prometheus_data:
+
+services:
+  postgres:
+    build:
+      context: ./infra/postgres
+      dockerfile: Dockerfile
+    image: fasttravel/postgres:16
+    container_name: ft_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fasttravel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fasttravel_dev_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-fasttravel}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      # Dev convenience — psql from host. Removed in prod overlay.
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fasttravel} -d ${POSTGRES_DB:-fasttravel}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - fasttravel
+
+  redis:
+    image: redis:7-alpine
+    container_name: ft_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - fasttravel
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    image: fasttravel/api:dev
+    container_name: ft_api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Override the host names so they point at compose service names
+      # (overriding any localhost values a developer might have in .env).
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - fasttravel
+
+  bot:
+    build:
+      context: ./apps/bot
+      dockerfile: Dockerfile
+    image: fasttravel/bot:dev
+    container_name: ft_bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - fasttravel
+
+  scheduler:
+    # Build context spans both scheduler/ and bot/ so the image can vendor
+    # apps/bot/src/publishers/broadcast.py — the shared Telegram publisher
+    # the post_deals job depends on. See apps/scheduler/Dockerfile header.
+    build:
+      context: ./apps
+      dockerfile: scheduler/Dockerfile
+    image: fasttravel/scheduler:dev
+    container_name: ft_scheduler
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}
+      REDIS_URL: redis://redis:6379/0
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - fasttravel
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ft_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - fasttravel
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: ft_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - fasttravel

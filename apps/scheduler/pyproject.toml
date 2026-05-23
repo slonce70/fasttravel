@@ -1,0 +1,56 @@
+# Poetry chosen for the same reasons documented in apps/api/pyproject.toml:
+# strict lockfile, clean `poetry export` for multi-stage Docker, and good
+# group separation for dev/test/main deps. Keeping the scheduler aligned
+# with the API stack also means devs can re-use mental model and tooling.
+[tool.poetry]
+name = "fasttravel-scheduler"
+version = "0.1.0"
+description = "FastTravel scheduler — APScheduler jobs (refresh MVs, detect deals, post to Telegram, partition GC)"
+authors = ["FastTravel <hi@fasttravel.com.ua>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+apscheduler = "^3.10.4"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.36"}
+asyncpg = "^0.30.0"
+redis = "^5.2.0"
+aiogram = "^3.13.1"
+pydantic = "^2.9.2"
+pydantic-settings = "^2.6.0"
+structlog = "^24.4.0"
+sentry-sdk = {extras = ["asyncio"], version = "^2.18.0"}
+# python:3.12-slim does NOT bundle zoneinfo data; APScheduler timezone="Europe/Kyiv"
+# would raise ZoneInfoNotFoundError without it. Pulling the wheel-only `tzdata`
+# package is cheaper than apt-get'ing system tzdata in Dockerfile.
+tzdata = "^2024.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.3"
+pytest-asyncio = "^0.24.0"
+ruff = "^0.7.4"
+mypy = "^1.13.0"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

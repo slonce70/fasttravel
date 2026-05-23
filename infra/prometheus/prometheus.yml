@@ -1,0 +1,15 @@
+# Minimal Prometheus config. Scrapes the FastAPI /metrics endpoint
+# (exposed via prometheus-fastapi-instrumentator).
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: 'fasttravel-api'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['api:8000']
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

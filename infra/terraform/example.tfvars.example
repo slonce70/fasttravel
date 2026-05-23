@@ -1,0 +1,55 @@
+# ============================================================================
+# FastTravel — example terraform.tfvars
+# Copy to terraform.tfvars and fill with real values. NEVER commit terraform.tfvars.
+# ============================================================================
+
+# ---- OCI authentication ----------------------------------------------------
+# Where to find these in the Oracle Cloud Console:
+#
+#  tenancy_ocid:    Profile (top-right avatar) → Tenancy → OCID
+#  user_ocid:       Profile → User Settings → OCID
+#  fingerprint:     Profile → User Settings → Resources → API Keys → "Fingerprint"
+#                   (shown after you upload your public key)
+#  private_key_path: Local path to the PEM private key paired with the API public key.
+#                    Generate with:
+#                      openssl genrsa -out ~/.oci/fasttravel_api_key.pem 2048
+#                      openssl rsa -pubout -in  ~/.oci/fasttravel_api_key.pem \
+#                                          -out ~/.oci/fasttravel_api_key_public.pem
+#                    Upload the public PEM via Console → API Keys → Add API Key.
+
+tenancy_ocid     = "ocid1.tenancy.oc1..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+user_ocid        = "ocid1.user.oc1..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+fingerprint      = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+private_key_path = "/home/youruser/.oci/fasttravel_api_key.pem"
+
+# ---- Region & compartment --------------------------------------------------
+# Tip: A1.Flex capacity in eu-frankfurt-1 / eu-amsterdam-1 is often scarce.
+# If you hit "Out of host capacity" repeatedly, try uk-london-1.
+# For a brand-new Always Free tenancy with no sub-compartments, compartment_ocid == tenancy_ocid.
+
+region           = "eu-frankfurt-1"
+compartment_ocid = "ocid1.tenancy.oc1..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# ---- VM --------------------------------------------------------------------
+# availability_domain_index: 0 → first AD returned by the API.
+# If you see "Out of host capacity", increment to 1 then 2 and re-apply.
+
+availability_domain_index = 0
+instance_name             = "fasttravel-prod"
+instance_ocpus            = 4
+instance_memory_gb        = 24
+boot_volume_size_gb       = 200
+
+# ---- SSH -------------------------------------------------------------------
+# Generate locally with:
+#   ssh-keygen -t ed25519 -f ~/.ssh/fasttravel_oracle -C "fasttravel-prod"
+
+ssh_public_key_path = "/home/youruser/.ssh/fasttravel_oracle.pub"
+
+# ---- Networking ------------------------------------------------------------
+# Tighten ssh_ingress_cidr to your own /32 for extra hardening (e.g. "203.0.113.45/32").
+# fail2ban + key-only auth (configured in cloud-init.yml) make 0.0.0.0/0 acceptable for MVP.
+
+vcn_cidr         = "10.0.0.0/16"
+subnet_cidr      = "10.0.1.0/24"
+ssh_ingress_cidr = "0.0.0.0/0"

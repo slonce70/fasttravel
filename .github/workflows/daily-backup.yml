@@ -1,0 +1,144 @@
+# Daily PostgreSQL backup → Cloudflare R2.
+#
+# Flow:
+#   1. SSH into the production VPS.
+#   2. Dump the fasttravel database via the running postgres container.
+#   3. gzip the dump locally on the VPS.
+#   4. Copy it down to the runner, upload to R2 (S3-compatible).
+#   5. Retain the most recent 30 dumps; delete older.
+#
+# Required GitHub secrets (Settings → Secrets and variables → Actions):
+#   BACKUP_SSH_HOST          — IP or hostname of the VPS (e.g. 1.2.3.4)
+#   BACKUP_SSH_USER          — SSH user with docker compose access (e.g. fasttravel)
+#   BACKUP_SSH_KEY           — Full private SSH key (PEM, OpenSSH format)
+#   BACKUP_SSH_KNOWN_HOSTS   — Output of `ssh-keyscan <host>` for the VPS
+#   R2_ACCOUNT_ID            — Cloudflare account ID
+#   R2_ACCESS_KEY_ID         — R2 API token (S3 access key)
+#   R2_SECRET_ACCESS_KEY     — R2 API token (S3 secret)
+#   R2_BUCKET                — Bucket name (e.g. fasttravel-backups)
+#
+# Graceful skip: while we're in local-first phase (no VPS yet), the workflow
+# checks for BACKUP_SSH_HOST and no-ops if it's empty. This keeps scheduled
+# runs from spamming red Xs in the Actions tab.
+
+name: Daily Backup
+
+on:
+  schedule:
+    # 01:00 UTC = 03:00 Europe/Kyiv (summer time). Cron is always UTC.
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: daily-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: pg_dump → R2
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      BACKUP_SSH_HOST: ${{ secrets.BACKUP_SSH_HOST }}
+      BACKUP_SSH_USER: ${{ secrets.BACKUP_SSH_USER }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+
+    steps:
+      - name: Gate — skip when VPS / R2 secrets missing (local-first phase)
+        id: gate
+        run: |
+          if [ -z "${BACKUP_SSH_HOST}" ] || [ -z "${R2_ACCOUNT_ID}" ] || [ -z "${R2_BUCKET}" ]; then
+            echo "Skipping: backup secrets not configured (likely local-first phase)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure SSH
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.BACKUP_SSH_KEY }}" > ~/.ssh/id_backup
+          chmod 600 ~/.ssh/id_backup
+          if [ -n "${{ secrets.BACKUP_SSH_KNOWN_HOSTS }}" ]; then
+            echo "${{ secrets.BACKUP_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          else
+            # Fallback: keyscan at runtime. Less secure (TOFU), but unblocks setup.
+            ssh-keyscan -H "${BACKUP_SSH_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Install rclone
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Configure rclone for Cloudflare R2
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf <<EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${R2_ACCESS_KEY_ID}
+          secret_access_key = ${R2_SECRET_ACCESS_KEY}
+          endpoint = https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+          acl = private
+          EOF
+          chmod 600 ~/.config/rclone/rclone.conf
+
+      - name: Dump database on VPS
+        if: steps.gate.outputs.skip != 'true'
+        id: dump
+        run: |
+          set -euo pipefail
+          STAMP=$(date -u +%F-%H%M%S)
+          REMOTE_PATH="/tmp/fasttravel-backup-${STAMP}.sql.gz"
+          echo "stamp=${STAMP}" >> "$GITHUB_OUTPUT"
+          echo "remote_path=${REMOTE_PATH}" >> "$GITHUB_OUTPUT"
+
+          ssh -i ~/.ssh/id_backup -o BatchMode=yes "${BACKUP_SSH_USER}@${BACKUP_SSH_HOST}" \
+            "cd /opt/fasttravel && docker compose exec -T postgres \
+              pg_dump -U fasttravel -d fasttravel --no-owner --clean --if-exists \
+              | gzip -9 > ${REMOTE_PATH} && ls -lh ${REMOTE_PATH}"
+
+      - name: Pull dump to runner
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          mkdir -p ./backups
+          scp -i ~/.ssh/id_backup -o BatchMode=yes \
+            "${BACKUP_SSH_USER}@${BACKUP_SSH_HOST}:${{ steps.dump.outputs.remote_path }}" \
+            ./backups/
+
+      - name: Upload to R2
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          rclone copy ./backups/ "r2:${R2_BUCKET}/postgres/" \
+            --s3-no-check-bucket --progress
+          rclone lsl "r2:${R2_BUCKET}/postgres/" | tail -5
+
+      - name: Cleanup remote tmp file
+        if: always() && steps.gate.outputs.skip != 'true'
+        run: |
+          ssh -i ~/.ssh/id_backup -o BatchMode=yes "${BACKUP_SSH_USER}@${BACKUP_SSH_HOST}" \
+            "rm -f ${{ steps.dump.outputs.remote_path }}" || true
+
+      - name: Retain last 30 backups (delete older)
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          # List all backups newest-first, skip the 30 newest, delete the rest.
+          rclone lsf "r2:${R2_BUCKET}/postgres/" --files-only \
+            | sort -r \
+            | tail -n +31 \
+            | while read -r f; do
+                if [ -n "$f" ]; then
+                  echo "Deleting old backup: $f"
+                  rclone deletefile "r2:${R2_BUCKET}/postgres/$f" || true
+                fi
+              done

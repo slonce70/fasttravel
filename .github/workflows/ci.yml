@@ -1,0 +1,293 @@
+# CI — runs on every PR and push to main.
+#
+# Goals:
+#   1. Catch lint/type/test regressions before merge.
+#   2. Validate docker-compose definitions and that all images build.
+#   3. Be cheap enough to run on every push (~5 min total wall clock).
+#
+# Notes for maintainers:
+#   - We do NOT depend on poetry.lock / pnpm-lock.yaml being committed yet.
+#     Once they exist, swap the cache strategy back to actions/setup-python
+#     `cache: poetry` and `pnpm install --frozen-lockfile`.
+#   - mypy runs with continue-on-error because pyproject has strict=true but
+#     the codebase isn't fully typed yet. Tighten this gate when ready.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  # Cancel superseded runs on the same ref to save minutes.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+  POETRY_VERSION: "1.8.4"
+  PNPM_VERSION: "9.12.0"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Backend API: lint + typecheck + pytest (with Postgres + Redis services)
+  # ---------------------------------------------------------------------------
+  backend-lint-test:
+    name: backend (api) lint + test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+      DATABASE_URL_SYNC: postgresql+psycopg://test:test@localhost:5432/test
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: test
+      LOG_LEVEL: WARNING
+
+    defaults:
+      run:
+        working-directory: apps/api
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          # No `cache: poetry` here — poetry.lock isn't committed yet.
+          # We rely on the pip cache below instead.
+
+      - name: Cache pip + poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/pypoetry
+            ~/.local/share/pypoetry
+          key: poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('apps/api/pyproject.toml') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
+
+      - name: Install Poetry
+        run: pip install "poetry==${{ env.POETRY_VERSION }}"
+
+      - name: Install dependencies
+        run: poetry install --no-root --with dev
+
+      - name: Lint (ruff check)
+        run: poetry run ruff check src/ tests/
+
+      - name: Format check (ruff format)
+        run: poetry run ruff format --check src/ tests/
+
+      - name: Type check (mypy)
+        # pyproject.toml has strict=true but the codebase isn't fully typed.
+        # Keep this informational until we drop strict or finish typing.
+        continue-on-error: true
+        run: poetry run mypy src/
+
+      - name: Run migrations
+        run: poetry run alembic upgrade head
+
+      - name: Run tests with coverage
+        run: poetry run pytest --cov=src --cov-report=xml --cov-report=term
+
+      - name: Upload coverage to Codecov
+        # Won't block CI if CODECOV_TOKEN is missing (open-source repos work without).
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: apps/api/coverage.xml
+          flags: backend-api
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  # ---------------------------------------------------------------------------
+  # Scheduler: lint + typecheck + (pytest when a tests/ dir exists)
+  # ---------------------------------------------------------------------------
+  scheduler-lint-test:
+    name: scheduler lint + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/scheduler
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip + poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/pypoetry
+            ~/.local/share/pypoetry
+          key: poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('apps/scheduler/pyproject.toml') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
+
+      - name: Install Poetry
+        run: pip install "poetry==${{ env.POETRY_VERSION }}"
+
+      - name: Install dependencies
+        run: poetry install --no-root --with dev
+
+      - name: Lint (ruff check)
+        run: poetry run ruff check src/
+
+      - name: Format check (ruff format)
+        run: poetry run ruff format --check src/
+
+      - name: Type check (mypy)
+        continue-on-error: true
+        run: poetry run mypy src/ || true
+
+      - name: Run tests (if tests/ exists)
+        run: |
+          if [ -d tests ] && [ -n "$(ls -A tests 2>/dev/null)" ]; then
+            poetry run pytest
+          else
+            echo "No tests/ directory yet — skipping pytest. Remove this guard once tests are added."
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Bot: lint only (no pyproject.toml / no tests yet)
+  # ---------------------------------------------------------------------------
+  bot-lint-test:
+    name: bot lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff
+        run: pip install "ruff==0.7.4"
+
+      - name: Lint (ruff check)
+        run: ruff check apps/bot/src
+
+      - name: Format check (ruff format)
+        run: ruff format --check apps/bot/src
+
+      # TODO: add pytest once apps/bot ships a pyproject.toml and test suite.
+
+  # ---------------------------------------------------------------------------
+  # Frontend (Next.js): lint + typecheck + build
+  # ---------------------------------------------------------------------------
+  frontend-lint-build:
+    name: frontend lint + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          # No `cache: pnpm` here — pnpm-lock.yaml isn't committed yet.
+          # Switch to it once the lockfile is in place.
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('apps/web/package.json') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-node${{ env.NODE_VERSION }}-
+
+      - name: Install dependencies
+        # Once pnpm-lock.yaml is committed, switch to --frozen-lockfile.
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Lint (eslint via next lint)
+        run: pnpm lint
+
+      - name: Typecheck (tsc --noEmit)
+        run: pnpm typecheck
+
+      - name: Build (next build)
+        run: pnpm build
+
+      - name: Upload .next build artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-next-build
+          path: |
+            apps/web/.next
+            !apps/web/.next/cache
+          retention-days: 3
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Docker smoke build: validate compose + build every image (no push).
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: docker compose validate + build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare .env for compose validation
+        # docker compose config interpolates ${VAR} so we need a populated .env.
+        # We just copy the example — no real secrets needed for `config`/`build`.
+        run: cp .env.example .env
+
+      - name: Validate docker-compose config
+        run: docker compose config --quiet
+
+      - name: Build images
+        # We deliberately do NOT push. Just confirms every Dockerfile builds.
+        run: docker compose build --pull
