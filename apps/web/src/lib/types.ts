@@ -11,7 +11,20 @@
  * avoid a translation layer. Components convert at the render boundary only.
  */
 
-export type Nights = 7 | 10 | 14;
+/**
+ * Number of nights for a tour package. Was previously a literal union
+ * `7 | 10 | 14` (the only durations the materialized view pre-aggregates),
+ * but the UI now lets users pick arbitrary durations (3, 5, 21, custom…).
+ *
+ * The MV still only has `min_7n`/`min_10n`/`min_14n` columns; for other
+ * values PriceCalendar falls back to the generic `min_price_uah` cell.
+ */
+export type Nights = number;
+
+/** Durations the calendar can render with a real per-nights price column. */
+export const PRECOMPUTED_NIGHTS = [7, 10, 14] as const;
+export type PrecomputedNights = (typeof PRECOMPUTED_NIGHTS)[number];
+
 export type MealPlan = 'AI' | 'HB';
 
 /** apps/api/src/schemas/hotel.py :: HotelOut */

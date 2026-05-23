@@ -60,7 +60,10 @@ export function PriceCalendar({
     queryKey: ['calendar', hotelId, fromIso, toIso],
     queryFn: ({ signal }) =>
       fetchCalendar(hotelId, { from: fromIso, to: toIso }, { signal }),
-    staleTime: 5 * 60 * 1000,
+    // Short staleTime so the on-mount background refresh (HotelView triggers
+    // a fresh farvater scrape via POST .../refresh) can pull updated prices
+    // into the UI without a hard reload. See #25.
+    staleTime: 30_000,
   });
 
   const { byDate, scale } = useMemo(() => buildDayIndex(data ?? [], nights), [data, nights]);
@@ -79,6 +82,15 @@ export function PriceCalendar({
         </h2>
         <Legend />
       </div>
+      {!hasPrecomputedColumn(nights) && (
+        <p
+          className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200"
+          role="status"
+        >
+          Ціна на сітці показана для будь-якої тривалості. Натисніть день, щоб побачити
+          точні пропозиції для {nights} ночей.
+        </p>
+      )}
 
       {isError ? (
         <ErrorState onRetry={() => refetch()} />
@@ -211,12 +223,25 @@ function stripTime(d: Date): Date {
   return c;
 }
 
+/**
+ * Pick the right per-nights min price from a calendar row.
+ *
+ * The MV only pre-aggregates 7/10/14n columns (see ADR-007). For any other
+ * duration we fall back to `min_price_uah` — the generic min across ALL
+ * nights for that check-in date — and let the on-click offers fetch surface
+ * the precise per-nights price.
+ */
 function pickPriceForNights(row: CalendarDay | undefined, nights: Nights): number | null {
   if (!row) return null;
   if (nights === 7) return row.min_7n ?? row.min_price_uah ?? null;
   if (nights === 10) return row.min_10n ?? row.min_price_uah ?? null;
   if (nights === 14) return row.min_14n ?? row.min_price_uah ?? null;
   return row.min_price_uah ?? null;
+}
+
+/** True iff the MV has a dedicated min-price column for `nights`. */
+function hasPrecomputedColumn(nights: Nights): boolean {
+  return nights === 7 || nights === 10 || nights === 14;
 }
 
 function buildDayIndex(rows: CalendarDay[], nights: Nights) {

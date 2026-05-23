@@ -27,6 +27,7 @@ from src.jobs import (
     detect_deals,
     post_deals,
     refresh_views,
+    snapshot_farvater,
     snapshot_stub,
 )
 
@@ -46,13 +47,20 @@ _JOB_DEFAULTS = {
 def _build_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=TIMEZONE, job_defaults=_JOB_DEFAULTS)
 
-    # Snapshot stub — real ingest pipeline lands when ittour/farvater tokens
-    # are wired. Runs anyway so the schedule shape is visible in Grafana.
+    # Live farvater.travel ingest — pulls real prices for ~600 hotels across
+    # 11 countries twice daily (06:00 + 18:00 Kyiv). Stub remains registered
+    # under a separate id so we can A/B against the placeholder logs.
+    scheduler.add_job(
+        snapshot_farvater,
+        CronTrigger(hour="6,18", minute=0, timezone=TIMEZONE),
+        id="snapshot_farvater",
+        name="snapshot_farvater (06:00 + 18:00 Kyiv)",
+    )
     scheduler.add_job(
         snapshot_stub,
-        CronTrigger(hour="6,18", minute=0, timezone=TIMEZONE),
+        CronTrigger(hour=4, minute=0, timezone=TIMEZONE),
         id="snapshot_stub",
-        name="snapshot_stub (06:00 + 18:00 Kyiv)",
+        name="snapshot_stub (04:00 Kyiv heartbeat — telemetry only)",
     )
 
     # Refresh MVs first, then detect deals, then post — chained on the hour.
