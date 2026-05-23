@@ -42,6 +42,23 @@ HOT_KEY_TTL_S = 86400
 # `refresh_worker_loop` BRPOPs. Survives API restarts (which FastAPI's
 # `BackgroundTasks` did not).
 REFRESH_QUEUE_KEY = "refresh:queue"
+# Hard cap on the persistent queue so an attacker iterating hotel_ids can't
+# fill Redis (the queue is appendonly → persisted to disk). 200 is roughly
+# 2× the size of a realistic burst from `snapshot_hot` (50 hot hotels)
+# plus a small user trickle. Beyond that, reject 503 so the upstream rate
+# limiter / human notices.
+REFRESH_QUEUE_MAX_LEN = 200
+
+# Keep strong references to fire-and-forget tasks so the event loop's weak
+# ref doesn't garbage-collect them mid-flight. CPython has bitten plenty
+# of people with this pattern.
+_pending_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_fire_and_forget(coro) -> None:
+    t = asyncio.create_task(coro)
+    _pending_tasks.add(t)
+    t.add_done_callback(_pending_tasks.discard)
 
 
 @router.get("/{slug}", response_model=HotelOut)
@@ -85,8 +102,10 @@ async def hotel_calendar(
     if (to_date - from_date).days > 180:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="window too wide (max 180 days)")
     # Record interest *before* the read so a slow DB query still earns
-    # the hotel its hot-priority score for the next sweep.
-    asyncio.create_task(_bump_hot_counter(hotel_id))
+    # the hotel its hot-priority score for the next sweep. Held in a
+    # module-level set — see `_spawn_fire_and_forget` for the gc-safety
+    # rationale.
+    _spawn_fire_and_forget(_bump_hot_counter(hotel_id))
     return await get_calendar(session, hotel_id, from_date, to_date, meal_plan=meal_plan)
 
 
@@ -113,132 +132,6 @@ class RefreshResponse(BaseModel):
     eta_seconds: int
     reason: str | None = None
 
-
-async def _refresh_one_hotel(hotel_id: int, farvater_key: str) -> None:
-    """Re-pull a single hotel from farvater's price-calendar endpoint and
-    write to price_observations. Heavy import is kept *inside* the function
-    so the API container doesn't need httpx until a refresh is requested
-    (snapshot_farvater lives in apps/scheduler/, but the module is importable
-    via the shared PYTHONPATH layout)."""
-    try:
-        # apps/scheduler is on PYTHONPATH thanks to docker volume mount in
-        # docker-compose; for the API container without that mount we
-        # gracefully degrade.
-        from datetime import datetime, timedelta, UTC  # local to avoid cyclic
-        import httpx, json
-        from decimal import Decimal
-        import re
-
-        CHECK_IN_OFFSETS = [3, 14, 30, 45]
-        async with httpx.AsyncClient(http2=True, timeout=20) as client:
-            all_prices = []
-            seen = set()
-            for offset in CHECK_IN_OFFSETS:
-                ci = (datetime.now(UTC).date() + timedelta(days=offset)).strftime("%d.%m.%Y")
-                url = (
-                    f"https://farvater.travel/uk/tour/stat/low-price-calendar/auto"
-                    f"?hotelKey={farvater_key}&adults=2&ages=0&meals=all&checkIn={ci}"
-                )
-                try:
-                    r = await client.post(
-                        url,
-                        json={"dateShift": 7, "nights": [7, 10, 14], "townFroms": "all"},
-                        headers={
-                            "User-Agent": "FastTravel-LiveRefresh/1.0",
-                            "Accept": "application/json",
-                            "Content-Type": "application/json",
-                        },
-                    )
-                except Exception as exc:
-                    log.warning("refresh.fetch_failed",
-                                hotel_id=hotel_id, offset=offset, error=str(exc))
-                    continue
-                if r.status_code != 200:
-                    continue
-                payload = r.json()
-                if payload.get("statusCode") != 200:
-                    continue
-                for w in payload["data"]["items"]:
-                    n = int(w["item"]["night"])
-                    for d in w["item"]["dates"]:
-                        sk = str(d.get("systemKey") or "")
-                        if sk in seen:
-                            continue
-                        seen.add(sk)
-                        try:
-                            ci_d = datetime.strptime(d["date"], "%d.%m.%Y").date()
-                        except Exception:
-                            continue
-                        all_prices.append({
-                            "check_in": ci_d,
-                            "nights": n,
-                            "meal": (d.get("meal") or "OTHER")[:8],
-                            "room": (d.get("room") or "")[:64],
-                            "uah": int(d.get("priceUAH") or 0),
-                            "usd": int(d.get("price") or 0),
-                            "sk": sk,
-                        })
-
-        if not all_prices:
-            log.info("refresh.no_prices", hotel_id=hotel_id, key=farvater_key)
-            return
-
-        # Insert + refresh MVs in one tx.
-        from src.infra.db import async_session_factory
-        async with async_session_factory() as db:
-            op_row = (await db.execute(
-                text("SELECT id FROM operators WHERE code = 'farvater'")
-            )).first()
-            if not op_row:
-                log.error("refresh.no_farvater_operator")
-                return
-            op_id = op_row[0]
-            observed_at = datetime.now(UTC)
-            fx = (Decimal(all_prices[0]["uah"]) / Decimal(all_prices[0]["usd"])
-                  if all_prices[0]["usd"] else Decimal("41.5"))
-
-            deep_link_base = (await db.execute(
-                text("""SELECT 'https://farvater.travel/uk/hotel/'
-                          || lower(d.country_iso2) || '/'
-                          || regexp_replace(h.canonical_slug, '^fv-[a-z]{2}-', '')
-                          AS url
-                        FROM hotels h
-                        JOIN destinations d
-                          ON d.id = h.destination_id AND d.parent_id IS NULL
-                        WHERE h.id = :id"""),
-                {"id": hotel_id},
-            )).scalar() or "https://farvater.travel"
-
-            payload = [
-                {
-                    "obs": observed_at, "h": hotel_id, "op": op_id,
-                    "ci": p["check_in"], "n": p["nights"], "m": p["meal"], "rm": p["room"],
-                    "ad": 2, "dc": "",
-                    "puah": p["uah"], "porig": p["usd"], "cur": "USD", "fx": fx,
-                    "dl": f"{deep_link_base}?systemKey={p['sk']}",
-                    "raw": json.dumps({"systemKey": p["sk"],
-                                        "source": "live_refresh"}),
-                }
-                for p in all_prices
-            ]
-            await db.execute(text("""
-                INSERT INTO price_observations
-                    (observed_at, hotel_id, operator_id, check_in, nights,
-                     meal_plan, room_category, adults, departure_city,
-                     price_uah, price_original, currency, fx_rate_to_uah,
-                     deep_link, raw_payload)
-                VALUES (:obs, :h, :op, :ci, :n, :m, :rm, :ad, :dc,
-                        :puah, :porig, :cur, :fx, :dl, CAST(:raw AS jsonb))"""),
-                payload,
-            )
-            # Refresh just the materialized views the hotel page reads.
-            await db.execute(text("REFRESH MATERIALIZED VIEW current_prices"))
-            await db.execute(text("REFRESH MATERIALIZED VIEW hotel_calendar_prices"))
-            await db.commit()
-
-        log.info("refresh.done", hotel_id=hotel_id, inserted=len(all_prices))
-    except Exception as exc:
-        log.error("refresh.failed", hotel_id=hotel_id, error=str(exc))
 
 
 @router.post("/{hotel_id}/refresh", response_model=RefreshResponse)
@@ -280,9 +173,35 @@ async def trigger_refresh(
         # we're up-to-date so the UI banner disappears quickly.
         return RefreshResponse(queued=False, eta_seconds=0,
                                 reason="hotel_not_mapped_to_farvater")
+    # SSRF defence-in-depth: the mapping is set by our own scraper from
+    # `\d+` regex, but assert here so a future change to the mapping path
+    # can't smuggle a non-numeric key into our outbound URL.
+    if not str(farvater_key).isdigit():
+        log.error("refresh.invalid_farvater_key",
+                  hotel_id=hotel_id, key=str(farvater_key)[:32])
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                             detail="hotel mapping invalid")
 
     redis = get_redis()
     cache_key = f"refresh:hotel:{hotel_id}"
+
+    # Queue cap — hard ceiling on the persistent list so an attacker
+    # rotating hotel_ids can't flood Redis (the list is appendonly →
+    # persisted to disk). Reject 503 well below the OOM threshold so
+    # capacity exhaustion is visible in metrics instead of swap thrashing.
+    try:
+        qlen = await redis.llen(REFRESH_QUEUE_KEY)
+        if qlen >= REFRESH_QUEUE_MAX_LEN:
+            log.warning("refresh.queue_full", current=int(qlen),
+                        cap=REFRESH_QUEUE_MAX_LEN)
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="refresh queue full, try later",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — Redis blip, let lock SET below decide
+        log.warning("refresh.queue_len_check_failed", error=str(exc))
     try:
         # SET NX EX — succeed only if no recent refresh for this hotel.
         acquired = await redis.set(cache_key, str(int(time.time())),
