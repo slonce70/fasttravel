@@ -51,6 +51,11 @@ _DEAL_TEMPLATE = (
 
 # Pull all the fields a post needs in one query. Operator + destination
 # names live behind FKs; doing the join in SQL keeps round-trips down.
+#
+# We join destinations TWICE — once for the region (where the hotel lives)
+# and once via `parent_id` for the country. After multi-country expansion
+# "Хургада" alone is ambiguous (could be Egypt or Tunisia for a future
+# reader), so the broadcast template renders "Хургада, Єгипет".
 _SELECT_UNPOSTED = text(
     """
     SELECT
@@ -65,12 +70,14 @@ _SELECT_UNPOSTED = text(
         d.deep_link,
         h.name_uk        AS hotel_name,
         h.stars          AS stars,
-        dest.name_uk     AS destination,
+        region.name_uk   AS region_name,
+        country.name_uk  AS country_name,
         o.display_name   AS operator_display_name
     FROM deals d
-    JOIN hotels h           ON h.id = d.hotel_id
-    LEFT JOIN destinations dest ON dest.id = h.destination_id
-    JOIN operators o        ON o.id = d.operator_id
+    JOIN hotels h               ON h.id = d.hotel_id
+    LEFT JOIN destinations region  ON region.id = h.destination_id
+    LEFT JOIN destinations country ON country.id = region.parent_id
+    JOIN operators o            ON o.id = d.operator_id
     WHERE d.posted_at IS NULL
     ORDER BY d.detected_at DESC
     LIMIT :lim
@@ -118,6 +125,17 @@ def _stars_str(stars: int | None) -> str:
     return "⭐" * int(stars)
 
 
+def _format_location(region: str | None, country: str | None) -> str:
+    """`region` + `country` → 'Region, Country' / 'Country' / '—'.
+
+    Region-only case shouldn't happen post-multi-country migration but we
+    keep the fallback so a misconfigured destination doesn't crash the post.
+    """
+    if region and country:
+        return f"{region}, {country}"
+    return region or country or "—"
+
+
 def _render_deal(row: object) -> str:
     """Render a deal row to a MarkdownV2 message. Pure / testable."""
     # All DB strings get escaped at the boundary. Numbers are safe.
@@ -125,7 +143,12 @@ def _render_deal(row: object) -> str:
         discount_pct=escape_markdown_v2(f"{float(row.discount_pct):.0f}"),
         hotel_name=escape_markdown_v2(row.hotel_name),
         stars_str=_stars_str(row.stars),
-        destination=escape_markdown_v2(row.destination or "—"),
+        destination=escape_markdown_v2(
+            _format_location(
+                getattr(row, "region_name", None),
+                getattr(row, "country_name", None),
+            )
+        ),
         check_in_formatted=escape_markdown_v2(_format_check_in(row.check_in)),
         nights=row.nights,
         meal_plan=escape_markdown_v2(row.meal_plan),

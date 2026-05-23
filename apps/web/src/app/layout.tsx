@@ -16,11 +16,11 @@ const inter = Inter({
 export const metadata: Metadata = {
   metadataBase: new URL('https://fasttravel.com.ua'),
   title: {
-    default: 'FastTravel — календар цін на тури в Туреччину',
+    default: 'FastTravel — календар цін на тури',
     template: '%s · FastTravel',
   },
   description:
-    'Український агрегатор турів з календарем цін. Знаходимо аномальні знижки на тури в Туреччину та постимо у Telegram.',
+    'Український агрегатор турів з календарем цін на десятки напрямків — Туреччина, Єгипет, ОАЕ, Греція, Україна та інші. Знаходимо аномальні знижки і постимо у Telegram.',
   openGraph: {
     type: 'website',
     locale: 'uk_UA',

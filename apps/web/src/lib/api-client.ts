@@ -10,6 +10,7 @@
 
 import type {
   CalendarDay,
+  CountryOut,
   Deal,
   Hotel,
   Offer,
@@ -158,4 +159,41 @@ export async function searchHotels(
   }
   const path = qs.toString() ? `/api/search?${qs.toString()}` : '/api/search';
   return apiFetch<PaginatedSearchResults>(path, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Destinations (countries + regions)
+// ---------------------------------------------------------------------------
+
+/**
+ * Catalog of all countries with their regions + hotel counts. Used by:
+ *  - SearchForm country selector
+ *  - Footer "Популярні напрямки" list
+ *  - generateStaticParams for /destinations/[country]
+ *
+ * Content is stable for hours — ISR (1h) by default to keep API load near zero.
+ */
+export async function fetchDestinations(
+  opts: FetchOptions = {},
+): Promise<CountryOut[]> {
+  return apiFetch<CountryOut[]>('/api/destinations', {
+    revalidate: 3600,
+    ...opts,
+  });
+}
+
+/** One country by URL slug ('turkey', 'egypt', ...). Returns null on 404. */
+export async function fetchDestination(
+  slug: string,
+  opts: FetchOptions = {},
+): Promise<CountryOut | null> {
+  try {
+    return await apiFetch<CountryOut>(
+      `/api/destinations/${encodeURIComponent(slug)}`,
+      { revalidate: 3600, ...opts },
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
 }
