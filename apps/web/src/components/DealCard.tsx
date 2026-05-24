@@ -77,14 +77,22 @@ export function DealCard({ deal, hotelHref, hotelName }: DealCardProps) {
           Permalink →
         </Link>
         {deal.deep_link && (
-          <a
-            href={deal.deep_link}
-            target="_blank"
-            rel="nofollow sponsored noopener"
-            className="inline-flex h-9 items-center justify-center rounded-lg bg-accent-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-600"
-          >
-            Купити →
-          </a>
+          <div className="flex flex-col items-end gap-0.5">
+            <a
+              href={deal.deep_link}
+              target="_blank"
+              rel="nofollow sponsored noopener"
+              className="inline-flex h-9 items-center justify-center rounded-lg bg-accent-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-600"
+            >
+              Купити →
+            </a>
+            {/* Ukrainian Advertising Law + Google guidance — affiliate /
+                sponsored links must be marked visibly, not only via
+                rel="sponsored" (which is invisible to users). */}
+            <span className="text-[10px] uppercase tracking-wider text-slate-400">
+              Спонсорське посилання
+            </span>
+          </div>
         )}
       </CardFooter>
     </Card>

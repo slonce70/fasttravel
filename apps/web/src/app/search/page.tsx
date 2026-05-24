@@ -4,6 +4,7 @@ import { Suspense } from 'react';
 import { Container } from '@/components/layout/Container';
 import { HotelCard } from '@/components/HotelCard';
 import { SearchForm } from '@/components/SearchForm';
+import { TelegramCta } from '@/components/TelegramCta';
 import { fetchDestinations, searchHotels } from '@/lib/api-client';
 import type { CountryOut, SearchParams } from '@/lib/types';
 
@@ -202,6 +203,9 @@ export default async function SearchPage({
             ))}
           </div>
           <SearchPagination params={params} results={results} />
+          {/* Only show on non-empty results so a "0 готелів" search page
+              doesn't get a CTA before the user has anything to act on. */}
+          <TelegramCta />
         </>
       )}
     </Container>
