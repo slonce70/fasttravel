@@ -27,7 +27,7 @@ from sqlalchemy import text
 from src.config import get_settings
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
-from src.publishers.broadcast import broadcast_deal, escape_markdown_v2, make_bot
+from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2, make_bot
 
 log = get_logger(__name__)
 

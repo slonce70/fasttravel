@@ -49,6 +49,11 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=app:app scheduler/src/ ./src/
 COPY --chown=app:app scheduler/tests/ ./tests/
 
+# Shared Python packages used by both bot and scheduler (Telegram publisher,
+# helpers). Lives in apps/shared/ at the repo root; PYTHONPATH=/app means
+# `from shared.publishers.broadcast import ...` resolves here.
+COPY --chown=app:app shared/ ./shared/
+
 USER app
 
 CMD ["python", "-m", "src.main"]
