@@ -38,6 +38,15 @@ HOT_KEY_PREFIX = "hot:hotel:"
 QUEUE_KEY = "refresh:queue"
 TOP_N = 50
 OPERATOR_CODE = "farvater"
+# Mirrors `apps/api/src/routers/hotels.py::REFRESH_MIN_INTERVAL_S` — if a
+# hotel was refreshed (user-triggered or by a previous tick) within this
+# window, we skip re-enqueueing. Keeps farvater from being hit twice for
+# the same hotel by a `POST /refresh` + `snapshot_hot` overlap.
+REFRESH_LOCK_PREFIX = "refresh:hotel:"
+# Conservative SCAN batch — big enough that ~few-hundred hot keys
+# resolve in one round-trip, small enough to keep each MATCH iteration
+# under a millisecond on a busy Redis.
+SCAN_COUNT = 200
 
 
 async def _resolve_farvater_keys(hotel_ids: list[int]) -> dict[int, str]:
@@ -71,20 +80,24 @@ async def snapshot_hot(*, top_n: int = TOP_N) -> int:
     """
     redis = get_redis()
 
-    # KEYS is O(N) over all Redis keys. With our key budget — a few
-    # hundred hot hotels max, all sharing a single prefix — that's
-    # under a millisecond. If we ever balloon past ~10k keys we
-    # switch to SCAN with a cursor.
-    keys = await redis.keys(f"{HOT_KEY_PREFIX}*")
+    # SCAN MATCH replaces the old KEYS — KEYS is O(N) blocking across the
+    # whole Redis keyspace and locks every other command until it returns.
+    # That's fine at a few hundred keys but becomes a latency problem once
+    # the hot set grows past ~10k. SCAN is non-blocking, cursor-based, and
+    # the per-iteration cost is bounded by COUNT.
+    keys: list[str] = []
+    async for k in redis.scan_iter(match=f"{HOT_KEY_PREFIX}*", count=SCAN_COUNT):
+        keys.append(k)
     if not keys:
         log.info("snapshot_hot.empty", note="no hot counters set this window")
         return 0
 
     # decode_responses=True (see apps/scheduler/src/infra/cache.py) means
     # both keys and values come back as strings — no .decode() needed.
+    # MGET in one round-trip beats per-key GET when N grows.
+    raw_values = await redis.mget(keys)
     pairs: list[tuple[int, int]] = []
-    for k in keys:
-        raw = await redis.get(k)
+    for k, raw in zip(keys, raw_values, strict=False):
         try:
             count = int(raw or 0)
         except (TypeError, ValueError):
@@ -109,11 +122,31 @@ async def snapshot_hot(*, top_n: int = TOP_N) -> int:
         log.info("snapshot_hot.no_mappings", top=len(top_ids))
         return 0
 
+    # Batch EXISTS check on the per-hotel refresh locks (`refresh:hotel:{id}`)
+    # set by `POST /api/hotels/{id}/refresh`. We skip any hotel that was
+    # just refreshed — the worker would no-op anyway, but the LPUSH itself
+    # contributes to the queue-cap, so dedup at this layer keeps capacity
+    # for hotels that actually need work.
+    lock_keys = [f"{REFRESH_LOCK_PREFIX}{hid}" for hid in mapping]
+    pipe = redis.pipeline()
+    for key in lock_keys:
+        pipe.exists(key)
+    lock_results = await pipe.execute()
+    locked = {
+        hid
+        for hid, exists in zip(mapping.keys(), lock_results, strict=False)
+        if exists
+    }
+
     now_iso = datetime.now(UTC).isoformat()
     queued = 0
+    skipped_locked = 0
     for hotel_id, count in top:
         farvater_key = mapping.get(hotel_id)
         if not farvater_key:
+            continue
+        if hotel_id in locked:
+            skipped_locked += 1
             continue
         payload = json.dumps(
             {
@@ -132,6 +165,7 @@ async def snapshot_hot(*, top_n: int = TOP_N) -> int:
         candidates=len(pairs),
         top=len(top),
         queued=queued,
+        skipped_locked=skipped_locked,
         queue=QUEUE_KEY,
     )
     return queued
