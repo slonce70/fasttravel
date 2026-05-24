@@ -10,6 +10,7 @@ Middleware:
     2. CORS                     — restricted to settings.cors_origins.
     3. Prometheus instrumentator — exposes /metrics.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -33,6 +34,7 @@ from src.routers import destinations as destinations_router
 from src.routers import health as health_router
 from src.routers import hotels as hotels_router
 from src.routers import search as search_router
+from src.routers import seo as seo_router
 
 log = get_logger("api.main")
 
@@ -107,6 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(search_router.router)
     app.include_router(deals_router.router)
     app.include_router(destinations_router.router)
+    app.include_router(seo_router.router)
 
     # /metrics — Prometheus scrape target.
     Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
