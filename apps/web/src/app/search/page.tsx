@@ -161,7 +161,14 @@ export default async function SearchPage({
         </p>
       </div>
 
-      <Suspense fallback={<div className="h-44 rounded-2xl bg-white" />}>
+      <Suspense
+        fallback={
+          <div
+            className="h-44 animate-pulse rounded-2xl bg-slate-100 ring-1 ring-slate-200"
+            aria-hidden
+          />
+        }
+      >
         <SearchForm countries={countries} defaultCountry={params.country} />
       </Suspense>
 
