@@ -187,7 +187,7 @@ jobs:
   # Bot: lint only (no pyproject.toml / no tests yet)
   # ---------------------------------------------------------------------------
   bot-lint-test:
-    name: bot lint
+    name: bot lint + test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -198,8 +198,16 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install ruff
-        run: pip install "ruff==0.7.4"
+      - name: Install dependencies
+        # No pyproject.toml yet — install the exact pins that bot/Dockerfile uses
+        # so tests run against the same versions production will ship.
+        run: |
+          pip install "ruff==0.7.4" pytest==8.3.3 pytest-asyncio==0.24.0 \
+                       aiogram==3.13.1 structlog==24.4.0 \
+                       pydantic==2.9.2 pydantic-settings==2.6.0 \
+                       httpx==0.27.2 redis==5.2.0 \
+                       prometheus-client==0.21.0 sentry-sdk==2.18.0 \
+                       "sqlalchemy[asyncio]==2.0.36" asyncpg==0.30.0
 
       - name: Lint (ruff check)
         run: ruff check apps/bot/src
@@ -207,7 +215,13 @@ jobs:
       - name: Format check (ruff format)
         run: ruff format --check apps/bot/src
 
-      # TODO: add pytest once apps/bot ships a pyproject.toml and test suite.
+      - name: Run tests
+        env:
+          # Bot tests import src modules — point PYTHONPATH at bot/ and
+          # the shared/ package so `from shared.publishers...` resolves.
+          PYTHONPATH: apps/bot:apps
+        run: |
+          cd apps/bot && python -m pytest tests/ --tb=short -q
 
   # ---------------------------------------------------------------------------
   # Frontend (Next.js): lint + typecheck + build

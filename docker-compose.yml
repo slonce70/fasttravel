@@ -103,12 +103,25 @@ services:
     container_name: ft_bot
     restart: unless-stopped
     env_file: .env
+    # 9102 = Prometheus exporter (see apps/bot/src/infra/metrics.py).
+    # Internal-only via `expose`; prod nginx doesn't proxy it.
+    expose:
+      - "9102"
     environment:
-      REDIS_URL: redis://redis:6379/0
+      # Bot reads /api so it talks to the api service via service-DNS.
+      API_BASE_URL: http://api:8000
+      # Logical Redis DB 2 — FSM state. Refresh queue stays on DB 0.
+      REDIS_URL: redis://redis:6379/2
+      # Direct DB for subscriber tables (bot is canonical writer).
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
     depends_on:
       api:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     networks:
       - fasttravel

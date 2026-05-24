@@ -17,6 +17,13 @@ scrape_configs:
     static_configs:
       - targets: ['scheduler:9101']
 
+  # Bot exposes per-handler message counters + latency histogram on
+  # an internal port. See apps/bot/src/infra/metrics.py.
+  - job_name: 'fasttravel-bot'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['bot:9102']
+
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
