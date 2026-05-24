@@ -18,6 +18,11 @@ export function HotelCard({ hotel }: HotelCardProps) {
       <Link
         href={`/hotels/${hotel.canonical_slug}`}
         className="flex flex-1 flex-col"
+        aria-label={
+          hotel.min_price_uah
+            ? `${hotel.name_uk}, ціна від ${formatPrice(hotel.min_price_uah)}`
+            : hotel.name_uk
+        }
       >
         <div className="relative h-44 w-full overflow-hidden bg-slate-100">
           {photo?.url ? (

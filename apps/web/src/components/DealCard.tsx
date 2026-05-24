@@ -73,6 +73,7 @@ export function DealCard({ deal, hotelHref, hotelName }: DealCardProps) {
         <Link
           href={`/deals/${deal.id}`}
           className="text-xs text-slate-500 hover:text-slate-700"
+          aria-label={`Постійне посилання на знижку ${heading}`}
         >
           Permalink →
         </Link>
@@ -82,6 +83,7 @@ export function DealCard({ deal, hotelHref, hotelName }: DealCardProps) {
               href={deal.deep_link}
               target="_blank"
               rel="nofollow sponsored noopener"
+              aria-label={`Купити тур у ${heading} на сайті оператора (зовнішнє посилання)`}
               className="inline-flex h-9 items-center justify-center rounded-lg bg-accent-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-600"
             >
               Купити →
