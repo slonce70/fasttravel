@@ -4,10 +4,12 @@ Each test seeds the minimal graph (operator + destination + hotel + deal)
 inside the SAVEPOINT, hits the endpoint via the ASGI client (which shares
 the same transaction), and asserts on the response payload.
 """
+
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
+from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -37,13 +39,13 @@ async def _seed_minimal_deal(
     bind a VARCHAR even when the value is NULL, which Postgres rejects.
     Ingest writes via raw SQL for the same reason (see ARCHITECTURE.md).
     """
+    suffix = uuid4().hex[:8]
     operator_id = (
         await session.execute(
             text(
-                "INSERT INTO operators (code, display_name) "
-                "VALUES (:code, :name) RETURNING id"
+                "INSERT INTO operators (code, display_name) " "VALUES (:code, :name) RETURNING id"
             ),
-            {"code": "ittour-test", "name": "IT-Tour (test)"},
+            {"code": f"ittour-test-{suffix}", "name": "IT-Tour (test)"},
         )
     ).scalar_one()
 
@@ -53,21 +55,22 @@ async def _seed_minimal_deal(
                 "INSERT INTO destinations (country_iso2, region_slug, name_uk) "
                 "VALUES (:iso, :slug, :name) RETURNING id"
             ),
-            {"iso": "TR", "slug": "antalya", "name": "Анталія"},
+            {"iso": "TR", "slug": f"antalya-test-{suffix}", "name": "Анталія"},
         )
     ).scalar_one()
 
     hotel_id = (
         await session.execute(
             text(
-                "INSERT INTO hotels (canonical_slug, name_uk, stars, destination_id) "
-                "VALUES (:slug, :name, :stars, :dest) RETURNING id"
+                "INSERT INTO hotels (canonical_slug, name_uk, stars, destination_id, photos_jsonb) "
+                "VALUES (:slug, :name, :stars, :dest, CAST(:photos AS jsonb)) RETURNING id"
             ),
             {
-                "slug": "test-hotel-pegasos-kemer-tr",
+                "slug": f"test-hotel-pegasos-kemer-tr-{suffix}",
                 "name": "Pegasos Resort (тест)",
                 "stars": 4,
                 "dest": destination_id,
+                "photos": '[{"url":"https://cdn.example.test/hotel.jpg","alt":"Hotel"}]',
             },
         )
     ).scalar_one()
@@ -117,9 +120,10 @@ async def test_get_deal_by_id_returns_enriched_payload(
     assert body["id"] == seeded.deal_id
     assert body["price_uah"] == 8000
     assert body["baseline_p50"] == 12000
-    assert body["hotel_slug"] == "test-hotel-pegasos-kemer-tr"
+    assert body["hotel_slug"].startswith("test-hotel-pegasos-kemer-tr-")
     assert body["hotel_name_uk"] == "Pegasos Resort (тест)"
     assert body["hotel_stars"] == 4
+    assert body["hotel_photo_url"] == "https://cdn.example.test/hotel.jpg"
     assert body["destination_name"] == "Анталія"
 
 
@@ -150,4 +154,5 @@ async def test_list_deals_includes_joined_hotel_fields(
     assert "hotel_slug" in first
     assert "hotel_name_uk" in first
     assert "hotel_stars" in first
+    assert "hotel_photo_url" in first
     assert "destination_name" in first

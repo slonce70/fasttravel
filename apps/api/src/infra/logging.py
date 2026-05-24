@@ -4,6 +4,7 @@ JSON renderer in prod, pretty console renderer in dev. Standard-library
 loggers (uvicorn, sqlalchemy, etc.) are routed through the same processor
 chain so the output is uniformly structured.
 """
+
 from __future__ import annotations
 
 import logging
@@ -34,9 +35,7 @@ def configure_logging() -> None:
 
     structlog.configure(
         processors=[*shared_processors, renderer],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, settings.log_level)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, settings.log_level)),
         logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
         cache_logger_on_first_use=True,
     )

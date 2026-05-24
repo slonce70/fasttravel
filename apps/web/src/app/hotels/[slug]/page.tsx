@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { Container } from '@/components/layout/Container';
 import { HotelPhotoCarousel } from '@/components/HotelPhotoCarousel';
+import { TelegramCta } from '@/components/TelegramCta';
 import { Stars } from '@/components/ui/Stars';
 import { Badge } from '@/components/ui/Badge';
 import { fetchHotel } from '@/lib/api-client';
@@ -94,6 +95,10 @@ export default async function HotelPage({
           </ul>
         </section>
       )}
+
+      {/* Most SEO traffic lands here without seeing the homepage Telegram
+          CTA — surface it on every hotel page so we don't lose the funnel. */}
+      <TelegramCta />
     </Container>
   );
 }

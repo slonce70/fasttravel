@@ -31,6 +31,10 @@ python-multipart = "^0.0.20"
 # httpx with HTTP/2 — outbound calls to farvater.travel for the on-demand
 # /api/hotels/{id}/refresh stale-while-revalidate endpoint.
 httpx = {extras = ["http2"], version = "^0.27.2"}
+# Per-IP rate limiting for the user-triggered `/api/hotels/{id}/refresh`.
+# Queue cap + per-hotel lock alone don't stop an attacker rotating hotel_ids
+# from a single IP — slowapi caps that at 10 req/IP/hour.
+slowapi = "^0.1.9"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
@@ -57,7 +61,18 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
-ignore = ["E501"]
+ignore = [
+    "E501",   # long SQL / response-model signatures are common in FastAPI
+    "B008",   # FastAPI intentionally uses Depends()/Query() defaults
+    "RUF001", # Ukrainian/Cyrillic text is intentional product copy
+    "RUF002",
+    "RUF003",
+    "RUF012", # SQLAlchemy declarative class metadata pattern
+    "RUF100", # allow noqa for optional rule sets shared across agents
+    "SIM105",
+    "UP017",
+    "UP037", # quoted relationship annotations keep TYPE_CHECKING imports cheap
+]
 
 [tool.mypy]
 python_version = "3.12"

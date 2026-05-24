@@ -3,6 +3,7 @@
 The scheduler has no FastAPI/Starlette surface, so we wire the
 asyncio + sqlalchemy integrations only.
 """
+
 from __future__ import annotations
 
 from src.config import get_settings

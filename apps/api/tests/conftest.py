@@ -7,6 +7,7 @@ reachable. Tests run inside the `api` container via
 Each test gets its own session bound to a SAVEPOINT and rolled back at
 teardown — no data leaks between tests.
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

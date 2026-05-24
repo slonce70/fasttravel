@@ -28,8 +28,8 @@ Public surface
   input passes through as ``[input]`` so the SQL filter degrades to the
   legacy ``= input`` behavior.
 """
-from __future__ import annotations
 
+from __future__ import annotations
 
 # Raw operator code → canonical product key. Keep keys upper-cased so the
 # caller can normalize case with ``.upper()`` without a second lookup.

@@ -28,7 +28,11 @@ export function OffersList({ hotelId, date, nights, mealPlan }: OffersListProps)
   const { data, isLoading, isError } = useQuery({
     queryKey: ['offers', hotelId, dateIso, nights, mealPlan],
     queryFn: ({ signal }) =>
-      fetchOffers(hotelId, { date: dateIso, nights, meal: mealPlan }, { signal }),
+      fetchOffers(
+        hotelId,
+        { date: dateIso, nights, meal: mealPlan === 'ALL' ? undefined : mealPlan },
+        { signal },
+      ),
     enabled,
     staleTime: 60 * 1000,
   });
@@ -114,14 +118,20 @@ function OfferRow({ offer, isCheapest }: { offer: Offer; isCheapest: boolean }) 
         )}
       </div>
       {offer.deep_link ? (
-        <a
-          href={offer.deep_link}
-          target="_blank"
-          rel="nofollow sponsored noopener"
-          className="inline-flex h-10 items-center justify-center rounded-lg bg-accent-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-600"
-        >
-          Купити →
-        </a>
+        <div className="flex flex-col items-end gap-0.5">
+          <a
+            href={offer.deep_link}
+            target="_blank"
+            rel="nofollow sponsored noopener"
+            className="inline-flex h-10 items-center justify-center rounded-lg bg-accent-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-600"
+          >
+            Купити →
+          </a>
+          {/* Visible sponsorship marker — see DealCard for rationale. */}
+          <span className="text-[10px] uppercase tracking-wider text-slate-400">
+            Спонсорське посилання
+          </span>
+        </div>
       ) : null}
     </Card>
   );

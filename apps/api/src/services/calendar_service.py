@@ -5,6 +5,7 @@ meal codes (``AI``/``UAI``/``HB``/``BB``/``RO``/``FB``); the API exposes
 canonical product keys (``all_inclusive``/``half_board``/…). Translation
 happens here via :mod:`src.services.meal_normalizer`.
 """
+
 from __future__ import annotations
 
 from datetime import date

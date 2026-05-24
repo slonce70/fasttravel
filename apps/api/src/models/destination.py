@@ -31,7 +31,5 @@ class Destination(Base):
     parent: Mapped["Destination | None"] = relationship(
         "Destination", remote_side="Destination.id", back_populates="children"
     )
-    children: Mapped[list["Destination"]] = relationship(
-        "Destination", back_populates="parent"
-    )
+    children: Mapped[list["Destination"]] = relationship("Destination", back_populates="parent")
     hotels: Mapped[list["Hotel"]] = relationship(back_populates="destination")

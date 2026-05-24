@@ -23,6 +23,7 @@ re-insertion. We DON'T have a UNIQUE index on (hotel_id, detected_at)
 because a deal might legitimately reappear after 24h. Re-running this
 job within the same hour is therefore safe.
 """
+
 from __future__ import annotations
 
 from sqlalchemy import text
@@ -251,11 +252,7 @@ async def detect_deals(
 
     Returns: number of new deals inserted.
     """
-    cold_only = (
-        force_cold_start
-        if force_cold_start is not None
-        else await _is_cold_start_mode()
-    )
+    cold_only = force_cold_start if force_cold_start is not None else await _is_cold_start_mode()
 
     async with async_session_factory() as db:
         try:
@@ -279,8 +276,7 @@ async def detect_deals(
                 )
             inserted = warm_rows + cold_rows
             mode = (
-                "cold_only" if cold_only
-                else f"hybrid(warm={len(warm_rows)},cold={len(cold_rows)})"
+                "cold_only" if cold_only else f"hybrid(warm={len(warm_rows)},cold={len(cold_rows)})"
             )
         except Exception:
             await db.rollback()

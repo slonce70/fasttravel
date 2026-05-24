@@ -4,6 +4,7 @@ Used by detect_deals to read the `flag:cold_start` feature flag and by
 post_deals for the (future) per-hotel anti-spam dedup key. Kept
 process-local — no shared state with apps/api at runtime.
 """
+
 from __future__ import annotations
 
 import redis.asyncio as aioredis

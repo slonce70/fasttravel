@@ -32,17 +32,18 @@ How this differs from the one-shot tools/explore/fetch_farvater_prices.py:
 This module is imported by src/main.py and scheduled cron('0 6,18 * * *')
 in Europe/Kyiv. A standalone CLI is provided for ad-hoc runs.
 """
+
 from __future__ import annotations
 
 import asyncio
 import html
 import json
 import re
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import AsyncIterator
 
 import httpx
 from sqlalchemy import text
@@ -56,8 +57,7 @@ log = get_logger(__name__)
 
 # ── tunables ──────────────────────────────────────────────────────────────
 USER_AGENT = (
-    "FastTravel-Bot/1.0 (+https://fasttravel.com.ua/about; "
-    "snapshot 2x/day; respects robots.txt)"
+    "FastTravel-Bot/1.0 (+https://fasttravel.com.ua/about; " "snapshot 2x/day; respects robots.txt)"
 )
 PER_REQUEST_DELAY_S = 1.0
 CONCURRENCY = 3
@@ -66,33 +66,29 @@ NIGHTS = [7, 10, 14]
 DEDUP_WINDOW_HOURS = 12
 
 CATALOG_COUNTRIES = [
-    ("turkey",     "TR"),
-    ("egypt",      "EG"),
-    ("uae",        "AE"),
-    ("greece",     "GR"),
-    ("spain",      "ES"),
-    ("bulgaria",   "BG"),
-    ("thailand",   "TH"),
-    ("cyprus",     "CY"),
-    ("croatia",    "HR"),
+    ("turkey", "TR"),
+    ("egypt", "EG"),
+    ("uae", "AE"),
+    ("greece", "GR"),
+    ("spain", "ES"),
+    ("bulgaria", "BG"),
+    ("thailand", "TH"),
+    ("cyprus", "CY"),
+    ("croatia", "HR"),
     ("montenegro", "ME"),
-    ("maldives",   "MV"),
+    ("maldives", "MV"),
 ]
 
-HOTEL_URL_RE = re.compile(
-    r'href="(/uk/hotel/[a-z]{2,3}/[a-z0-9-]+/)"', re.IGNORECASE
-)
-HOTEL_ID_RE = re.compile(r'hotelId:(\d+)')
-TITLE_RE = re.compile(r'<title>([^<]+)</title>', re.IGNORECASE)
+HOTEL_URL_RE = re.compile(r'href="(/uk/hotel/[a-z]{2,3}/[a-z0-9-]+/)"', re.IGNORECASE)
+HOTEL_ID_RE = re.compile(r"hotelId:(\d+)")
+TITLE_RE = re.compile(r"<title>([^<]+)</title>", re.IGNORECASE)
 DESC_RE = re.compile(r'<meta name="description" content="([^"]+)"', re.IGNORECASE)
 OG_IMG_RE = re.compile(r'<meta property="og:image" content="([^"]+)"', re.IGNORECASE)
 # Pulls all unique hotel-photo UUIDs farvater renders on the page. The
 # extractor is intentionally permissive — same UUID appears as `?size=catalog`,
 # `?size=detail`, `?size=original` in different DOM positions. We strip the
 # query string and dedupe so photos_jsonb stores stable, normalised URLs.
-GALLERY_RE = re.compile(
-    r'img\d?\.farvater\.travel/hotelimages/([a-f0-9-]{20,})', re.IGNORECASE
-)
+GALLERY_RE = re.compile(r"img\d?\.farvater\.travel/hotelimages/([a-f0-9-]{20,})", re.IGNORECASE)
 # JSON-LD `<script type="application/ld+json">{...}</script>` is the canonical
 # place farvater emits structured data (description, aggregateRating). We pick
 # the first block — it's always the Hotel object.
@@ -111,7 +107,7 @@ STAR_JSONLD_RE = re.compile(
     r'"starRating"\s*:\s*\{[^}]*?"ratingValue"\s*:\s*"?([1-5])"?',
     re.IGNORECASE,
 )
-STAR_TITLE_RE = re.compile(r'[\s\-]([1-5])\*')
+STAR_TITLE_RE = re.compile(r"[\s\-]([1-5])\*")
 
 OPERATOR_CODE = "farvater"
 
@@ -119,21 +115,21 @@ OPERATOR_CODE = "farvater"
 # ── data classes ─────────────────────────────────────────────────────────
 @dataclass
 class HotelMeta:
-    hotel_id: int          # ittour mapKey == farvater hotelKey
+    hotel_id: int  # ittour mapKey == farvater hotelKey
     url_path: str
     name: str
     country_iso2: str
     photo_url: str
     description: str
-    stars: int | None      # 1..5 when extractable; None for villas/apartments
-    photos: list[str]      # all gallery URLs (dedup'd, normalised)
+    stars: int | None  # 1..5 when extractable; None for villas/apartments
+    photos: list[str]  # all gallery URLs (dedup'd, normalised)
     review_score: float | None  # aggregateRating.ratingValue, 0..10
-    review_count: int      # aggregateRating.reviewCount
+    review_count: int  # aggregateRating.reviewCount
 
 
 @dataclass
 class PriceRow:
-    hotel_id: int          # farvater hotelKey
+    hotel_id: int  # farvater hotelKey
     check_in: date
     nights: int
     meal_plan: str
@@ -162,8 +158,19 @@ _BOILERPLATE_SUBSTRINGS = (
 # strips brand prefixes too aggressively on apartment/villa pages, leaving
 # just the rating/type + country. Bounce these to the URL-slug fallback.
 _PROPERTY_TYPE_WORDS = (
-    "app", "hotel", "hostel", "host", "villa", "apt", "resort",
-    "guesthouse", "motel", "gh", "hut", "bnb", "h/h",
+    "app",
+    "hotel",
+    "hostel",
+    "host",
+    "villa",
+    "apt",
+    "resort",
+    "guesthouse",
+    "motel",
+    "gh",
+    "hut",
+    "bnb",
+    "h/h",
 )
 _RATING_ONLY_TITLE_RE = re.compile(
     r"^(?:[1-5]\*|" + "|".join(re.escape(w) for w in _PROPERTY_TYPE_WORDS) + r")"
@@ -238,12 +245,12 @@ def _clean_title(raw: str, fallback_url_path: str | None = None) -> str:
     """
     # Two unescape passes: HTML rendered with double-escape (&amp;#39;) shows
     # up occasionally in farvater pages. Idempotent on clean text.
-    t = html.unescape(html.unescape(re.sub(r'^[ᐉ\s]+', '', raw.strip())))
-    m = re.search(r'(?:готель|hotel)\s+(.+)', t, re.IGNORECASE)
+    t = html.unescape(html.unescape(re.sub(r"^[ᐉ\s]+", "", raw.strip())))
+    m = re.search(r"(?:готель|hotel)\s+(.+)", t, re.IGNORECASE)
     if m:
         t = m.group(1)
-    t = re.sub(r'\s*\((?:наприклад|например|example)\b.*$', '', t, flags=re.IGNORECASE)
-    for sep in ('✈', '★', '☛', '☆', '·', ' - ', '|', ','):
+    t = re.sub(r"\s*\((?:наприклад|например|example)\b.*$", "", t, flags=re.IGNORECASE)
+    for sep in ("✈", "★", "☛", "☆", "·", " - ", "|", ","):
         i = t.find(sep)
         if i > 3:
             t = t[:i]
@@ -334,8 +341,7 @@ def _extract_stars(html: str) -> int | None:
 
 
 # ── network ──────────────────────────────────────────────────────────────
-async def _list_country_hotels(client: httpx.AsyncClient,
-                               country_slug: str) -> list[str]:
+async def _list_country_hotels(client: httpx.AsyncClient, country_slug: str) -> list[str]:
     url = f"https://farvater.travel/uk/hotelscatalog/strana-{country_slug}/"
     r = await client.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
     r.raise_for_status()
@@ -361,7 +367,8 @@ _HOTEL_LOC_RE = re.compile(
 
 
 async def _list_sitemap_hotels(
-    client: httpx.AsyncClient, iso2_filter: set[str] | None = None,
+    client: httpx.AsyncClient,
+    iso2_filter: set[str] | None = None,
 ) -> dict[str, list[str]]:
     """Return `{iso2: [url_path, ...]}` from farvater's hotelpages sitemap.
 
@@ -402,13 +409,13 @@ async def _list_sitemap_hotels(
             seen.add(path)
             by_iso.setdefault(iso, []).append(path)
             added += 1
-        log.info("farvater.sitemap.shard_done", url=shard_url, kept=added,
-                 cumulative=len(seen))
+        log.info("farvater.sitemap.shard_done", url=shard_url, kept=added, cumulative=len(seen))
     return by_iso
 
 
-async def _fetch_hotel_meta(client: httpx.AsyncClient, url_path: str,
-                            iso2: str) -> HotelMeta | None:
+async def _fetch_hotel_meta(
+    client: httpx.AsyncClient, url_path: str, iso2: str
+) -> HotelMeta | None:
     url = f"https://farvater.travel{url_path}"
     try:
         r = await client.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
@@ -439,7 +446,7 @@ async def _fetch_hotel_meta(client: httpx.AsyncClient, url_path: str,
     og_url = (img_m.group(1) if img_m else "")[:512]
     # og:image first so the hero photo stays consistent across pages.
     if og_url and og_url not in gallery:
-        gallery = [og_url] + gallery
+        gallery = [og_url, *gallery]
     review_score, review_count = _review_from_jsonld(jsonld)
     return HotelMeta(
         hotel_id=int(hid.group(1)),
@@ -449,14 +456,15 @@ async def _fetch_hotel_meta(client: httpx.AsyncClient, url_path: str,
         photo_url=og_url,
         description=description,
         stars=_extract_stars(page),
-        photos=gallery[:30],   # cap so a future site rewrite can't blow up the row
+        photos=gallery[:30],  # cap so a future site rewrite can't blow up the row
         review_score=review_score,
         review_count=review_count,
     )
 
 
-async def _fetch_calendar(client: httpx.AsyncClient, hotel_id: int,
-                          check_in: date) -> list[PriceRow]:
+async def _fetch_calendar(
+    client: httpx.AsyncClient, hotel_id: int, check_in: date
+) -> list[PriceRow]:
     url = (
         f"https://farvater.travel/uk/tour/stat/low-price-calendar/auto"
         f"?hotelKey={hotel_id}&adults=2&ages=0&meals=all"
@@ -465,7 +473,9 @@ async def _fetch_calendar(client: httpx.AsyncClient, hotel_id: int,
     body = {"dateShift": 7, "nights": NIGHTS, "townFroms": "all"}
     try:
         r = await client.post(
-            url, json=body, timeout=30,
+            url,
+            json=body,
+            timeout=30,
             headers={
                 "User-Agent": USER_AGENT,
                 "Accept": "application/json",
@@ -473,8 +483,7 @@ async def _fetch_calendar(client: httpx.AsyncClient, hotel_id: int,
             },
         )
     except Exception as exc:
-        log.warning("farvater.calendar_fetch_failed",
-                    hotel_id=hotel_id, error=str(exc))
+        log.warning("farvater.calendar_fetch_failed", hotel_id=hotel_id, error=str(exc))
         return []
     if r.status_code != 200:
         return []
@@ -490,61 +499,66 @@ async def _fetch_calendar(client: httpx.AsyncClient, hotel_id: int,
                 check_date = datetime.strptime(d["date"], "%d.%m.%Y").date()
             except Exception:
                 continue
-            out.append(PriceRow(
-                hotel_id=hotel_id,
-                check_in=check_date,
-                nights=n,
-                meal_plan=(d.get("meal") or "OTHER")[:8],
-                room_category=(d.get("room") or "")[:64],
-                price_uah=int(d.get("priceUAH") or 0),
-                price_usd=int(d.get("price") or 0),
-                system_key=str(d.get("systemKey") or ""),
-            ))
+            out.append(
+                PriceRow(
+                    hotel_id=hotel_id,
+                    check_in=check_date,
+                    nights=n,
+                    meal_plan=(d.get("meal") or "OTHER")[:8],
+                    room_category=(d.get("room") or "")[:64],
+                    price_uah=int(d.get("priceUAH") or 0),
+                    price_usd=int(d.get("price") or 0),
+                    system_key=str(d.get("systemKey") or ""),
+                )
+            )
     return out
 
 
 # ── DB writes ────────────────────────────────────────────────────────────
 async def _ensure_operator(db: AsyncSession) -> int:
-    row = (await db.execute(
-        text("SELECT id FROM operators WHERE code = :c"), {"c": OPERATOR_CODE}
-    )).first()
+    row = (
+        await db.execute(text("SELECT id FROM operators WHERE code = :c"), {"c": OPERATOR_CODE})
+    ).first()
     if row:
         return row[0]
-    row = (await db.execute(
-        text("""INSERT INTO operators (code, display_name,
+    row = (
+        await db.execute(
+            text("""INSERT INTO operators (code, display_name,
                                        affiliate_url_template, is_active)
                 VALUES (:c, :n, :t, TRUE)
                 RETURNING id"""),
-        {"c": OPERATOR_CODE,
-         "n": "Фарватер",
-         "t": "https://farvater.travel{external_id}"},
-    )).first()
+            {"c": OPERATOR_CODE, "n": "Фарватер", "t": "https://farvater.travel{external_id}"},
+        )
+    ).first()
     await db.commit()
     return row[0]
 
 
 async def _country_dest_id(db: AsyncSession, iso2: str) -> int | None:
-    row = (await db.execute(
-        text("""SELECT id FROM destinations
+    row = (
+        await db.execute(
+            text("""SELECT id FROM destinations
                 WHERE country_iso2 = :iso AND parent_id IS NULL
                 LIMIT 1"""),
-        {"iso": iso2},
-    )).first()
+            {"iso": iso2},
+        )
+    ).first()
     return row[0] if row else None
 
 
-async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
-                        dest_id: int | None) -> int:
+async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta, dest_id: int | None) -> int:
     """Upsert one hotel and stamp `last_seen_at = NOW()` — this is the
     catalog-freshness heartbeat that both `snapshot_catalog_farvater` and
     `snapshot_farvater` share. `last_priced_at` / `has_active_prices` are
     bumped separately by `_mark_priced` only when new prices land.
     """
     slug = _make_slug(hotel.country_iso2, hotel.url_path)
-    existing = (await db.execute(
-        text("SELECT id FROM hotels WHERE canonical_slug = :s"),
-        {"s": slug},
-    )).first()
+    existing = (
+        await db.execute(
+            text("SELECT id FROM hotels WHERE canonical_slug = :s"),
+            {"s": slug},
+        )
+    ).first()
     new_photos_list = [{"url": u, "alt": hotel.name} for u in hotel.photos]
     # Fall back to single og:image when gallery extraction yielded nothing
     # — better that than wiping a previously-extracted gallery on a transient
@@ -595,18 +609,27 @@ async def _upsert_hotel(db: AsyncSession, hotel: HotelMeta,
         )
         return existing[0]
 
-    row = (await db.execute(
-        text("""INSERT INTO hotels (
+    row = (
+        await db.execute(
+            text("""INSERT INTO hotels (
                   canonical_slug, name_uk, name_en, stars, destination_id,
                   description_uk, photos_jsonb, amenities, review_score,
                   review_count, is_active, last_seen_at, last_updated)
                 VALUES (:slug, :n, :n, :stars, :dest, :d, CAST(:p AS jsonb),
                         '{}', :rs, :rc, TRUE, NOW(), NOW())
                 RETURNING id"""),
-        {"slug": slug, "n": hotel.name, "stars": hotel.stars, "dest": dest_id,
-         "d": hotel.description, "p": new_photos or "[]",
-         "rs": hotel.review_score, "rc": hotel.review_count},
-    )).first()
+            {
+                "slug": slug,
+                "n": hotel.name,
+                "stars": hotel.stars,
+                "dest": dest_id,
+                "d": hotel.description,
+                "p": new_photos or "[]",
+                "rs": hotel.review_score,
+                "rc": hotel.review_count,
+            },
+        )
+    ).first()
     return row[0]
 
 
@@ -626,8 +649,7 @@ async def _mark_priced(db: AsyncSession, hotel_db_id: int) -> None:
     )
 
 
-async def _decay_active_prices(db: AsyncSession,
-                               stale_after_days: int = 7) -> int:
+async def _decay_active_prices(db: AsyncSession, stale_after_days: int = 7) -> int:
     """Flip hotels back to `has_active_prices = FALSE` once their
     `last_priced_at` ages past the threshold. Returns the number of
     hotels demoted in this pass.
@@ -649,54 +671,66 @@ async def _decay_active_prices(db: AsyncSession,
     return res.rowcount or 0
 
 
-async def _upsert_mapping(db: AsyncSession, hotel_db_id: int,
-                          operator_id: int, hotel: HotelMeta) -> None:
+async def _upsert_mapping(
+    db: AsyncSession, hotel_db_id: int, operator_id: int, hotel: HotelMeta
+) -> None:
     await db.execute(
         text("""INSERT INTO hotel_operator_mapping
                       (operator_id, external_id, hotel_id, external_name)
                 VALUES (:op, :ext, :h, :n)
                 ON CONFLICT (operator_id, external_id) DO NOTHING"""),
-        {"op": operator_id, "ext": str(hotel.hotel_id),
-         "h": hotel_db_id, "n": hotel.name},
+        {"op": operator_id, "ext": str(hotel.hotel_id), "h": hotel_db_id, "n": hotel.name},
     )
 
 
-async def _dedup_existing(db: AsyncSession, hotel_db_id: int,
-                          operator_id: int) -> set[tuple]:
+async def _dedup_existing(db: AsyncSession, hotel_db_id: int, operator_id: int) -> set[tuple]:
     """Return (check_in, nights, meal_plan, price_uah) tuples already in DB
     within the dedup window. We use that to skip identical inserts."""
-    rows = (await db.execute(
-        text("""SELECT check_in, nights, meal_plan, price_uah
+    rows = (
+        await db.execute(
+            text("""SELECT check_in, nights, meal_plan, price_uah
                 FROM price_observations
                 WHERE hotel_id = :h AND operator_id = :op
                   AND observed_at >= NOW() - make_interval(hours => :hh)"""),
-        {"h": hotel_db_id, "op": operator_id, "hh": DEDUP_WINDOW_HOURS},
-    )).all()
+            {"h": hotel_db_id, "op": operator_id, "hh": DEDUP_WINDOW_HOURS},
+        )
+    ).all()
     return {(r[0], r[1], r[2], r[3]) for r in rows}
 
 
-async def _insert_prices(db: AsyncSession, hotel_db_id: int,
-                         operator_id: int, hotel: HotelMeta,
-                         rows: list[PriceRow]) -> int:
+async def _insert_prices(
+    db: AsyncSession, hotel_db_id: int, operator_id: int, hotel: HotelMeta, rows: list[PriceRow]
+) -> int:
     if not rows:
         return 0
     existing = await _dedup_existing(db, hotel_db_id, operator_id)
-    new_rows = [r for r in rows
-                if (r.check_in, r.nights, r.meal_plan, r.price_uah) not in existing]
+    new_rows = [r for r in rows if (r.check_in, r.nights, r.meal_plan, r.price_uah) not in existing]
     if not new_rows:
         return 0
 
     observed_at = datetime.now(UTC)
-    fx = (Decimal(rows[0].price_uah) / Decimal(rows[0].price_usd)
-          if rows[0].price_usd else Decimal("41.5"))
+    fx = (
+        Decimal(rows[0].price_uah) / Decimal(rows[0].price_usd)
+        if rows[0].price_usd
+        else Decimal("41.5")
+    )
     deep_link_base = f"https://farvater.travel{hotel.url_path}"
 
     payload = [
         {
-            "obs": observed_at, "h": hotel_db_id, "op": operator_id,
-            "ci": r.check_in, "n": r.nights, "m": r.meal_plan, "rm": r.room_category,
-            "ad": 2, "dc": "",
-            "puah": r.price_uah, "porig": r.price_usd, "cur": "USD", "fx": fx,
+            "obs": observed_at,
+            "h": hotel_db_id,
+            "op": operator_id,
+            "ci": r.check_in,
+            "n": r.nights,
+            "m": r.meal_plan,
+            "rm": r.room_category,
+            "ad": 2,
+            "dc": "",
+            "puah": r.price_uah,
+            "porig": r.price_usd,
+            "cur": "USD",
+            "fx": fx,
             # `?q=<systemKey>` is farvater's internal booking-preselect
             # param — discovered via tools/explore/explore_price_grid.py:
             # every price cell in farvater's own grid is
@@ -704,12 +738,14 @@ async def _insert_prices(db: AsyncSession, hotel_db_id: int,
             # which farvater silently ignored, leaving the user on the
             # generic hotel page instead of the per-operator offer.
             "dl": f"{deep_link_base}?q={r.system_key}",
-            "raw": json.dumps({"systemKey": r.system_key,
-                                "source": "farvater_scrape"}),
+            "raw": json.dumps({"systemKey": r.system_key, "source": "farvater_scrape"}),
         }
         for r in new_rows
     ]
 
+    # ON CONFLICT DO NOTHING uses the uq_price_obs_natural index added by
+    # migration 007. Same-microsecond duplicates (concurrent writers) are
+    # silently skipped instead of crashing the batch.
     await db.execute(
         text("""INSERT INTO price_observations
                   (observed_at, hotel_id, operator_id, check_in, nights,
@@ -717,22 +753,35 @@ async def _insert_prices(db: AsyncSession, hotel_db_id: int,
                    price_uah, price_original, currency, fx_rate_to_uah,
                    deep_link, raw_payload)
                 VALUES (:obs, :h, :op, :ci, :n, :m, :rm, :ad, :dc,
-                        :puah, :porig, :cur, :fx, :dl, CAST(:raw AS jsonb))"""),
+                        :puah, :porig, :cur, :fx, :dl, CAST(:raw AS jsonb))
+                ON CONFLICT
+                  (hotel_id, operator_id, check_in, nights, meal_plan, observed_at)
+                DO NOTHING"""),
         payload,
     )
     return len(payload)
 
 
-async def _record_run(db: AsyncSession, operator_id: int,
-                      status: str, rows_inserted: int,
-                      error: str = "", started_at: datetime | None = None) -> None:
+async def _record_run(
+    db: AsyncSession,
+    operator_id: int,
+    status: str,
+    rows_inserted: int,
+    error: str = "",
+    started_at: datetime | None = None,
+) -> None:
     await db.execute(
         text("""INSERT INTO scrape_runs
                   (started_at, finished_at, operator_id, source, status,
                    rows_inserted, error_text)
                 VALUES (:s, NOW(), :op, 'farvater_scrape', :st, :n, :e)"""),
-        {"s": started_at or datetime.now(UTC), "op": operator_id,
-         "st": status, "n": rows_inserted, "e": error[:500]},
+        {
+            "s": started_at or datetime.now(UTC),
+            "op": operator_id,
+            "st": status,
+            "n": rows_inserted,
+            "e": error[:500],
+        },
     )
 
 
@@ -748,8 +797,11 @@ async def _http_client() -> AsyncIterator[httpx.AsyncClient]:
 
 
 async def _process_hotel(
-    client: httpx.AsyncClient, url_path: str, iso2: str,
-    operator_id: int, dest_id: int | None,
+    client: httpx.AsyncClient,
+    url_path: str,
+    iso2: str,
+    operator_id: int,
+    dest_id: int | None,
     semaphore: asyncio.Semaphore,
 ) -> int:
     """Fetch one hotel's meta + calendar(s) and write them. Returns rows inserted."""
@@ -764,7 +816,8 @@ async def _process_hotel(
         for offset in CHECK_IN_OFFSETS_DAYS:
             await asyncio.sleep(PER_REQUEST_DELAY_S)
             chunk = await _fetch_calendar(
-                client, meta.hotel_id,
+                client,
+                meta.hotel_id,
                 check_in=date.today() + timedelta(days=offset),
             )
             new = [r for r in chunk if r.system_key not in seen_keys]
@@ -781,9 +834,13 @@ async def _process_hotel(
         if inserted > 0:
             await _mark_priced(db, hotel_db_id)
         await db.commit()
-    log.info("farvater.hotel.done", hotel=meta.name[:60],
-             hotel_key=meta.hotel_id, calendar=len(all_prices),
-             inserted=inserted)
+    log.info(
+        "farvater.hotel.done",
+        hotel=meta.name[:60],
+        hotel_key=meta.hotel_id,
+        calendar=len(all_prices),
+        inserted=inserted,
+    )
     return inserted
 
 
@@ -839,9 +896,7 @@ async def _refresh_targets(
     """Return list of (url_path, iso2, hotel_db_id, external_id) tuples in
     refresh-priority order. `max_per_country` caps per-iso2 to keep a long
     backlog of unpriced hotels from monopolising a single run."""
-    rows = (
-        await db.execute(_PRICE_REFRESH_TARGETS_SQL, {"iso_filter": iso_filter})
-    ).all()
+    rows = (await db.execute(_PRICE_REFRESH_TARGETS_SQL, {"iso_filter": iso_filter})).all()
     out: list[tuple[str, str, int, str]] = []
     per_country: dict[str, int] = {}
     for row in rows:
@@ -869,10 +924,12 @@ async def snapshot_farvater(*, max_hotels_per_country: int | None = None) -> int
     """
     started_at = datetime.now(UTC)
     iso_filter = [iso2 for _, iso2 in CATALOG_COUNTRIES]
-    log.info("farvater.snapshot.start",
-             countries=len(CATALOG_COUNTRIES),
-             concurrency=CONCURRENCY,
-             max_per_country=max_hotels_per_country)
+    log.info(
+        "farvater.snapshot.start",
+        countries=len(CATALOG_COUNTRIES),
+        concurrency=CONCURRENCY,
+        max_per_country=max_hotels_per_country,
+    )
 
     semaphore = asyncio.Semaphore(CONCURRENCY)
     total_inserted = 0
@@ -890,8 +947,7 @@ async def snapshot_farvater(*, max_hotels_per_country: int | None = None) -> int
         by_country: dict[str, int] = {}
         for _, iso2, _, _ in targets:
             by_country[iso2] = by_country.get(iso2, 0) + 1
-        log.info("farvater.snapshot.targets",
-                 total=len(targets), by_country=by_country)
+        log.info("farvater.snapshot.targets", total=len(targets), by_country=by_country)
 
         async with _http_client() as client:
             # Resolve dest_id once per country to avoid round-trips per task.
@@ -901,29 +957,29 @@ async def snapshot_farvater(*, max_hotels_per_country: int | None = None) -> int
                     dest_ids[iso2] = await _country_dest_id(db, iso2)
 
             tasks = [
-                _process_hotel(client, path, iso2, operator_id,
-                                dest_ids.get(iso2), semaphore)
+                _process_hotel(client, path, iso2, operator_id, dest_ids.get(iso2), semaphore)
                 for path, iso2, _, _ in targets
             ]
             # Batch the gather so a 5 000-coroutine pile doesn't sit on
             # the event loop. Each chunk also gives us periodic progress.
             chunk = 200
             for i in range(0, len(tasks), chunk):
-                results = await asyncio.gather(
-                    *tasks[i:i + chunk], return_exceptions=True
-                )
+                results = await asyncio.gather(*tasks[i : i + chunk], return_exceptions=True)
                 inserted = sum(r for r in results if isinstance(r, int))
                 errors = sum(1 for r in results if isinstance(r, Exception))
                 total_inserted += inserted
-                log.info("farvater.snapshot.progress",
-                         processed=i + len(results), of=len(tasks),
-                         inserted=inserted, errors=errors,
-                         cumulative_inserted=total_inserted)
+                log.info(
+                    "farvater.snapshot.progress",
+                    processed=i + len(results),
+                    of=len(tasks),
+                    inserted=inserted,
+                    errors=errors,
+                    cumulative_inserted=total_inserted,
+                )
 
         # Final MV refresh so /api reads see fresh data this same tick.
         async with async_session_factory() as db:
-            for mv in ("current_prices", "hotel_calendar_prices",
-                        "price_baselines"):
+            for mv in ("current_prices", "hotel_calendar_prices", "price_baselines"):
                 await db.execute(text(f"REFRESH MATERIALIZED VIEW {mv}"))
             await db.commit()
 
@@ -933,21 +989,19 @@ async def snapshot_farvater(*, max_hotels_per_country: int | None = None) -> int
         async with async_session_factory() as db:
             decayed = await _decay_active_prices(db)
             await db.commit()
-        log.info("farvater.snapshot.decayed",
-                 hotels_demoted=decayed,
-                 threshold_days=7)
+        log.info("farvater.snapshot.decayed", hotels_demoted=decayed, threshold_days=7)
 
         async with async_session_factory() as db:
-            await _record_run(db, operator_id, "success", total_inserted,
-                              started_at=started_at)
+            await _record_run(db, operator_id, "success", total_inserted, started_at=started_at)
             await db.commit()
         log.info("farvater.snapshot.done", inserted=total_inserted)
         return total_inserted
 
     except Exception as exc:
         async with async_session_factory() as db:
-            await _record_run(db, operator_id, "failed", total_inserted,
-                              error=str(exc), started_at=started_at)
+            await _record_run(
+                db, operator_id, "failed", total_inserted, error=str(exc), started_at=started_at
+            )
             await db.commit()
         log.error("farvater.snapshot.failed", error=str(exc))
         raise
@@ -955,5 +1009,6 @@ async def snapshot_farvater(*, max_hotels_per_country: int | None = None) -> int
 
 if __name__ == "__main__":
     import sys
+
     cap = int(sys.argv[1]) if len(sys.argv) > 1 else None
     asyncio.run(snapshot_farvater(max_hotels_per_country=cap))

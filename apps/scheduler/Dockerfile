@@ -1,9 +1,7 @@
 # Multi-stage build. Final image is ARM64-compatible (Oracle Ampere A1).
 #
 # IMPORTANT: this Dockerfile is built with build context = ./apps (one level
-# up from this file) so it can COPY the shared
-# `apps/bot/src/publishers/broadcast.py` library that the post_deals job
-# depends on. See `docker-compose.yml` `scheduler.build.context`.
+# up from this file). See `docker-compose.yml` `scheduler.build.context`.
 
 # ---------- Builder stage ----------
 FROM python:3.12-slim-bookworm AS builder
@@ -51,11 +49,10 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=app:app scheduler/src/ ./src/
 COPY --chown=app:app scheduler/tests/ ./tests/
 
-# Shared Telegram publisher lib from apps/bot/. We mount it into the
-# scheduler's import path as src.publishers — kept in a sibling subpackage
-# so its only import shape is `from src.publishers.broadcast import ...`
-# both in the scheduler and (later) in the bot service.
-COPY --chown=app:app bot/src/publishers/ ./src/publishers/
+# Shared Python packages used by both bot and scheduler (Telegram publisher,
+# helpers). Lives in apps/shared/ at the repo root; PYTHONPATH=/app means
+# `from shared.publishers.broadcast import ...` resolves here.
+COPY --chown=app:app shared/ ./shared/
 
 USER app
 
