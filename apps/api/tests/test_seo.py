@@ -18,10 +18,17 @@ async def test_robots_txt_points_to_public_sitemap(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sitemap_xml_lists_active_hotel_slugs_only(
+async def test_sitemap_xml_lists_priced_hotel_slugs_only(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
+    """Sitemap must only list hotels with active prices.
+
+    A hotel that's `is_active=true` but `has_active_prices=false` is
+    catalogued-but-empty — exposing it would direct crawlers at pages
+    that render an empty calendar. The same gate /search and
+    /destinations use, so all three views stay consistent.
+    """
     dest_id = (
         await db_session.execute(
             text(
@@ -37,11 +44,13 @@ async def test_sitemap_xml_lists_active_hotel_slugs_only(
         text(
             """
             INSERT INTO hotels (
-                canonical_slug, name_uk, name_en, destination_id, is_active
+                canonical_slug, name_uk, name_en, destination_id,
+                is_active, has_active_prices
             )
             VALUES
-                ('seo-test-active-hotel', 'SEO Active Hotel', 'SEO Active Hotel', :dest, true),
-                ('seo-test-inactive-hotel', 'SEO Inactive Hotel', 'SEO Inactive Hotel', :dest, false)
+                ('seo-test-priced-hotel',   'SEO Priced Hotel',   'SEO Priced Hotel',   :dest, true,  true),
+                ('seo-test-unpriced-hotel', 'SEO Unpriced Hotel', 'SEO Unpriced Hotel', :dest, true,  false),
+                ('seo-test-inactive-hotel', 'SEO Inactive Hotel', 'SEO Inactive Hotel', :dest, false, true)
             """
         ),
         {"dest": dest_id},
@@ -52,5 +61,6 @@ async def test_sitemap_xml_lists_active_hotel_slugs_only(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/xml")
     assert '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' in response.text
-    assert "<loc>https://fasttravel.com.ua/hotels/seo-test-active-hotel</loc>" in response.text
+    assert "<loc>https://fasttravel.com.ua/hotels/seo-test-priced-hotel</loc>" in response.text
+    assert "seo-test-unpriced-hotel" not in response.text
     assert "seo-test-inactive-hotel" not in response.text
