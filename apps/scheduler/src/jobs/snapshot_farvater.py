@@ -743,6 +743,9 @@ async def _insert_prices(
         for r in new_rows
     ]
 
+    # ON CONFLICT DO NOTHING uses the uq_price_obs_natural index added by
+    # migration 007. Same-microsecond duplicates (concurrent writers) are
+    # silently skipped instead of crashing the batch.
     await db.execute(
         text("""INSERT INTO price_observations
                   (observed_at, hotel_id, operator_id, check_in, nights,
@@ -750,7 +753,10 @@ async def _insert_prices(
                    price_uah, price_original, currency, fx_rate_to_uah,
                    deep_link, raw_payload)
                 VALUES (:obs, :h, :op, :ci, :n, :m, :rm, :ad, :dc,
-                        :puah, :porig, :cur, :fx, :dl, CAST(:raw AS jsonb))"""),
+                        :puah, :porig, :cur, :fx, :dl, CAST(:raw AS jsonb))
+                ON CONFLICT
+                  (hotel_id, operator_id, check_in, nights, meal_plan, observed_at)
+                DO NOTHING"""),
         payload,
     )
     return len(payload)

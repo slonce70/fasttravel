@@ -217,6 +217,10 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
             }
             for p in fresh
         ]
+        # ON CONFLICT DO NOTHING uses uq_price_obs_natural (migration 007).
+        # The in-code 12h dedup above filters most repeats; this is the
+        # last-line guard for the rare case when two writers (snapshot_farvater
+        # + this worker) hit the same hotel at the same microsecond.
         await db.execute(
             text("""INSERT INTO price_observations
                       (observed_at, hotel_id, operator_id, check_in, nights,
@@ -224,7 +228,10 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
                        price_uah, price_original, currency, fx_rate_to_uah,
                        deep_link, raw_payload)
                     VALUES (:obs, :h, :op, :ci, :n, :m, :rm, :ad, :dc,
-                            :puah, :porig, :cur, :fx, :dl, CAST(:raw AS jsonb))"""),
+                            :puah, :porig, :cur, :fx, :dl, CAST(:raw AS jsonb))
+                    ON CONFLICT
+                      (hotel_id, operator_id, check_in, nights, meal_plan, observed_at)
+                    DO NOTHING"""),
             payload,
         )
         # Hotel just produced fresh prices — bump the search-gate flags.
