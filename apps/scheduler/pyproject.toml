@@ -27,6 +27,10 @@ sentry-sdk = {extras = ["asyncio"], version = "^2.18.0"}
 # would raise ZoneInfoNotFoundError without it. Pulling the wheel-only `tzdata`
 # package is cheaper than apt-get'ing system tzdata in Dockerfile.
 tzdata = "^2024.2"
+# Prometheus metrics — exposed on a tiny HTTP server (port 9101 by default,
+# see src.infra.metrics). Scraped by Prometheus to track job duration,
+# success/failure counts, and queue depth.
+prometheus-client = "^0.21.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"

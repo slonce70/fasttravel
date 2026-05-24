@@ -31,19 +31,36 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from src.config import get_settings
 from src.infra.logging import get_logger
+from src.infra.metrics import start_metrics_server, track_job_metrics
+from src.infra.sentry import configure_sentry
 from src.jobs import (
-    cleanup_partitions,
-    detect_deals,
-    post_deals,
-    refresh_views,
+    cleanup_partitions as _cleanup_partitions,
+    detect_deals as _detect_deals,
+    post_deals as _post_deals,
+    refresh_views as _refresh_views,
     refresh_worker_loop,
-    sitemap_long_tail_ingest,
-    snapshot_catalog_farvater,
-    snapshot_farvater,
-    snapshot_hot,
-    snapshot_stub,
+    sitemap_long_tail_ingest as _sitemap_long_tail_ingest,
+    snapshot_catalog_farvater as _snapshot_catalog_farvater,
+    snapshot_farvater as _snapshot_farvater,
+    snapshot_hot as _snapshot_hot,
+    snapshot_stub as _snapshot_stub,
 )
+
+# Decorate every job at registration so the metric labels stay consistent
+# and the underlying job modules don't have to import `metrics` themselves.
+# `refresh_worker_loop` is excluded: it's a long-running loop, not a job
+# invocation, so the run-counter/duration model doesn't fit cleanly.
+cleanup_partitions = track_job_metrics("cleanup_partitions")(_cleanup_partitions)
+detect_deals = track_job_metrics("detect_deals")(_detect_deals)
+post_deals = track_job_metrics("post_deals")(_post_deals)
+refresh_views = track_job_metrics("refresh_views")(_refresh_views)
+sitemap_long_tail_ingest = track_job_metrics("sitemap_long_tail_ingest")(_sitemap_long_tail_ingest)
+snapshot_catalog_farvater = track_job_metrics("snapshot_catalog_farvater")(_snapshot_catalog_farvater)
+snapshot_farvater = track_job_metrics("snapshot_farvater")(_snapshot_farvater)
+snapshot_hot = track_job_metrics("snapshot_hot")(_snapshot_hot)
+snapshot_stub = track_job_metrics("snapshot_stub")(_snapshot_stub)
 
 log = get_logger(__name__)
 
@@ -153,6 +170,20 @@ def _build_scheduler() -> AsyncIOScheduler:
 
 
 async def main() -> None:
+    settings = get_settings()
+
+    # Optional observability — Sentry only init's when SENTRY_DSN env is set,
+    # Prometheus exporter always boots (Prometheus scrape is opt-in via
+    # infra/prometheus/prometheus.yml; nothing breaks if it's unscraped).
+    sentry_enabled = configure_sentry()
+    start_metrics_server(settings.metrics_port)
+    log.info(
+        "scheduler.booting",
+        environment=settings.environment,
+        sentry=sentry_enabled,
+        metrics_port=settings.metrics_port,
+    )
+
     scheduler = _build_scheduler()
     scheduler.start()
 
