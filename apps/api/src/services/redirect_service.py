@@ -1,4 +1,5 @@
 """Affiliate redirect builder. Stub — implementation lands with click tracking."""
+
 from __future__ import annotations
 
 

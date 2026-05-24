@@ -16,6 +16,7 @@ Telegram throttling: aiogram has middleware for this, but for MVP we just
 sleep ``telegram_send_delay_seconds`` between sends. 2s × 5 deals = 10s
 worst case; well under the 30 msg/sec channel-broadcast soft limit.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -112,8 +113,18 @@ _MARK_POSTED = text(
 
 _MONTHS_UK = (
     "",  # 1-indexed
-    "січня", "лютого", "березня", "квітня", "травня", "червня",
-    "липня", "серпня", "вересня", "жовтня", "листопада", "грудня",
+    "січня",
+    "лютого",
+    "березня",
+    "квітня",
+    "травня",
+    "червня",
+    "липня",
+    "серпня",
+    "вересня",
+    "жовтня",
+    "листопада",
+    "грудня",
 )
 
 

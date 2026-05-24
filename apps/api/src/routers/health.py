@@ -3,6 +3,7 @@
 GET /health pings Postgres and Redis. Returns 200 with per-component
 status; returns 503 if any required dep is down.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Response, status

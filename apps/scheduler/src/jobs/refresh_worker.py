@@ -25,11 +25,11 @@ Fetch logic mirrors the original `_refresh_one_hotel` in
 behaviour (none — P0-6 will add 12h dedup at both call sites in
 one pass), same MV refresh scope.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
-import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -76,7 +76,9 @@ async def _fetch_hotel_prices(hotel_id: int, farvater_key: str) -> list[dict]:
             except Exception as exc:  # noqa: BLE001 — single offset failure is recoverable
                 log.warning(
                     "refresh_worker.fetch_failed",
-                    hotel_id=hotel_id, offset=offset, error=str(exc),
+                    hotel_id=hotel_id,
+                    offset=offset,
+                    error=str(exc),
                 )
                 continue
             if r.status_code != 200:
@@ -86,7 +88,9 @@ async def _fetch_hotel_prices(hotel_id: int, farvater_key: str) -> list[dict]:
             except Exception as exc:  # noqa: BLE001
                 log.warning(
                     "refresh_worker.bad_json",
-                    hotel_id=hotel_id, offset=offset, error=str(exc),
+                    hotel_id=hotel_id,
+                    offset=offset,
+                    error=str(exc),
                 )
                 continue
             if payload.get("statusCode") != 200:
@@ -102,15 +106,17 @@ async def _fetch_hotel_prices(hotel_id: int, farvater_key: str) -> list[dict]:
                         ci_d = datetime.strptime(d["date"], "%d.%m.%Y").date()
                     except Exception:
                         continue
-                    all_prices.append({
-                        "check_in": ci_d,
-                        "nights": n,
-                        "meal": (d.get("meal") or "OTHER")[:8],
-                        "room": (d.get("room") or "")[:64],
-                        "uah": int(d.get("priceUAH") or 0),
-                        "usd": int(d.get("price") or 0),
-                        "sk": sk,
-                    })
+                    all_prices.append(
+                        {
+                            "check_in": ci_d,
+                            "nights": n,
+                            "meal": (d.get("meal") or "OTHER")[:8],
+                            "room": (d.get("room") or "")[:64],
+                            "uah": int(d.get("priceUAH") or 0),
+                            "usd": int(d.get("price") or 0),
+                            "sk": sk,
+                        }
+                    )
     return all_prices
 
 
@@ -131,40 +137,48 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
         return 0
 
     async with async_session_factory() as db:
-        op_row = (await db.execute(
-            text("SELECT id FROM operators WHERE code = 'farvater'")
-        )).first()
+        op_row = (
+            await db.execute(text("SELECT id FROM operators WHERE code = 'farvater'"))
+        ).first()
         if not op_row:
             log.error("refresh_worker.no_farvater_operator")
             return 0
         op_id = op_row[0]
 
         # Dedup against everything we wrote for this hotel inside the window.
-        existing = (await db.execute(
-            text("""SELECT check_in, nights, meal_plan, price_uah
+        existing = (
+            await db.execute(
+                text("""SELECT check_in, nights, meal_plan, price_uah
                     FROM price_observations
                     WHERE hotel_id = :h AND operator_id = :op
                       AND observed_at >= NOW() - make_interval(hours => :hh)"""),
-            {"h": hotel_id, "op": op_id, "hh": DEDUP_WINDOW_HOURS},
-        )).all()
+                {"h": hotel_id, "op": op_id, "hh": DEDUP_WINDOW_HOURS},
+            )
+        ).all()
         existing_keys: set[tuple] = {(r[0], r[1], r[2], r[3]) for r in existing}
         fresh = [
-            p for p in prices
+            p
+            for p in prices
             if (p["check_in"], p["nights"], p["meal"], p["uah"]) not in existing_keys
         ]
         if not fresh:
             log.info(
                 "refresh_worker.all_deduped",
-                hotel_id=hotel_id, seen_in_last_12h=len(prices),
+                hotel_id=hotel_id,
+                seen_in_last_12h=len(prices),
             )
             return 0
 
         observed_at = datetime.now(UTC)
-        fx = (Decimal(fresh[0]["uah"]) / Decimal(fresh[0]["usd"])
-              if fresh[0]["usd"] else Decimal("41.5"))
+        fx = (
+            Decimal(fresh[0]["uah"]) / Decimal(fresh[0]["usd"])
+            if fresh[0]["usd"]
+            else Decimal("41.5")
+        )
 
-        deep_link_base = (await db.execute(
-            text("""SELECT 'https://farvater.travel/uk/hotel/'
+        deep_link_base = (
+            await db.execute(
+                text("""SELECT 'https://farvater.travel/uk/hotel/'
                           || lower(d.country_iso2) || '/'
                           || regexp_replace(h.canonical_slug, '^fv-[a-z]{2}-', '')
                           AS url
@@ -172,22 +186,34 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
                     JOIN destinations d
                       ON d.id = h.destination_id AND d.parent_id IS NULL
                     WHERE h.id = :id"""),
-            {"id": hotel_id},
-        )).scalar() or "https://farvater.travel"
+                {"id": hotel_id},
+            )
+        ).scalar() or "https://farvater.travel"
 
         payload = [
             {
-                "obs": observed_at, "h": hotel_id, "op": op_id,
-                "ci": p["check_in"], "n": p["nights"], "m": p["meal"], "rm": p["room"],
-                "ad": 2, "dc": "",
-                "puah": p["uah"], "porig": p["usd"], "cur": "USD", "fx": fx,
+                "obs": observed_at,
+                "h": hotel_id,
+                "op": op_id,
+                "ci": p["check_in"],
+                "n": p["nights"],
+                "m": p["meal"],
+                "rm": p["room"],
+                "ad": 2,
+                "dc": "",
+                "puah": p["uah"],
+                "porig": p["usd"],
+                "cur": "USD",
+                "fx": fx,
                 # `?q=` is the farvater-internal booking-preselect param.
                 # See snapshot_farvater for the discovery trail.
                 "dl": f"{deep_link_base}?q={p['sk']}",
-                "raw": json.dumps({
-                    "systemKey": p["sk"],
-                    "source": "live_refresh",
-                }),
+                "raw": json.dumps(
+                    {
+                        "systemKey": p["sk"],
+                        "source": "live_refresh",
+                    }
+                ),
             }
             for p in fresh
         ]
@@ -219,6 +245,7 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
     # so we use a fresh AUTOCOMMIT connection. price_baselines stays out
     # — baselines need the hourly batch tick to recompute coherently.
     from src.infra.db import async_engine
+
     async with async_engine.connect() as raw_conn:
         ac = await raw_conn.execution_options(isolation_level="AUTOCOMMIT")
         try:
@@ -252,21 +279,24 @@ async def _process_job(raw: str) -> None:
         inserted = await _persist_prices(int(hotel_id), prices)
         log.info(
             "refresh_worker.done",
-            hotel_id=hotel_id, trigger=trigger,
-            fetched=len(prices), inserted=inserted,
+            hotel_id=hotel_id,
+            trigger=trigger,
+            fetched=len(prices),
+            inserted=inserted,
         )
     except Exception as exc:  # noqa: BLE001 — log+continue, never crash the worker
         log.error(
             "refresh_worker.failed",
-            hotel_id=hotel_id, trigger=trigger, error=str(exc),
+            hotel_id=hotel_id,
+            trigger=trigger,
+            error=str(exc),
         )
 
 
 async def refresh_worker_loop() -> None:
     """Long-running BRPOP loop. Cancelled cleanly on SIGTERM by main.py."""
     redis = get_redis()
-    log.info("refresh_worker.started", queue=QUEUE_KEY,
-             brpop_timeout_s=BRPOP_TIMEOUT_S)
+    log.info("refresh_worker.started", queue=QUEUE_KEY, brpop_timeout_s=BRPOP_TIMEOUT_S)
     try:
         while True:
             try:

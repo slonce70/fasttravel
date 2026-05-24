@@ -3,6 +3,7 @@
 ALL models must be imported here so SQLAlchemy's metadata sees them
 (important for Alembic autogenerate and create_all in tests).
 """
+
 from __future__ import annotations
 
 from src.infra.db import Base

@@ -112,9 +112,8 @@ services:
       - fasttravel
 
   scheduler:
-    # Build context spans both scheduler/ and bot/ so the image can vendor
-    # apps/bot/src/publishers/broadcast.py — the shared Telegram publisher
-    # the post_deals job depends on. See apps/scheduler/Dockerfile header.
+    # Build context spans ./apps so the scheduler Dockerfile path stays stable
+    # if future jobs need sibling app assets.
     build:
       context: ./apps
       dockerfile: scheduler/Dockerfile

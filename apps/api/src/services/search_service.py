@@ -24,6 +24,7 @@ We hand-write SQL (text()) rather than going through SQLAlchemy ORM
 because the MV isn't mapped (intentional — it's storage, not domain).
 Mirrors the pattern in `calendar_service.get_calendar`.
 """
+
 from __future__ import annotations
 
 from datetime import date
@@ -62,6 +63,8 @@ async def search_hotels(
     meal_plan: str | None = None,
     price_max: int | None = None,
     stars_min: int | None = None,
+    adults: int | None = None,
+    kids: list[int] | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> PaginatedSearchResults:
@@ -107,10 +110,10 @@ async def search_hotels(
         # INNER JOIN: a hotel only shows up if it has a row for that date.
         join_clause = "JOIN prices px ON px.hotel_id = h.id"
     else:
-        # No-date path: pull the all-time MIN per hotel. LEFT JOIN so
-        # hotels without ANY prices still appear; they sort to the
-        # bottom thanks to ASC NULLS LAST. Frontend may want to show
-        # them anyway (e.g. for browsing destinations).
+        # No-date path: pull the all-time MIN per hotel. This is still a
+        # price search, not a static catalog, so JOIN (not LEFT JOIN) keeps
+        # meal-specific filters honest: a hotel without a matching price row
+        # must not render a "from —" card in a results grid.
         prices_cte = f"""
             prices AS (
                 SELECT
@@ -122,7 +125,7 @@ async def search_hotels(
                 GROUP BY hotel_id
             )
         """
-        join_clause = "LEFT JOIN prices px ON px.hotel_id = h.id"
+        join_clause = "JOIN prices px ON px.hotel_id = h.id"
 
     # Common WHERE fragments. We use CAST(:x AS TYPE) IS NULL so asyncpg
     # can infer parameter types when the filter is absent (same pattern
@@ -206,12 +209,8 @@ async def search_hotels(
             name_uk=row["name_uk"],
             stars=row["stars"],
             destination_id=row["destination_id"],
-            min_price_uah=(
-                int(row["min_price_uah"]) if row["min_price_uah"] is not None else None
-            ),
-            review_score=(
-                float(row["review_score"]) if row["review_score"] is not None else None
-            ),
+            min_price_uah=(int(row["min_price_uah"]) if row["min_price_uah"] is not None else None),
+            review_score=(float(row["review_score"]) if row["review_score"] is not None else None),
             # asyncpg already decoded the jsonb → Python list; defensive
             # coalesce in case a future driver returns None instead.
             photos=list(row["photos"] or []),
@@ -219,6 +218,23 @@ async def search_hotels(
         for row in rows
     ]
 
+    requested_adults = adults or 2
+    requested_kids = kids or []
+    pax_supported = requested_adults == 2 and requested_kids == []
+    pax_note = None
+    if not pax_supported:
+        pax_note = (
+            "MVP price snapshots are currently collected for 2 adults without children; "
+            "the hotel/price ranking below uses that basis."
+        )
+
     return PaginatedSearchResults(
-        items=items, total=int(total), limit=limit, offset=offset
+        items=items,
+        total=int(total),
+        limit=limit,
+        offset=offset,
+        price_basis_adults=2,
+        price_basis_kids=[],
+        pax_supported=pax_supported,
+        pax_note=pax_note,
     )

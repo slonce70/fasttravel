@@ -23,6 +23,7 @@ operator-driven so it bumps both: CONCURRENCY=12 / DELAY=0.05s.
 Cloudflare in front of farvater rarely rate-limits at this rate; if you
 see 429s or 503s drop CONCURRENCY first, DELAY second.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,7 +36,6 @@ from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
 from src.jobs.snapshot_farvater import (
     CATALOG_COUNTRIES,
-    CHECK_IN_OFFSETS_DAYS,
     _country_dest_id,
     _ensure_operator,
     _fetch_calendar,
@@ -111,18 +111,20 @@ async def _process_hotel(
 
     if all_prices:
         async with async_session_factory() as db:
-            inserted = await _insert_prices(
-                db, hotel_db_id, operator_id, meta, all_prices
-            )
+            inserted = await _insert_prices(db, hotel_db_id, operator_id, meta, all_prices)
             if inserted > 0:
                 await _mark_priced(db, hotel_db_id)
             await db.commit()
-        log.info("sitemap.hotel.priced", hotel=meta.name[:50],
-                 hotel_key=meta.hotel_id, inserted=inserted, raw=len(all_prices))
+        log.info(
+            "sitemap.hotel.priced",
+            hotel=meta.name[:50],
+            hotel_key=meta.hotel_id,
+            inserted=inserted,
+            raw=len(all_prices),
+        )
         return (1, inserted)
 
-    log.info("sitemap.hotel.no_inventory", hotel=meta.name[:50],
-             hotel_key=meta.hotel_id)
+    log.info("sitemap.hotel.no_inventory", hotel=meta.name[:50], hotel_key=meta.hotel_id)
     return (1, 0)
 
 
@@ -159,9 +161,12 @@ async def main(cap: int | None) -> int:
     async with _http_client() as client:
         by_iso = await _list_sitemap_hotels(client, iso2_filter=iso_filter)
         total_urls = sum(len(v) for v in by_iso.values())
-        log.info("sitemap.discovered", countries=len(by_iso),
-                 total_urls=total_urls,
-                 by_country={k: len(v) for k, v in by_iso.items()})
+        log.info(
+            "sitemap.discovered",
+            countries=len(by_iso),
+            total_urls=total_urls,
+            by_country={k: len(v) for k, v in by_iso.items()},
+        )
 
         sem = asyncio.Semaphore(CONCURRENCY)
 
@@ -171,26 +176,28 @@ async def main(cap: int | None) -> int:
 
             slugs = [_make_slug(iso2, p) for p in paths]
             existing = await _already_ingested(slugs)
-            fresh = [p for p, s in zip(paths, slugs) if s not in existing]
+            fresh = [p for p, s in zip(paths, slugs, strict=False) if s not in existing]
 
             if cap is not None and seen_hotels + len(fresh) > cap:
                 fresh = fresh[: max(0, cap - seen_hotels)]
 
-            log.info("sitemap.country.start", iso2=iso2,
-                     in_sitemap=len(paths), already=len(existing), fresh=len(fresh))
+            log.info(
+                "sitemap.country.start",
+                iso2=iso2,
+                in_sitemap=len(paths),
+                already=len(existing),
+                fresh=len(fresh),
+            )
             if not fresh:
                 continue
 
-            tasks = [
-                _process_hotel(client, p, iso2, operator_id, dest_id, sem)
-                for p in fresh
-            ]
+            tasks = [_process_hotel(client, p, iso2, operator_id, dest_id, sem) for p in fresh]
 
             # Drain in batches of ~200 to keep memory bounded and surface progress.
             batch = 200
             country_priced = 0
             for i in range(0, len(tasks), batch):
-                chunk = tasks[i:i + batch]
+                chunk = tasks[i : i + batch]
                 results = await asyncio.gather(*chunk, return_exceptions=True)
                 for r in results:
                     if isinstance(r, tuple):
@@ -198,11 +205,15 @@ async def main(cap: int | None) -> int:
                         inserted_prices += r[1]
                         if r[1] > 0:
                             country_priced += 1
-                log.info("sitemap.country.progress", iso2=iso2,
-                         processed=i + len(chunk), of=len(fresh),
-                         priced_country=country_priced,
-                         total_priced_inserted=inserted_prices,
-                         total_hotels=seen_hotels)
+                log.info(
+                    "sitemap.country.progress",
+                    iso2=iso2,
+                    processed=i + len(chunk),
+                    of=len(fresh),
+                    priced_country=country_priced,
+                    total_priced_inserted=inserted_prices,
+                    total_hotels=seen_hotels,
+                )
                 if cap is not None and seen_hotels >= cap:
                     break
 
@@ -216,8 +227,12 @@ async def main(cap: int | None) -> int:
                 break
 
     elapsed = (datetime.now(UTC) - started_at).total_seconds()
-    log.info("sitemap.done", total_hotels=seen_hotels,
-             total_priced_rows=inserted_prices, elapsed_s=int(elapsed))
+    log.info(
+        "sitemap.done",
+        total_hotels=seen_hotels,
+        total_priced_rows=inserted_prices,
+        elapsed_s=int(elapsed),
+    )
     return seen_hotels
 
 

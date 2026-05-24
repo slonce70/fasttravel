@@ -19,6 +19,7 @@ and detect_deals :10 so a slow run never starves them). No catch-up
 on missed windows — `coalesce=True` in scheduler defaults takes care
 of that.
 """
+
 from __future__ import annotations
 
 import json
@@ -47,14 +48,16 @@ async def _resolve_farvater_keys(hotel_ids: list[int]) -> dict[int, str]:
     if not hotel_ids:
         return {}
     async with async_session_factory() as db:
-        rows = (await db.execute(
-            text("""SELECT m.hotel_id, m.external_id
+        rows = (
+            await db.execute(
+                text("""SELECT m.hotel_id, m.external_id
                     FROM hotel_operator_mapping m
                     JOIN operators o ON o.id = m.operator_id
                     WHERE o.code = :op
                       AND m.hotel_id = ANY(:ids)"""),
-            {"op": OPERATOR_CODE, "ids": hotel_ids},
-        )).all()
+                {"op": OPERATOR_CODE, "ids": hotel_ids},
+            )
+        ).all()
     return {row[0]: row[1] for row in rows}
 
 
@@ -112,13 +115,15 @@ async def snapshot_hot(*, top_n: int = TOP_N) -> int:
         farvater_key = mapping.get(hotel_id)
         if not farvater_key:
             continue
-        payload = json.dumps({
-            "hotel_id": hotel_id,
-            "farvater_key": str(farvater_key),
-            "requested_at": now_iso,
-            "trigger": "hot_priority",
-            "hot_count": count,
-        })
+        payload = json.dumps(
+            {
+                "hotel_id": hotel_id,
+                "farvater_key": str(farvater_key),
+                "requested_at": now_iso,
+                "trigger": "hot_priority",
+                "hot_count": count,
+            }
+        )
         await redis.lpush(QUEUE_KEY, payload)
         queued += 1
 

@@ -8,6 +8,7 @@ in `_cors_origins` by accepting either a plain string ("a,b,c") OR a JSON
 array. The stored type is a plain `str` and we expose a parsed `list[str]`
 through `cors_origins`.
 """
+
 from __future__ import annotations
 
 from functools import cached_property, lru_cache

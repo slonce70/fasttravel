@@ -1,4 +1,5 @@
 """Async Redis client factory + health probe."""
+
 from __future__ import annotations
 
 import redis.asyncio as aioredis

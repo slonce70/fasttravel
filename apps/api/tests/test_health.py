@@ -1,4 +1,5 @@
 """Verifies the /health endpoint reports DB + Redis up."""
+
 from __future__ import annotations
 
 import pytest

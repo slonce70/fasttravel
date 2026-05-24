@@ -8,6 +8,7 @@ empty heartbeat so:
     the cron path works end-to-end,
   - Grafana dashboards can graph "scheduler ran" without #N/A holes.
 """
+
 from __future__ import annotations
 
 from src.infra.logging import get_logger

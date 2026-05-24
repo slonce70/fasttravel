@@ -19,7 +19,18 @@ export function DealCard({ deal, hotelHref, hotelName }: DealCardProps) {
   const href = hotelHref ?? (deal.hotel_slug ? `/hotels/${deal.hotel_slug}` : undefined);
   const starsStr = deal.hotel_stars ? '★'.repeat(deal.hotel_stars) : '';
   return (
-    <Card className="flex h-full flex-col transition-shadow hover:shadow-md">
+    <Card className="flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
+      {deal.hotel_photo_url && (
+        <Link href={href ?? `/deals/${deal.id}`} aria-label={heading}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={deal.hotel_photo_url}
+            alt={heading}
+            className="h-40 w-full object-cover"
+            loading="lazy"
+          />
+        </Link>
+      )}
       <CardBody className="flex flex-1 flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
           <Badge variant="accent" size="md">

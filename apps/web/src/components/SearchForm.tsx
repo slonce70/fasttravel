@@ -51,7 +51,7 @@ export function SearchForm({
   const params = useSearchParams();
 
   // URL ?country wins over the prop default — keeps state across refresh.
-  const initialCountry = (params.get('country') ?? defaultCountry ?? '').toUpperCase();
+  const initialCountry = (readSearchParam(params, 'country') ?? defaultCountry ?? '').toUpperCase();
 
   const [country, setCountry] = useState(initialCountry);
   // Phase 2 P0-1 collapsed the old date range (check_in_min/max) into a
@@ -60,14 +60,14 @@ export function SearchForm({
   // the new `check_in` param or the legacy `check_in_min` to preserve
   // bookmarks while old URLs cycle out.
   const [checkIn, setCheckIn] = useState(
-    params.get('check_in') ?? params.get('check_in_min') ?? '',
+    readSearchParam(params, 'check_in') ?? readSearchParam(params, 'check_in_min') ?? '',
   );
-  const [nights, setNights] = useState(params.get('nights') ?? '');
-  const [mealPlan, setMealPlan] = useState(params.get('meal_plan') ?? '');
-  const [priceMax, setPriceMax] = useState(params.get('price_max') ?? '');
-  const [starsMin, setStarsMin] = useState(params.get('stars_min') ?? '');
+  const [nights, setNights] = useState(readSearchParam(params, 'nights') ?? '');
+  const [mealPlan, setMealPlan] = useState(readSearchParam(params, 'meal_plan') ?? '');
+  const [priceMax, setPriceMax] = useState(readSearchParam(params, 'price_max') ?? '');
+  const [starsMin, setStarsMin] = useState(readSearchParam(params, 'stars_min') ?? '');
   const [pax, setPax] = useState<PaxValue>(() =>
-    paxFromSearchParams((k) => params.get(k)),
+    paxFromSearchParams((k) => readSearchParam(params, k)),
   );
 
   // Stable lookup so we can show "Знайти тури в {country}" without re-scanning.
@@ -236,6 +236,10 @@ export function SearchForm({
       `}</style>
     </form>
   );
+}
+
+function readSearchParam(params: ReturnType<typeof useSearchParams>, key: string): string | null {
+  return params.get(key) ?? params.get(`amp;${key}`);
 }
 
 function Field({
