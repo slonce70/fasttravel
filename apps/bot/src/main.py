@@ -26,7 +26,11 @@ from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, MenuButton
 
 from src.config import get_settings
 from src.infra.api_client import close_client
+from src.infra.db import close_engine
 from src.infra.logging import configure_logging, get_logger
+from src.infra.metrics import start_metrics_server
+from src.infra.middleware import MetricsMiddleware, ThrottleMiddleware
+from src.infra.sentry import configure_sentry
 
 log = get_logger("bot.main")
 
@@ -64,6 +68,17 @@ async def main() -> None:
     configure_logging()
     settings = get_settings()
 
+    # Optional observability — Sentry only init's when SENTRY_DSN is set,
+    # Prometheus exporter always boots (scrape is opt-in via Prometheus config).
+    sentry_enabled = configure_sentry()
+    start_metrics_server(settings.metrics_port)
+    log.info(
+        "bot.booting",
+        environment=settings.environment,
+        sentry=sentry_enabled,
+        metrics_port=settings.metrics_port,
+    )
+
     if not settings.telegram_bot_token:
         log.warning(
             "bot.no_token",
@@ -79,6 +94,13 @@ async def main() -> None:
     )
     storage = _build_storage(settings.redis_url)
     dp = Dispatcher(storage=storage)
+
+    # Middlewares run for every Telegram update before it reaches a handler.
+    # Throttle first so a flood gets dropped before we spend latency on a
+    # metric observation we'd just discard.
+    dp.update.outer_middleware(ThrottleMiddleware())
+    dp.message.middleware(MetricsMiddleware())
+    dp.callback_query.middleware(MetricsMiddleware())
 
     # Routers register in dependency order: commands first (text-filter
     # main-menu dispatch), wizards / sub-flows after so their FSM-state
@@ -114,6 +136,7 @@ async def main() -> None:
         await dp.start_polling(bot, handle_signals=True)
     finally:
         await close_client()
+        await close_engine()
         await bot.session.close()
         log.info("bot.stopped")
 
