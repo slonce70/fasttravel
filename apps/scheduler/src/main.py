@@ -19,13 +19,16 @@ its own container (or move heavy ingest jobs to a dedicated worker pool).
 Until then, APScheduler with a memory job store keeps the moving parts
 to a minimum.
 """
+
 from __future__ import annotations
 
 import asyncio
 import signal
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from src.infra.logging import get_logger
@@ -49,7 +52,7 @@ TIMEZONE = "Europe/Kyiv"
 # Job concurrency is 1 by default — these jobs are idempotent but each
 # touches the same MVs / deals table, so serialising avoids lock noise.
 _JOB_DEFAULTS = {
-    "coalesce": True,        # if app catches up, run once for the missed window
+    "coalesce": True,  # if app catches up, run once for the missed window
     "max_instances": 1,
     "misfire_grace_time": 60 * 5,
 }
@@ -86,6 +89,15 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(day_of_week="sun", hour=2, minute=0, timezone=TIMEZONE),
         id="sitemap_long_tail_ingest",
         name="sitemap_long_tail_ingest (weekly Sun 02:00 Kyiv)",
+    )
+    scheduler.add_job(
+        sitemap_long_tail_ingest,
+        DateTrigger(
+            run_date=datetime.now(UTC) + timedelta(seconds=30),
+            timezone=TIMEZONE,
+        ),
+        id="sitemap_long_tail_ingest_startup",
+        name="sitemap_long_tail_ingest (startup one-shot resume)",
     )
     scheduler.add_job(
         snapshot_stub,
@@ -145,9 +157,7 @@ async def main() -> None:
     # Spawn the persistent refresh worker (P1-4). It's not a cron job —
     # it BRPOPs `refresh:queue` continuously so user-triggered refreshes
     # survive an API restart and don't depend on FastAPI's BackgroundTasks.
-    worker_task = asyncio.create_task(
-        refresh_worker_loop(), name="refresh_worker_loop"
-    )
+    worker_task = asyncio.create_task(refresh_worker_loop(), name="refresh_worker_loop")
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()

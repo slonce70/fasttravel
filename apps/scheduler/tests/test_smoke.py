@@ -5,6 +5,7 @@ Postgres + Redis. They live in `tests/integration/` and run only when
 the FT_INTEGRATION_TESTS env var is set (CI provides them as service
 containers).
 """
+
 from __future__ import annotations
 
 
@@ -19,6 +20,7 @@ def test_jobs_importable():
         detect_deals,
         post_deals,
         refresh_views,
+        sitemap_long_tail_ingest,
         snapshot_stub,
     )
 
@@ -26,6 +28,7 @@ def test_jobs_importable():
     assert callable(detect_deals)
     assert callable(post_deals)
     assert callable(refresh_views)
+    assert callable(sitemap_long_tail_ingest)
     assert callable(snapshot_stub)
 
 
@@ -34,3 +37,16 @@ def test_main_module_importable():
     from src import main
 
     assert hasattr(main, "main")
+
+
+def test_scheduler_registers_weekly_and_startup_sitemap_ingest():
+    """Long-tail sitemap ingest must be both periodic and restart-resumable."""
+    from src import main
+
+    scheduler = main._build_scheduler()
+
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert {
+        "sitemap_long_tail_ingest",
+        "sitemap_long_tail_ingest_startup",
+    }.issubset(job_ids)
