@@ -49,7 +49,14 @@ export default async function HomePage() {
           <div className="mt-6 sm:mt-8">
             {/* useSearchParams() inside SearchForm requires Suspense in Next 15
                 — otherwise the page is forced to dynamic and ISR is lost. */}
-            <Suspense fallback={<div className="h-44 rounded-2xl bg-white/10" />}>
+            <Suspense
+              fallback={
+                <div
+                  className="h-44 animate-pulse rounded-2xl bg-white/10"
+                  aria-hidden
+                />
+              }
+            >
               <SearchForm countries={countries} />
             </Suspense>
           </div>
