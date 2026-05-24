@@ -1,7 +1,8 @@
-"""Bot-only settings.
+"""Bot configuration.
 
-Mirrors the scheduler/api shape (pydantic-settings, env-file friendly).
-Bot reads from the same `.env` so deploy-time secret rotation is single-source.
+Single Settings class fed by .env (same convention as api/scheduler).
+TELEGRAM_BOT_TOKEN absence is first-class: the bot logs and idles so an
+unconfigured dev environment keeps docker-compose green.
 """
 
 from __future__ import annotations
@@ -23,14 +24,26 @@ class Settings(BaseSettings):
     environment: Literal["dev", "staging", "prod"] = "dev"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
-    # Bot identity. Token absence is a first-class state — the bot logs and
-    # exits cleanly so an unconfigured environment can still run the rest
-    # of the docker-compose stack.
+    # Bot identity.
     telegram_bot_token: str | None = None
-
-    # Channel the /start welcome funnels users to. Either '@slug' or '-100...'.
     telegram_channel_id: str | None = None
     public_channel_link: str = "https://t.me/fasttravel_deals_ua"
+
+    # Backend HTTP API. In docker-compose this resolves to the api service;
+    # for local pytest runs we fall back to the published port on host.
+    api_base_url: str = "http://api:8000"
+
+    # Redis is shared with the scheduler/api; we use a dedicated logical DB
+    # so FSM state doesn't bump heads with the refresh:queue list.
+    redis_url: str = "redis://redis:6379/2"
+
+    # Observability — same conventions as scheduler.
+    sentry_dsn: str | None = None
+    sentry_traces_sample_rate: float = 0.0
+    metrics_port: int = 9102
+
+    # Public site URL used in deep links / CTA buttons.
+    public_site_url: str = "https://fasttravel.com.ua"
 
 
 @lru_cache(maxsize=1)

@@ -1,43 +1,58 @@
 """Bot entrypoint.
 
-Long-polls Telegram via aiogram 3. The companion `scheduler.post_deals`
-job pushes broadcast posts directly to the channel via the shared
-`shared.publishers.broadcast` helper, so the bot's only job here is the
-small user-facing surface: /start funnel, /help, /channel link.
+Boots aiogram 3 polling with:
+- RedisStorage FSM (logical DB /2 so we don't collide with refresh:queue)
+- BotFather-style command list (`set_my_commands`) so the synth `/` UI
+  in Telegram lists every entrypoint
+- MenuButtonCommands so the blue strip next to the chat input opens that
+  same command list
+- Sentry + Prometheus exporter when env vars are present
 
-If TELEGRAM_BOT_TOKEN is not set the bot logs once and exits — keeping
-the docker stack green during local-dev without a Telegram setup.
+If `TELEGRAM_BOT_TOKEN` is unset the bot idles until SIGTERM — keeps the
+docker-compose stack healthy on an unconfigured dev environment.
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import signal
 
-import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, MenuButtonCommands
 
 from src.config import get_settings
-from src.handlers import commands_router
+from src.infra.api_client import close_client
+from src.infra.logging import configure_logging, get_logger
 
-structlog.configure(
-    processors=[
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.add_log_level,
-        structlog.processors.JSONRenderer(),
-    ],
-    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
-)
+log = get_logger("bot.main")
 
-log = structlog.get_logger(service="bot")
+
+PUBLIC_COMMANDS: list[BotCommand] = [
+    BotCommand(command="start", description="Почати"),
+    BotCommand(command="search", description="🔍 Знайти тур"),
+    BotCommand(command="deals", description="🔥 Гарячі знижки"),
+    BotCommand(command="destinations", description="🌍 Напрямки"),
+    BotCommand(command="subscribe", description="🔔 Підписки на знижки"),
+    BotCommand(command="profile", description="👤 Профіль"),
+    BotCommand(command="help", description="ℹ️ Допомога"),
+]
+
+
+def _build_storage(redis_url: str) -> RedisStorage | MemoryStorage:
+    """RedisStorage when the URL is set + reachable, otherwise fall back to
+    in-memory so the bot still boots in a single-container test scenario."""
+    try:
+        return RedisStorage.from_url(redis_url)
+    except Exception as exc:  # noqa: BLE001 — Redis down shouldn't crash boot
+        log.warning("bot.fsm.redis_unavailable", error=str(exc), fallback="memory")
+        return MemoryStorage()
 
 
 async def _idle_until_signal() -> None:
-    """Block until SIGINT/SIGTERM. Used when no token is configured —
-    keeps the container alive so the rest of docker-compose stays healthy."""
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -46,7 +61,9 @@ async def _idle_until_signal() -> None:
 
 
 async def main() -> None:
+    configure_logging()
     settings = get_settings()
+
     if not settings.telegram_bot_token:
         log.warning(
             "bot.no_token",
@@ -60,16 +77,43 @@ async def main() -> None:
         token=settings.telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN_V2),
     )
-    dp = Dispatcher()
+    storage = _build_storage(settings.redis_url)
+    dp = Dispatcher(storage=storage)
+
+    # Routers register in dependency order: commands first (text-filter
+    # main-menu dispatch), wizards / sub-flows after so their FSM-state
+    # filters fall through to the catch-all only when no state is active.
+    # Late imports keep the entrypoint side-effect-free for test imports.
+    from src.handlers.commands import router as commands_router
+    from src.handlers.deals import router as deals_router
+    from src.handlers.destinations import router as destinations_router
+    from src.handlers.profile import router as profile_router
+    from src.handlers.search_wizard import router as wizard_router
+    from src.handlers.subscribe import router as subscribe_router
+
     dp.include_router(commands_router)
+    dp.include_router(wizard_router)
+    dp.include_router(deals_router)
+    dp.include_router(destinations_router)
+    dp.include_router(subscribe_router)
+    dp.include_router(profile_router)
 
     log.info("bot.starting", environment=settings.environment)
     try:
-        # Skip any backlog of updates queued while the bot was offline.
-        # We don't want a flood of stale /start replies on first deploy.
+        # Publish command list + open it via the blue MenuButton. Idempotent;
+        # cheap to call on every boot so we don't drift if @BotFather is
+        # later edited by hand.
+        await bot.set_my_commands(
+            PUBLIC_COMMANDS,
+            scope=BotCommandScopeAllPrivateChats(),
+        )
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+
+        # Drop any pending updates queued while the bot was offline.
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot, handle_signals=True)
     finally:
+        await close_client()
         await bot.session.close()
         log.info("bot.stopped")
 
