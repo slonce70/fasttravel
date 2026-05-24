@@ -123,6 +123,11 @@ services:
     container_name: ft_scheduler
     restart: unless-stopped
     env_file: .env
+    # 9101 is the Prometheus exporter started by src.infra.metrics. Bound to
+    # the fasttravel network only; the prod overlay keeps it unpublished and
+    # Prometheus scrapes via the internal DNS name `scheduler:9101`.
+    expose:
+      - "9101"
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}
       REDIS_URL: redis://redis:6379/0

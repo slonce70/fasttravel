@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     sentry_dsn: str | None = None
     sentry_traces_sample_rate: float = 0.0
 
+    # --- Prometheus metrics ---
+    # Plain int (not None) so the metrics HTTP server always boots; if
+    # operators want to disable scraping in dev they can firewall the port.
+    metrics_port: int = 9101
+
     @property
     def is_prod(self) -> bool:
         return self.environment == "prod"
