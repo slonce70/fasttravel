@@ -15,7 +15,11 @@ RUN pip install --no-cache-dir \
     aiogram==3.13.1 \
     structlog==24.4.0 \
     pydantic-settings==2.6.0 \
-    pydantic==2.9.2
+    pydantic==2.9.2 \
+    httpx==0.27.2 \
+    redis==5.2.0 \
+    prometheus-client==0.21.0 \
+    sentry-sdk==2.18.0
 
 # Bot source.
 COPY bot/src/ ./src/
