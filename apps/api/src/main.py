@@ -69,10 +69,14 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
+    settings = get_settings()
+    # Hard crash on boot if prod is using the default `_change_me` secrets.
+    # See Settings.assert_prod_secrets for what we check.
+    settings.assert_prod_secrets()
     sentry_enabled = configure_sentry()
     log.info(
         "api.startup",
-        environment=get_settings().environment,
+        environment=settings.environment,
         sentry=sentry_enabled,
     )
     try:

@@ -64,6 +64,28 @@ class Settings(BaseSettings):
     def is_prod(self) -> bool:
         return self.environment == "prod"
 
+    def assert_prod_secrets(self) -> None:
+        """Refuse to boot prod with the dev defaults from .env.example.
+
+        Anyone who deploys without running infra/scripts/secrets-bootstrap.sh
+        would end up exposing a known-public Postgres password — this guard
+        crashes startup loudly instead of letting that ship.
+        """
+        if not self.is_prod:
+            return
+        forbidden_markers = ("_change_me", "fasttravel_dev")
+        offenders: list[str] = []
+        if any(m in self.database_url for m in forbidden_markers):
+            offenders.append("DATABASE_URL")
+        if any(m in self.database_url_sync for m in forbidden_markers):
+            offenders.append("DATABASE_URL_SYNC")
+        if offenders:
+            raise RuntimeError(
+                "Refusing to start in prod with default secrets in "
+                + ", ".join(offenders)
+                + ". Run infra/scripts/secrets-bootstrap.sh and re-deploy."
+            )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
