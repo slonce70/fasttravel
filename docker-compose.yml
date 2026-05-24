@@ -94,9 +94,11 @@ services:
       - fasttravel
 
   bot:
+    # Build context spans ./apps so bot can COPY the sibling apps/shared/
+    # package (Telegram publisher helpers shared with scheduler).
     build:
-      context: ./apps/bot
-      dockerfile: Dockerfile
+      context: ./apps
+      dockerfile: bot/Dockerfile
     image: fasttravel/bot:dev
     container_name: ft_bot
     restart: unless-stopped

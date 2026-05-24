@@ -1,10 +1,10 @@
 """Shared Telegram publisher library.
 
 Exposes a minimal, stateless API for sending channel posts. Imported by
-apps/scheduler/src/jobs/post_deals.py (vendored at image build time) and
-by apps/bot/src/main.py once it gets fleshed out.
+apps/scheduler/src/jobs/post_deals.py and apps/bot/src/main.py — both
+mount this package at /app/shared/ via Docker COPY at build time.
 """
-from src.publishers.broadcast import (
+from shared.publishers.broadcast import (
     MARKDOWN_V2_ESCAPE_CHARS,
     broadcast_deal,
     escape_markdown_v2,
