@@ -35,6 +35,7 @@ from src.jobs import (
     post_deals,
     refresh_views,
     refresh_worker_loop,
+    sitemap_long_tail_ingest,
     snapshot_catalog_farvater,
     snapshot_farvater,
     snapshot_hot,
@@ -74,6 +75,17 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour=3, minute=0, timezone=TIMEZONE),
         id="snapshot_catalog_farvater",
         name="snapshot_catalog_farvater (daily 03:00 Kyiv)",
+    )
+    # Sitemap long-tail ingest — weekly Sunday 02:00 Kyiv. Walks farvater's
+    # full sitemap (~57k URLs for our 11 countries), upserts meta+gallery+
+    # reviews, probes 3 calendar offsets per hotel. Idempotent via slug dedup,
+    # so a partial run that gets killed (container restart, deploy) resumes
+    # cleanly on the next weekly tick. CONCURRENCY=12, ~1-2h wall clock.
+    scheduler.add_job(
+        sitemap_long_tail_ingest,
+        CronTrigger(day_of_week="sun", hour=2, minute=0, timezone=TIMEZONE),
+        id="sitemap_long_tail_ingest",
+        name="sitemap_long_tail_ingest (weekly Sun 02:00 Kyiv)",
     )
     scheduler.add_job(
         snapshot_stub,
