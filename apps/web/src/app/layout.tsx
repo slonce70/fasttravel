@@ -25,8 +25,23 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'uk_UA',
     siteName: 'FastTravel',
+    // Default share image. Per-route metadata can override (e.g. a
+    // dynamic per-hotel image once we wire next/og on the API side).
+    // 1200×630 is the canonical OG aspect; SVG renders crisply on
+    // every preview crawler we care about (FB, Telegram, Twitter, LinkedIn).
+    images: [
+      {
+        url: '/og-default.svg',
+        width: 1200,
+        height: 630,
+        alt: 'FastTravel — календар цін на тури',
+      },
+    ],
   },
-  twitter: { card: 'summary_large_image' },
+  twitter: {
+    card: 'summary_large_image',
+    images: ['/og-default.svg'],
+  },
   robots: { index: true, follow: true },
 };
 
