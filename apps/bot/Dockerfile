@@ -19,7 +19,9 @@ RUN pip install --no-cache-dir \
     httpx==0.27.2 \
     redis==5.2.0 \
     prometheus-client==0.21.0 \
-    sentry-sdk==2.18.0
+    sentry-sdk==2.18.0 \
+    "sqlalchemy[asyncio]==2.0.36" \
+    asyncpg==0.30.0
 
 # Bot source.
 COPY bot/src/ ./src/

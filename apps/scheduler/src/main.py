@@ -38,6 +38,7 @@ from src.infra.sentry import configure_sentry
 from src.jobs import (
     cleanup_partitions as _cleanup_partitions,
     detect_deals as _detect_deals,
+    notify_subscribers as _notify_subscribers,
     post_deals as _post_deals,
     refresh_views as _refresh_views,
     refresh_worker_loop,
@@ -54,6 +55,7 @@ from src.jobs import (
 # invocation, so the run-counter/duration model doesn't fit cleanly.
 cleanup_partitions = track_job_metrics("cleanup_partitions")(_cleanup_partitions)
 detect_deals = track_job_metrics("detect_deals")(_detect_deals)
+notify_subscribers = track_job_metrics("notify_subscribers")(_notify_subscribers)
 post_deals = track_job_metrics("post_deals")(_post_deals)
 refresh_views = track_job_metrics("refresh_views")(_refresh_views)
 sitemap_long_tail_ingest = track_job_metrics("sitemap_long_tail_ingest")(_sitemap_long_tail_ingest)
@@ -135,6 +137,15 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(minute=10, timezone=TIMEZONE),
         id="detect_deals",
         name="detect_deals (hourly :10)",
+    )
+    # Personal Telegram alerts: hourly at :15, right after detect_deals
+    # writes any new matches. Slot is intentionally tight — a 5-min lag
+    # keeps alerts feeling "live" without overlapping the detector.
+    scheduler.add_job(
+        notify_subscribers,
+        CronTrigger(minute=15, timezone=TIMEZONE),
+        id="notify_subscribers",
+        name="notify_subscribers (hourly :15)",
     )
     # Hot-priority sweep — runs at :30 so it doesn't collide with the
     # MV refresh (:05) or the deal detector (:10). Pushes top-N viewed
