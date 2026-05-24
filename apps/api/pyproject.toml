@@ -57,7 +57,18 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
-ignore = ["E501"]
+ignore = [
+    "E501",   # long SQL / response-model signatures are common in FastAPI
+    "B008",   # FastAPI intentionally uses Depends()/Query() defaults
+    "RUF001", # Ukrainian/Cyrillic text is intentional product copy
+    "RUF002",
+    "RUF003",
+    "RUF012", # SQLAlchemy declarative class metadata pattern
+    "RUF100", # allow noqa for optional rule sets shared across agents
+    "SIM105",
+    "UP017",
+    "UP037", # quoted relationship annotations keep TYPE_CHECKING imports cheap
+]
 
 [tool.mypy]
 python_version = "3.12"
