@@ -21,12 +21,16 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from src.config import get_settings
 from src.infra.cache import close_redis
 from src.infra.db import dispose_engine
+from src.infra.limiter import limiter
 from src.infra.logging import configure_logging, get_logger
 from src.infra.sentry import configure_sentry
 from src.routers import deals as deals_router
@@ -92,13 +96,21 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if not settings.is_prod else None,
     )
 
+    # Wire slowapi: attach the limiter to app.state, register the 429 handler,
+    # and install the middleware that decrements the rate-limit bucket before
+    # route handlers run. Routers can then use `@limiter.limit(...)`.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
+
     # Order matters: CORS first so it sees the original request, then
     # correlation id wraps everything in a context.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=False,
-        allow_methods=["GET", "OPTIONS"],
+        # POST allowed for /api/hotels/{id}/refresh; everything else is GET.
+        allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["*"],
     )
     app.add_middleware(CorrelationIdMiddleware)

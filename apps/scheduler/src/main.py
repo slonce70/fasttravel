@@ -137,11 +137,16 @@ def _build_scheduler() -> AsyncIOScheduler:
 
     # Daily housekeeping — drop partitions older than retention (pg_partman
     # config set in migration 001 via partman.part_config).
+    #
+    # Slot is 04:30 (not 03:00) so it doesn't collide with snapshot_catalog_farvater
+    # — APScheduler `max_instances=1` would make one of the two miss its tick if
+    # they fired at the same minute. partman.run_maintenance() is time-agnostic so
+    # the shift has zero downside.
     scheduler.add_job(
         cleanup_partitions,
-        CronTrigger(hour=3, minute=0, timezone=TIMEZONE),
+        CronTrigger(hour=4, minute=30, timezone=TIMEZONE),
         id="cleanup_partitions",
-        name="cleanup_partitions (daily 03:00 Kyiv)",
+        name="cleanup_partitions (daily 04:30 Kyiv)",
     )
 
     return scheduler
