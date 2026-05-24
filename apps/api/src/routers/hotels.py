@@ -13,13 +13,14 @@ import json
 import time
 from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.deps import get_db
 from src.infra.cache import get_redis
+from src.infra.limiter import limiter
 from src.infra.logging import get_logger
 from src.models import Hotel
 from src.schemas.calendar import CalendarDay, OfferOut
@@ -143,11 +144,20 @@ class RefreshResponse(BaseModel):
 
 
 @router.post("/{hotel_id}/refresh", response_model=RefreshResponse)
+@limiter.limit("10/hour")
 async def trigger_refresh(
+    request: Request,
     hotel_id: int,
     session: AsyncSession = Depends(get_db),
 ) -> RefreshResponse:
     """Stale-while-revalidate: enqueue a background live-price fetch.
+
+    Rate-limited to 10 requests per IP per hour (slowapi decorator) — the
+    `request` argument is required by slowapi to extract the client IP.
+    Hotel-level dedup (5-min lock) plus the queue cap of 200 stay in
+    place; the per-IP cap stops an attacker from rotating hotel_ids and
+    flooding the queue.
+
 
     Returns immediately with `queued=true` so the client can render cached
     data without waiting. UI is expected to re-query the calendar after
