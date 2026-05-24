@@ -94,9 +94,11 @@ services:
       - fasttravel
 
   bot:
+    # Build context spans ./apps so bot can COPY the sibling apps/shared/
+    # package (Telegram publisher helpers shared with scheduler).
     build:
-      context: ./apps/bot
-      dockerfile: Dockerfile
+      context: ./apps
+      dockerfile: bot/Dockerfile
     image: fasttravel/bot:dev
     container_name: ft_bot
     restart: unless-stopped
@@ -112,9 +114,8 @@ services:
       - fasttravel
 
   scheduler:
-    # Build context spans both scheduler/ and bot/ so the image can vendor
-    # apps/bot/src/publishers/broadcast.py — the shared Telegram publisher
-    # the post_deals job depends on. See apps/scheduler/Dockerfile header.
+    # Build context spans ./apps so the scheduler Dockerfile path stays stable
+    # if future jobs need sibling app assets.
     build:
       context: ./apps
       dockerfile: scheduler/Dockerfile
@@ -122,6 +123,11 @@ services:
     container_name: ft_scheduler
     restart: unless-stopped
     env_file: .env
+    # 9101 is the Prometheus exporter started by src.infra.metrics. Bound to
+    # the fasttravel network only; the prod overlay keeps it unpublished and
+    # Prometheus scrapes via the internal DNS name `scheduler:9101`.
+    expose:
+      - "9101"
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}
       REDIS_URL: redis://redis:6379/0

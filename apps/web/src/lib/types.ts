@@ -25,7 +25,7 @@ export type Nights = number;
 export const PRECOMPUTED_NIGHTS = [7, 10, 14] as const;
 export type PrecomputedNights = (typeof PRECOMPUTED_NIGHTS)[number];
 
-export type MealPlan = 'AI' | 'HB';
+export type MealPlan = 'ALL' | 'AI' | 'UAI' | 'HB' | 'BB' | 'FB' | 'RO';
 
 /** apps/api/src/schemas/hotel.py :: HotelOut */
 export interface HotelPhoto {
@@ -103,6 +103,7 @@ export interface Deal {
   hotel_slug: string;
   hotel_name_uk: string;
   hotel_stars: number | null;
+  hotel_photo_url: string | null;
   destination_name: string | null;
 }
 
@@ -132,6 +133,10 @@ export interface PaginatedSearchResults {
   total: number;
   limit: number;
   offset: number;
+  price_basis_adults: number;
+  price_basis_kids: number[];
+  pax_supported: boolean;
+  pax_note: string | null;
 }
 
 export interface SearchParams {
@@ -146,9 +151,8 @@ export interface SearchParams {
   stars_min?: number;
   /**
    * #28 pax composition. Adults defaults to 2 in the form; kids is an array
-   * of ages (1-17) — length is the kid count. Backend currently ignores
-   * these (the MV pre-aggregates one canonical pax); the future ittour
-   * adapter will honour them.
+   * of ages (1-17). The MVP backend reports whether the requested pax matches
+   * the current price snapshot basis via `pax_supported`.
    */
   adults?: number;
   kids?: number[];

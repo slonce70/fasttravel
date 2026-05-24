@@ -19,28 +19,48 @@ its own container (or move heavy ingest jobs to a dedicated worker pool).
 Until then, APScheduler with a memory job store keeps the moving parts
 to a minimum.
 """
+
 from __future__ import annotations
 
 import asyncio
 import signal
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from src.config import get_settings
 from src.infra.logging import get_logger
+from src.infra.metrics import start_metrics_server, track_job_metrics
+from src.infra.sentry import configure_sentry
 from src.jobs import (
-    cleanup_partitions,
-    detect_deals,
-    post_deals,
-    refresh_views,
+    cleanup_partitions as _cleanup_partitions,
+    detect_deals as _detect_deals,
+    post_deals as _post_deals,
+    refresh_views as _refresh_views,
     refresh_worker_loop,
-    sitemap_long_tail_ingest,
-    snapshot_catalog_farvater,
-    snapshot_farvater,
-    snapshot_hot,
-    snapshot_stub,
+    sitemap_long_tail_ingest as _sitemap_long_tail_ingest,
+    snapshot_catalog_farvater as _snapshot_catalog_farvater,
+    snapshot_farvater as _snapshot_farvater,
+    snapshot_hot as _snapshot_hot,
+    snapshot_stub as _snapshot_stub,
 )
+
+# Decorate every job at registration so the metric labels stay consistent
+# and the underlying job modules don't have to import `metrics` themselves.
+# `refresh_worker_loop` is excluded: it's a long-running loop, not a job
+# invocation, so the run-counter/duration model doesn't fit cleanly.
+cleanup_partitions = track_job_metrics("cleanup_partitions")(_cleanup_partitions)
+detect_deals = track_job_metrics("detect_deals")(_detect_deals)
+post_deals = track_job_metrics("post_deals")(_post_deals)
+refresh_views = track_job_metrics("refresh_views")(_refresh_views)
+sitemap_long_tail_ingest = track_job_metrics("sitemap_long_tail_ingest")(_sitemap_long_tail_ingest)
+snapshot_catalog_farvater = track_job_metrics("snapshot_catalog_farvater")(_snapshot_catalog_farvater)
+snapshot_farvater = track_job_metrics("snapshot_farvater")(_snapshot_farvater)
+snapshot_hot = track_job_metrics("snapshot_hot")(_snapshot_hot)
+snapshot_stub = track_job_metrics("snapshot_stub")(_snapshot_stub)
 
 log = get_logger(__name__)
 
@@ -49,7 +69,7 @@ TIMEZONE = "Europe/Kyiv"
 # Job concurrency is 1 by default — these jobs are idempotent but each
 # touches the same MVs / deals table, so serialising avoids lock noise.
 _JOB_DEFAULTS = {
-    "coalesce": True,        # if app catches up, run once for the missed window
+    "coalesce": True,  # if app catches up, run once for the missed window
     "max_instances": 1,
     "misfire_grace_time": 60 * 5,
 }
@@ -86,6 +106,15 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(day_of_week="sun", hour=2, minute=0, timezone=TIMEZONE),
         id="sitemap_long_tail_ingest",
         name="sitemap_long_tail_ingest (weekly Sun 02:00 Kyiv)",
+    )
+    scheduler.add_job(
+        sitemap_long_tail_ingest,
+        DateTrigger(
+            run_date=datetime.now(UTC) + timedelta(seconds=30),
+            timezone=TIMEZONE,
+        ),
+        id="sitemap_long_tail_ingest_startup",
+        name="sitemap_long_tail_ingest (startup one-shot resume)",
     )
     scheduler.add_job(
         snapshot_stub,
@@ -125,17 +154,36 @@ def _build_scheduler() -> AsyncIOScheduler:
 
     # Daily housekeeping — drop partitions older than retention (pg_partman
     # config set in migration 001 via partman.part_config).
+    #
+    # Slot is 04:30 (not 03:00) so it doesn't collide with snapshot_catalog_farvater
+    # — APScheduler `max_instances=1` would make one of the two miss its tick if
+    # they fired at the same minute. partman.run_maintenance() is time-agnostic so
+    # the shift has zero downside.
     scheduler.add_job(
         cleanup_partitions,
-        CronTrigger(hour=3, minute=0, timezone=TIMEZONE),
+        CronTrigger(hour=4, minute=30, timezone=TIMEZONE),
         id="cleanup_partitions",
-        name="cleanup_partitions (daily 03:00 Kyiv)",
+        name="cleanup_partitions (daily 04:30 Kyiv)",
     )
 
     return scheduler
 
 
 async def main() -> None:
+    settings = get_settings()
+
+    # Optional observability — Sentry only init's when SENTRY_DSN env is set,
+    # Prometheus exporter always boots (Prometheus scrape is opt-in via
+    # infra/prometheus/prometheus.yml; nothing breaks if it's unscraped).
+    sentry_enabled = configure_sentry()
+    start_metrics_server(settings.metrics_port)
+    log.info(
+        "scheduler.booting",
+        environment=settings.environment,
+        sentry=sentry_enabled,
+        metrics_port=settings.metrics_port,
+    )
+
     scheduler = _build_scheduler()
     scheduler.start()
 
@@ -145,9 +193,7 @@ async def main() -> None:
     # Spawn the persistent refresh worker (P1-4). It's not a cron job —
     # it BRPOPs `refresh:queue` continuously so user-triggered refreshes
     # survive an API restart and don't depend on FastAPI's BackgroundTasks.
-    worker_task = asyncio.create_task(
-        refresh_worker_loop(), name="refresh_worker_loop"
-    )
+    worker_task = asyncio.create_task(refresh_worker_loop(), name="refresh_worker_loop")
 
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()

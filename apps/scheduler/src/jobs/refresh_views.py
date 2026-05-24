@@ -13,6 +13,7 @@ cluster the very first refresh has to be non-concurrent. We catch the
 specific Postgres errcode rather than bare Exception so genuinely
 broken SQL still surfaces.
 """
+
 from __future__ import annotations
 
 from asyncpg.exceptions import ObjectNotInPrerequisiteStateError

@@ -6,6 +6,7 @@ Exposed:
     async_session_factory — async sessionmaker.
     get_session()        — async-generator DI for FastAPI.
 """
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

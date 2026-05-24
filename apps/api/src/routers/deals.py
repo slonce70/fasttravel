@@ -7,6 +7,7 @@ Endpoints:
 Both responses carry hotel_slug / hotel_name_uk / hotel_stars / destination_name
 so DealCard on the frontend can render without an extra hotel lookup.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status

@@ -5,6 +5,7 @@ imported so the scheduler image stays independent of the API image. The
 two are likely to diverge over time (different pool sizes, no FastAPI
 DI hook here) so duplication is the lower-risk choice.
 """
+
 from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import (

@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Bootstrap production secrets for FastTravel.
+#
+# Generates a fresh .env file with cryptographically random passwords for
+# Postgres, Grafana, etc. Writes to ./.env.prod and 0600-chmods it so
+# only the deploy user can read it.
+#
+# Usage:
+#   ./infra/scripts/secrets-bootstrap.sh [output-path]
+#
+# Default output: ./.env.prod
+# Refuses to overwrite an existing file unless you pass --force.
+#
+# Variables we MUST rotate before prod:
+#   POSTGRES_PASSWORD     — DB superuser
+#   GRAFANA_ADMIN_PASSWORD — Grafana admin
+#
+# Variables we keep as placeholders for the operator to fill in:
+#   TELEGRAM_BOT_TOKEN, ITTOUR_API_TOKEN, TBO_USERNAME / TBO_PASSWORD,
+#   SENTRY_DSN — these come from third parties, not from openssl.
+
+set -euo pipefail
+
+OUTPUT="${1:-.env.prod}"
+FORCE=false
+for arg in "$@"; do
+    [[ "$arg" == "--force" ]] && FORCE=true
+done
+
+if [[ -e "$OUTPUT" ]] && [[ "$FORCE" != true ]]; then
+    echo "Refusing to overwrite existing $OUTPUT — pass --force to rotate." >&2
+    exit 1
+fi
+
+# 32 bytes from /dev/urandom, base64-encoded, strip = / + that break shell.
+gen_secret() {
+    openssl rand -base64 32 | tr -d '=+/\n'
+}
+
+POSTGRES_PASSWORD="$(gen_secret)"
+GRAFANA_ADMIN_PASSWORD="$(gen_secret)"
+
+cat > "$OUTPUT" <<EOF
+# =============================================================================
+# FastTravel — PRODUCTION environment (generated $(date -u +%Y-%m-%dT%H:%M:%SZ))
+# DO NOT commit. DO NOT share over Slack/email — use a password manager.
+# =============================================================================
+
+# --- Environment ---
+ENVIRONMENT=prod
+LOG_LEVEL=INFO
+
+# --- Postgres ---
+POSTGRES_USER=fasttravel
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+POSTGRES_DB=fasttravel
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+DATABASE_URL=postgresql+asyncpg://fasttravel:${POSTGRES_PASSWORD}@postgres:5432/fasttravel
+DATABASE_URL_SYNC=postgresql+psycopg://fasttravel:${POSTGRES_PASSWORD}@postgres:5432/fasttravel
+
+# --- Redis ---
+REDIS_URL=redis://redis:6379/0
+
+# --- API ---
+API_HOST=0.0.0.0
+API_PORT=8000
+CORS_ORIGINS=https://fasttravel.com.ua,https://www.fasttravel.com.ua
+
+# --- Telegram (FILL IN before launch) ---
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHANNEL_ID=
+
+# --- ittour API (FILL IN when access granted) ---
+ITTOUR_API_BASE=https://api.ittour.com.ua
+ITTOUR_API_TOKEN=
+
+# --- TBO Holidays (FILL IN when access granted) ---
+TBO_API_BASE=https://api.tbotechnology.in/TBOHolidays_HotelAPI
+TBO_USERNAME=
+TBO_PASSWORD=
+
+# --- Observability (FILL IN before launch) ---
+SENTRY_DSN=
+SENTRY_TRACES_SAMPLE_RATE=0.05
+
+# --- Grafana ---
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+EOF
+
+chmod 600 "$OUTPUT"
+
+echo "Wrote $OUTPUT (0600)."
+echo
+echo "Next steps:"
+echo "  1. Fill in TELEGRAM_BOT_TOKEN / ITTOUR_API_TOKEN / TBO_* / SENTRY_DSN."
+echo "  2. Copy $OUTPUT to the prod host as .env: scp $OUTPUT user@host:~/fasttravel/.env"
+echo "  3. Run: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d"
+echo "  4. Verify the precondition guard didn't 503 anything: docker compose logs api | grep startup"
