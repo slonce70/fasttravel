@@ -16,6 +16,7 @@ the UPSERT here rather than in a separate migration so the policy lives
 next to the job that uses it — if you change retention, only this file
 changes.
 """
+
 from __future__ import annotations
 
 from sqlalchemy import text
@@ -42,9 +43,7 @@ _CONFIGURE_RETENTION = text(
 # therefore cannot run inside a SQLAlchemy/asyncpg transaction. We use the
 # functional form which is transaction-safe; pg_partman 5.x exposes both
 # (proc is preferred at the psql prompt; function from app code).
-_RUN_MAINTENANCE = text(
-    "SELECT partman.run_maintenance(p_analyze := false, p_jobmon := false)"
-)
+_RUN_MAINTENANCE = text("SELECT partman.run_maintenance(p_analyze := false, p_jobmon := false)")
 
 # Fallback: enumerate child partitions and drop those whose name suffix
 # (pg_partman naming convention: parent_pYYYY_MM_DD) is older than the
@@ -99,9 +98,7 @@ async def cleanup_partitions() -> None:
 
     # --- Fallback raw DROP path ---
     async with async_session_factory() as db:
-        result = await db.execute(
-            _FALLBACK_LIST_OLD, {"retention_days": retention_days}
-        )
+        result = await db.execute(_FALLBACK_LIST_OLD, {"retention_days": retention_days})
         names = [r.partition_name for r in result]
         for name in names:
             # Cannot parametrise table identifiers in libpq — names came

@@ -33,6 +33,7 @@ class DealOut(BaseModel):
     hotel_slug: str
     hotel_name_uk: str
     hotel_stars: int | None = None
+    hotel_photo_url: str | None = None
 
     # Joined destination name (NULL if the hotel has no destination_id,
     # which is allowed by the schema: hotels.destination_id is nullable).

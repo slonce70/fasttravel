@@ -27,6 +27,7 @@ POST so per-hotel cost is one GET).
 Records its execution in `scrape_runs` with source='catalog_only'
 so dashboards can distinguish the two passes.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +39,6 @@ from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
 from src.jobs.snapshot_farvater import (
     CATALOG_COUNTRIES,
-    USER_AGENT,
     _country_dest_id,
     _ensure_operator,
     _fetch_hotel_meta,
@@ -158,9 +158,7 @@ async def snapshot_catalog_farvater(*, max_per_country: int | None = None) -> in
                 )
 
                 tasks = [
-                    _process_catalog_hotel(
-                        client, p, iso2, operator_id, dest_id, semaphore
-                    )
+                    _process_catalog_hotel(client, p, iso2, operator_id, dest_id, semaphore)
                     for p in hotel_paths
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -176,9 +174,7 @@ async def snapshot_catalog_farvater(*, max_per_country: int | None = None) -> in
                 )
 
         async with async_session_factory() as db:
-            await _record_run(
-                db, operator_id, "success", total_seen, started_at=started_at
-            )
+            await _record_run(db, operator_id, "success", total_seen, started_at=started_at)
             await db.commit()
         log.info("farvater.catalog.done", seen=total_seen)
         return total_seen

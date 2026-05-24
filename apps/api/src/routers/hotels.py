@@ -5,6 +5,7 @@ Calendar and offers endpoints take the numeric id since they're typically
 called from JS already in possession of the hotel row. The web app should
 resolve slug -> id via GET /api/hotels/{slug} and reuse the id thereafter.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -91,10 +92,11 @@ async def hotel_calendar(
     hotel_id: int,
     from_date: date = Query(alias="from"),
     to_date: date = Query(alias="to"),
-    # `?meal=AI` narrows the heatmap to one meal-plan; omitted = MIN
+    # `?meal=AI` or `?meal_plan=AI` narrows the heatmap to one meal-plan; omitted = MIN
     # across meal plans (backwards-compatible). See migration 002 + the
     # docstring in calendar_service.get_calendar for the dual-shape rules.
-    meal_plan: str | None = Query(default=None, alias="meal", max_length=16),
+    meal: str | None = Query(default=None, max_length=16),
+    meal_plan: str | None = Query(default=None, max_length=16),
     session: AsyncSession = Depends(get_db),
 ) -> list[CalendarDay]:
     if to_date < from_date:
@@ -106,7 +108,14 @@ async def hotel_calendar(
     # module-level set — see `_spawn_fire_and_forget` for the gc-safety
     # rationale.
     _spawn_fire_and_forget(_bump_hot_counter(hotel_id))
-    return await get_calendar(session, hotel_id, from_date, to_date, meal_plan=meal_plan)
+    effective_meal_plan = meal_plan or meal
+    return await get_calendar(
+        session,
+        hotel_id,
+        from_date,
+        to_date,
+        meal_plan=effective_meal_plan,
+    )
 
 
 @router.get("/{hotel_id}/offers", response_model=list[OfferOut])
@@ -133,7 +142,6 @@ class RefreshResponse(BaseModel):
     reason: str | None = None
 
 
-
 @router.post("/{hotel_id}/refresh", response_model=RefreshResponse)
 async def trigger_refresh(
     hotel_id: int,
@@ -155,32 +163,31 @@ async def trigger_refresh(
     in-process `BackgroundTasks` implementation).
     """
     # Sanity check the hotel exists, and grab its farvater mapping if any.
-    row = (await session.execute(
-        text("""SELECT h.id, m.external_id
+    row = (
+        await session.execute(
+            text("""SELECT h.id, m.external_id
                 FROM hotels h
                 LEFT JOIN hotel_operator_mapping m
                        ON m.hotel_id = h.id
                       AND m.operator_id =
                           (SELECT id FROM operators WHERE code = 'farvater')
                 WHERE h.id = :id AND h.is_active"""),
-        {"id": hotel_id},
-    )).first()
+            {"id": hotel_id},
+        )
+    ).first()
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="hotel not found")
     farvater_key = row[1]
     if not farvater_key:
         # Synthetic hotel — no farvater mapping. Nothing to refresh; pretend
         # we're up-to-date so the UI banner disappears quickly.
-        return RefreshResponse(queued=False, eta_seconds=0,
-                                reason="hotel_not_mapped_to_farvater")
+        return RefreshResponse(queued=False, eta_seconds=0, reason="hotel_not_mapped_to_farvater")
     # SSRF defence-in-depth: the mapping is set by our own scraper from
     # `\d+` regex, but assert here so a future change to the mapping path
     # can't smuggle a non-numeric key into our outbound URL.
     if not str(farvater_key).isdigit():
-        log.error("refresh.invalid_farvater_key",
-                  hotel_id=hotel_id, key=str(farvater_key)[:32])
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                             detail="hotel mapping invalid")
+        log.error("refresh.invalid_farvater_key", hotel_id=hotel_id, key=str(farvater_key)[:32])
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="hotel mapping invalid")
 
     redis = get_redis()
     cache_key = f"refresh:hotel:{hotel_id}"
@@ -192,8 +199,7 @@ async def trigger_refresh(
     try:
         qlen = await redis.llen(REFRESH_QUEUE_KEY)
         if qlen >= REFRESH_QUEUE_MAX_LEN:
-            log.warning("refresh.queue_full", current=int(qlen),
-                        cap=REFRESH_QUEUE_MAX_LEN)
+            log.warning("refresh.queue_full", current=int(qlen), cap=REFRESH_QUEUE_MAX_LEN)
             raise HTTPException(
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="refresh queue full, try later",
@@ -204,22 +210,24 @@ async def trigger_refresh(
         log.warning("refresh.queue_len_check_failed", error=str(exc))
     try:
         # SET NX EX — succeed only if no recent refresh for this hotel.
-        acquired = await redis.set(cache_key, str(int(time.time())),
-                                    nx=True, ex=REFRESH_MIN_INTERVAL_S)
+        acquired = await redis.set(
+            cache_key, str(int(time.time())), nx=True, ex=REFRESH_MIN_INTERVAL_S
+        )
     except Exception as exc:
         log.warning("refresh.redis_unavailable", error=str(exc))
         acquired = True  # fail-open — better stale read of farvater than nothing
 
     if not acquired:
-        return RefreshResponse(queued=False, eta_seconds=0,
-                                reason="recently_refreshed")
+        return RefreshResponse(queued=False, eta_seconds=0, reason="recently_refreshed")
 
-    payload = json.dumps({
-        "hotel_id": hotel_id,
-        "farvater_key": str(farvater_key),
-        "requested_at": datetime.now(UTC).isoformat(),
-        "trigger": "user",
-    })
+    payload = json.dumps(
+        {
+            "hotel_id": hotel_id,
+            "farvater_key": str(farvater_key),
+            "requested_at": datetime.now(UTC).isoformat(),
+            "trigger": "user",
+        }
+    )
     try:
         await redis.lpush(REFRESH_QUEUE_KEY, payload)
     except Exception as exc:  # noqa: BLE001 — drop lock so user can retry

@@ -28,7 +28,11 @@ export function OffersList({ hotelId, date, nights, mealPlan }: OffersListProps)
   const { data, isLoading, isError } = useQuery({
     queryKey: ['offers', hotelId, dateIso, nights, mealPlan],
     queryFn: ({ signal }) =>
-      fetchOffers(hotelId, { date: dateIso, nights, meal: mealPlan }, { signal }),
+      fetchOffers(
+        hotelId,
+        { date: dateIso, nights, meal: mealPlan === 'ALL' ? undefined : mealPlan },
+        { signal },
+      ),
     enabled,
     staleTime: 60 * 1000,
   });

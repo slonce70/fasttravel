@@ -30,9 +30,7 @@ class Hotel(Base):
     """Canonical hotel record, deduplicated across operators."""
 
     __tablename__ = "hotels"
-    __table_args__ = (
-        CheckConstraint("stars BETWEEN 1 AND 5", name="stars_range"),
-    )
+    __table_args__ = (CheckConstraint("stars BETWEEN 1 AND 5", name="stars_range"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     canonical_slug: Mapped[str] = mapped_column(String(160), unique=True, nullable=False)

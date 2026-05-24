@@ -17,6 +17,7 @@ this over SQLAlchemy `relationship()` + `selectinload()` because:
   * Mirrors the pattern already established in `routers/search.py`
     (build response item explicitly from selected columns).
 """
+
 from __future__ import annotations
 
 from sqlalchemy import func, select
@@ -44,6 +45,7 @@ def _select_deal_columns() -> tuple:
         Hotel.canonical_slug.label("hotel_slug"),
         Hotel.name_uk.label("hotel_name_uk"),
         Hotel.stars.label("hotel_stars"),
+        Hotel.photos_jsonb[0]["url"].astext.label("hotel_photo_url"),
         Destination.name_uk.label("destination_name"),
     )
 
@@ -65,6 +67,7 @@ def _row_to_dealout(row) -> DealOut:  # type: ignore[no-untyped-def]
         hotel_slug=row.hotel_slug,
         hotel_name_uk=row.hotel_name_uk,
         hotel_stars=row.hotel_stars,
+        hotel_photo_url=row.hotel_photo_url,
         destination_name=row.destination_name,
     )
 

@@ -21,12 +21,12 @@ export function HotelCard({ hotel }: HotelCardProps) {
       >
         <div className="relative h-44 w-full overflow-hidden bg-slate-100">
           {photo?.url ? (
-            // eslint-disable-next-line @next/next/no-img-element — Cloudflare Pages
-            // images are unoptimised (see ADR-016 / next.config.mjs); plain <img>
+            // Cloudflare Pages does not run Next image optimization here; plain <img>
             // is intentional. Lazy-loaded so off-screen cards don't fetch.
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={photo.url}
-              alt={photo.alt || hotel.name_uk}
+              alt={hotel.name_uk}
               loading="lazy"
               decoding="async"
               className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"

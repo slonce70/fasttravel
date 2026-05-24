@@ -25,21 +25,29 @@ import { triggerHotelRefresh } from '@/lib/api-client';
 import { PriceCalendar } from '@/components/PriceCalendar';
 import { OffersList } from '@/components/OffersList';
 import { Card, CardBody } from '@/components/ui/Card';
-import { cn } from '@/lib/utils';
+import { addDays, cn, isoDate } from '@/lib/utils';
 import { formatDateLong } from '@/lib/format';
 
 const NIGHT_PRESETS: Nights[] = [3, 5, 7, 10, 14, 21];
 const MEAL_OPTIONS: { code: MealPlan; label: string }[] = [
+  { code: 'ALL', label: 'Будь-яке' },
   { code: 'AI', label: 'All Inclusive' },
+  { code: 'UAI', label: 'Ultra AI' },
   { code: 'HB', label: 'Напівпансіон (HB)' },
+  { code: 'BB', label: 'Сніданок (BB)' },
+  { code: 'FB', label: 'Повний пансіон (FB)' },
+  { code: 'RO', label: 'Без харчування' },
 ];
 const NIGHTS_MIN = 1;
 const NIGHTS_MAX = 30;
 
 export function HotelView({ hotel }: { hotel: Hotel }) {
   const [nights, setNights] = useState<Nights>(7);
-  const [mealPlan, setMealPlan] = useState<MealPlan>('AI');
+  const [mealPlan, setMealPlan] = useState<MealPlan>('ALL');
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const todayIso = isoDate(new Date());
+  const maxDateIso = isoDate(addDays(new Date(), 180));
+  const selectedDateIso = selectedDate ? isoDate(selectedDate) : '';
 
   // --- Background live refresh (issue #25) ---------------------------------
   const queryClient = useQueryClient();
@@ -103,6 +111,19 @@ export function HotelView({ hotel }: { hotel: Hotel }) {
                 onCommit={setNights}
               />
             </FilterGroup>
+            <FilterGroup label="Дата заїзду">
+              <input
+                type="date"
+                value={selectedDateIso}
+                min={todayIso}
+                max={maxDateIso}
+                onChange={(e) => {
+                  setSelectedDate(e.target.value ? parseLocalDate(e.target.value) : null);
+                }}
+                className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                aria-label="Дата заїзду"
+              />
+            </FilterGroup>
             <FilterGroup label="Харчування">
               {MEAL_OPTIONS.map((m) => (
                 <FilterChip
@@ -121,6 +142,7 @@ export function HotelView({ hotel }: { hotel: Hotel }) {
         hotelId={hotel.id}
         nights={nights}
         mealPlan={mealPlan}
+        selectedDate={selectedDate}
         onDateSelect={setSelectedDate}
       />
 
@@ -159,6 +181,12 @@ function FilterGroup({
       <div className="flex flex-wrap items-center gap-2">{children}</div>
     </div>
   );
+}
+
+function parseLocalDate(value: string): Date {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return new Date();
+  return new Date(year, month - 1, day);
 }
 
 function FilterChip({

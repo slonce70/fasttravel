@@ -12,6 +12,7 @@ The implementation is a single SQL aggregating hotels by parent country
 in one round-trip. Frontend caches with ISR (1h) so this endpoint is hit
 infrequently — no need for a materialized view yet.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status

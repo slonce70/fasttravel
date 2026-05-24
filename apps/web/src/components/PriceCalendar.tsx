@@ -25,7 +25,7 @@ import { uk } from 'date-fns/locale';
 import { fetchCalendar } from '@/lib/api-client';
 import type { CalendarDay, MealPlan, Nights } from '@/lib/types';
 import { addDays, cn, isoDate } from '@/lib/utils';
-import { formatPriceCompact, formatRelativeTime, formatDateLong } from '@/lib/format';
+import { formatMealPlan, formatPriceCompact, formatRelativeTime, formatDateLong } from '@/lib/format';
 import { buildPriceScale, colorForPrice, type ColorScale } from '@/lib/deal-color';
 import { Skeleton } from './ui';
 
@@ -34,11 +34,8 @@ import 'react-day-picker/style.css';
 export interface PriceCalendarProps {
   hotelId: number;
   nights: Nights;
-  /**
-   * Reserved for the offers fetch (we pass it through `onDateSelect` consumers).
-   * The calendar endpoint itself does NOT filter by meal plan on MVP.
-   */
   mealPlan: MealPlan;
+  selectedDate?: Date | null;
   /** How many days forward to render. Default = 90 (MVP window). */
   horizonDays?: number;
   onDateSelect?: (date: Date) => void;
@@ -48,6 +45,7 @@ export function PriceCalendar({
   hotelId,
   nights,
   mealPlan,
+  selectedDate,
   horizonDays = 90,
   onDateSelect,
 }: PriceCalendarProps) {
@@ -57,14 +55,20 @@ export function PriceCalendar({
   const to = useMemo(() => addDays(today, horizonDays), [today, horizonDays]);
   const fromIso = isoDate(today);
   const toIso = isoDate(to);
+  const effectiveMealPlan = mealPlan === 'ALL' ? undefined : mealPlan;
+  const mealLabel = mealPlan === 'ALL' ? 'будь-яке харчування' : formatMealPlan(mealPlan);
 
   const { data, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
     // mealPlan participates in the queryKey so toggling AI↔HB refetches
     // (otherwise TanStack would serve the cached AI prices when the user
     // flips to HB and the heatmap would lie).
-    queryKey: ['calendar', hotelId, fromIso, toIso, mealPlan],
+    queryKey: ['calendar', hotelId, fromIso, toIso, effectiveMealPlan ?? 'ALL'],
     queryFn: ({ signal }) =>
-      fetchCalendar(hotelId, { from: fromIso, to: toIso, mealPlan }, { signal }),
+      fetchCalendar(
+        hotelId,
+        { from: fromIso, to: toIso, mealPlan: effectiveMealPlan },
+        { signal },
+      ),
     // Short staleTime so the on-mount background refresh (HotelView triggers
     // a fresh farvater scrape via POST .../refresh) can pull updated prices
     // into the UI without a hard reload. See #25.
@@ -82,7 +86,7 @@ export function PriceCalendar({
         <h2 className="text-lg font-semibold text-slate-800">
           Календар цін{' '}
           <span className="text-sm font-normal text-slate-500">
-            ({nights} ночей, {mealPlan})
+            ({nights} ночей, {mealLabel})
           </span>
         </h2>
         <Legend />
@@ -113,7 +117,7 @@ export function PriceCalendar({
           startMonth={today}
           endMonth={to}
           disabled={[{ before: today }, { after: to }]}
-          selected={selected}
+          selected={selectedDate ?? selected}
           onSelect={(d) => {
             if (!d) return;
             setSelected(d);
@@ -347,4 +351,3 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
     </div>
   );
 }
-

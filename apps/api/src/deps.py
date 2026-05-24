@@ -1,4 +1,5 @@
 """Centralised FastAPI dependencies (re-exported for routers)."""
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

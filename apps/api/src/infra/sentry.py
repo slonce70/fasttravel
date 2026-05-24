@@ -1,4 +1,5 @@
 """Optional Sentry init — only enabled when SENTRY_DSN is set."""
+
 from __future__ import annotations
 
 from src.config import get_settings

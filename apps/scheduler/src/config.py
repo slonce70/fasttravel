@@ -4,6 +4,7 @@ Mirrors apps/api/src/config.py — same env-file conventions so devs see
 one config shape across services. Adds Telegram fields used by the
 post_deals job, and a few job-tuning knobs.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache

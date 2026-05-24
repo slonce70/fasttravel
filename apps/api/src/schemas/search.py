@@ -12,6 +12,8 @@ class SearchQuery(BaseModel):
     meal_plan: str | None = Field(default=None, max_length=16)
     price_max: int | None = Field(default=None, ge=0)
     stars_min: int | None = Field(default=None, ge=1, le=5)
+    adults: int | None = Field(default=None, ge=1, le=9)
+    kids: list[int] = []
     limit: int = Field(default=20, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
 
@@ -38,3 +40,7 @@ class PaginatedSearchResults(BaseModel):
     total: int
     limit: int
     offset: int
+    price_basis_adults: int = 2
+    price_basis_kids: list[int] = []
+    pax_supported: bool = True
+    pax_note: str | None = None
