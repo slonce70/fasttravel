@@ -2,46 +2,59 @@
   "name": "@fasttravel/web",
   "version": "0.1.0",
   "private": true,
-  "description": "FastTravel — Next.js 15 frontend on Cloudflare Pages",
+  "description": "FastTravel — Next.js 15 frontend on Cloudflare Workers via OpenNext",
   "packageManager": "pnpm@9.12.0",
   "scripts": {
+    "predev": "node scripts/clean-next-dev-cache.mjs",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,json,md}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css,json,md}\"",
-    "pages:build": "npx @cloudflare/next-on-pages",
-    "pages:preview": "wrangler pages dev .vercel/output/static --compatibility-flag=nodejs_compat",
-    "pages:deploy": "pnpm pages:build && wrangler pages deploy .vercel/output/static"
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare deploy --env=\"\"",
+    "cf:deploy:preview": "opennextjs-cloudflare deploy --env preview",
+    "cf:upload": "opennextjs-cloudflare upload --env=\"\""
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
     "date-fns": "^4.1.0",
-    "next": "15.0.3",
+    "next": "15.5.18",
     "react": "19.0.0-rc-66855b96-20241106",
     "react-day-picker": "^9.4.0",
     "react-dom": "19.0.0-rc-66855b96-20241106",
     "recharts": "^2.13.3"
   },
   "devDependencies": {
-    "@cloudflare/next-on-pages": "^1.13.5",
+    "@opennextjs/cloudflare": "^1.19.11",
+    "@playwright/test": "^1.60.0",
     "@tanstack/react-query-devtools": "^5.59.0",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "autoprefixer": "^10.4.20",
     "eslint": "^9.14.0",
-    "eslint-config-next": "15.0.3",
+    "eslint-config-next": "15.5.18",
     "postcss": "^8.4.49",
     "prettier": "^3.3.3",
     "prettier-plugin-tailwindcss": "^0.6.8",
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.3",
-    "wrangler": "^3.86.1"
+    "vitest": "^4.1.7",
+    "wrangler": "^4.94.0"
   },
   "engines": {
     "node": ">=20.11.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.10"
+    }
   }
 }

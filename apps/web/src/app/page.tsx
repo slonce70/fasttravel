@@ -29,33 +29,25 @@ async function getCountries(): Promise<CountryOut[]> {
 }
 
 export default async function HomePage() {
-  const [deals, countries] = await Promise.all([
-    getFeaturedDeals(),
-    getCountries(),
-  ]);
+  const [deals, countries] = await Promise.all([getFeaturedDeals(), getCountries()]);
 
   return (
     <div className="flex flex-col gap-12 pb-12">
       {/* Hero */}
       <section className="bg-gradient-to-br from-brand-700 via-brand-800 to-brand-900 pb-12 pt-12 text-white">
         <Container>
-          <h1 className="text-3xl font-bold leading-tight text-balance sm:text-5xl">
+          <h1 className="text-balance text-3xl font-bold leading-tight sm:text-5xl">
             Календар цін на тури
           </h1>
           <p className="mt-3 max-w-2xl text-sm text-brand-100 sm:text-lg">
-            Знаходь дні зі знижкою на курортах України, Туреччини, Єгипту, ОАЕ,
-            Греції та ще десятка напрямків — у єдиній сітці цін.
+            Знаходь дні зі знижкою на курортах України, Туреччини, Єгипту, ОАЕ, Греції та ще десятка
+            напрямків — у єдиній сітці цін.
           </p>
           <div className="mt-6 sm:mt-8">
             {/* useSearchParams() inside SearchForm requires Suspense in Next 15
                 — otherwise the page is forced to dynamic and ISR is lost. */}
             <Suspense
-              fallback={
-                <div
-                  className="h-44 animate-pulse rounded-2xl bg-white/10"
-                  aria-hidden
-                />
-              }
+              fallback={<div className="h-44 animate-pulse rounded-2xl bg-white/10" aria-hidden />}
             >
               <SearchForm countries={countries} />
             </Suspense>
@@ -67,10 +59,7 @@ export default async function HomePage() {
       <Container>
         <div className="mb-5 flex items-end justify-between">
           <h2 className="text-2xl font-bold text-slate-900">Гарячі знижки сьогодні</h2>
-          <Link
-            href="/deals"
-            className="text-sm font-medium text-brand-700 hover:text-brand-900"
-          >
+          <Link href="/deals" className="text-sm font-medium text-brand-700 hover:text-brand-900">
             Усі знижки →
           </Link>
         </div>

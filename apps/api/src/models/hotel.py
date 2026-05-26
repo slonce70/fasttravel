@@ -24,6 +24,7 @@ from src.infra.db import Base
 if TYPE_CHECKING:
     from src.models.destination import Destination
     from src.models.hotel_operator_mapping import HotelOperatorMapping
+    from src.models.hotel_slug_alias import HotelSlugAlias
 
 
 class Hotel(Base):
@@ -62,5 +63,8 @@ class Hotel(Base):
 
     destination: Mapped["Destination | None"] = relationship(back_populates="hotels")
     operator_mappings: Mapped[list["HotelOperatorMapping"]] = relationship(
+        back_populates="hotel", cascade="all, delete-orphan"
+    )
+    slug_aliases: Mapped[list["HotelSlugAlias"]] = relationship(
         back_populates="hotel", cascade="all, delete-orphan"
     )

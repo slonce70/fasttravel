@@ -11,7 +11,7 @@ export default function ErrorBoundary({
   reset: () => void;
 }) {
   useEffect(() => {
-    // TODO: integrate Sentry browser SDK (Phase 2).
+    // Keep local visibility until a browser-side reporter is configured.
     // eslint-disable-next-line no-console
     console.error('App error:', error);
   }, [error]);
@@ -20,11 +20,9 @@ export default function ErrorBoundary({
     <Container className="py-20 text-center">
       <h1 className="text-2xl font-bold text-slate-900">Щось пішло не так</h1>
       <p className="mt-3 text-slate-600">
-        Ми вже знаємо про помилку. Спробуйте ще раз через декілька секунд.
+        Спробуйте ще раз через декілька секунд. Якщо помилка повториться, оновіть сторінку.
       </p>
-      {error.digest && (
-        <p className="mt-2 text-xs text-slate-400">код: {error.digest}</p>
-      )}
+      {error.digest && <p className="mt-2 text-xs text-slate-400">код: {error.digest}</p>}
       <button
         type="button"
         onClick={reset}

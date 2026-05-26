@@ -4,6 +4,7 @@ Source-specific normalizer tests (ittour, tbo, farvater) belong in
 their own files with recorded cassettes. Here we test the shared
 contract: meal-plan canonicalization.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -11,22 +12,25 @@ import pytest
 from src.normalizers.base import normalize_meal_plan
 
 
-@pytest.mark.parametrize("raw,expected", [
-    ("All Inclusive", "AI"),
-    ("all inclusive", "AI"),
-    ("AI", "AI"),
-    ("Ultra All Inclusive", "UAI"),
-    ("UAI", "UAI"),
-    ("Half Board", "HB"),
-    ("hb", "HB"),
-    ("Bed and Breakfast", "BB"),
-    ("Breakfast", "BB"),
-    ("Full Board", "FB"),
-    ("FB", "FB"),
-    ("Room Only", "RO"),
-    ("No Meal", "RO"),
-    ("RO", "RO"),
-])
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("All Inclusive", "AI"),
+        ("all inclusive", "AI"),
+        ("AI", "AI"),
+        ("Ultra All Inclusive", "UAI"),
+        ("UAI", "UAI"),
+        ("Half Board", "HB"),
+        ("hb", "HB"),
+        ("Bed and Breakfast", "BB"),
+        ("Breakfast", "BB"),
+        ("Full Board", "FB"),
+        ("FB", "FB"),
+        ("Room Only", "RO"),
+        ("No Meal", "RO"),
+        ("RO", "RO"),
+    ],
+)
 def test_canonical_mapping(raw, expected):
     assert normalize_meal_plan(raw) == expected
 

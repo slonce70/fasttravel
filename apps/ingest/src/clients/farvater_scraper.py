@@ -16,12 +16,13 @@ NOT loosen without editing this file):
     requires JS, we log a warn and stop, we do NOT bring up a headless
     browser pool for farvater)
 """
+
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import structlog
 from curl_cffi import requests as cffi_requests
@@ -31,7 +32,6 @@ from src.exceptions import (
     BootstrapBreakerOpen,
     BootstrapDailyCapHit,
     ForbiddenByUpstream,
-    IngestError,
     RateLimitExceeded,
 )
 from src.settings import get_settings
@@ -67,7 +67,7 @@ class FarvaterScraper:
         # sites (which farvater isn't yet — but might become tomorrow)
         # would 403 us on the TLS handshake.
         self._session = cffi_requests.AsyncSession(
-            impersonate="chrome117",
+            impersonate="chrome",
             headers={"User-Agent": self._settings.farvater_user_agent},
             timeout=20.0,
         )
@@ -88,21 +88,20 @@ class FarvaterScraper:
     async def fetch_hotel_page(self, slug: str) -> str:
         """Return raw HTML for `/uk/hotel/{slug}/`.
 
-        Caller is responsible for parsing (see farvater_normalizer.py).
-        TODO: real XHR endpoints for the calendar widget are not yet
-        documented. A manual HAR-capture session is required before this
-        scraper can produce real `price_observations` rows. Until then,
-        this returns the HTML scaffold only.
+        Caller is responsible for parsing (see farvater_normalizer.py). This
+        generic ingest client intentionally returns hotel HTML only; live
+        production price capture for Farvater is implemented in scheduler
+        snapshot jobs, where the current request sequence is known.
         """
         url = f"{self._settings.farvater_base_url}/uk/hotel/{slug}/"
         return await self._get_text(url)
 
     async def fetch_calendar_xhr(self, hotel_external_id: str) -> dict[str, Any]:
-        """Placeholder for the (not-yet-reverse-engineered) calendar XHR.
+        """Unsupported generic calendar endpoint for Farvater.
 
-        When the HAR capture lands, this method should hit the actual
-        JSON endpoint and return the parsed body. For now it raises
-        NotImplementedError so pipeline.py knows to skip.
+        Scheduler snapshots own the real Farvater price path. This method
+        raises NotImplementedError so the generic ingest pipeline records an
+        explicit skipped run instead of pretending calendar prices were read.
         """
         raise NotImplementedError(
             f"{self.source}: calendar XHR endpoint unknown — "
@@ -142,7 +141,7 @@ class FarvaterScraper:
                 response.raise_for_status()
 
             await self._reset_bad()
-            return response.text
+            return cast(str, response.text)
 
     async def _throttle(self) -> None:
         """Enforce min interval between requests."""
@@ -159,7 +158,7 @@ class FarvaterScraper:
         if until is None:
             return
         until_dt = datetime.fromisoformat(until.decode())
-        if until_dt > datetime.now(timezone.utc):
+        if until_dt > datetime.now(UTC):
             raise BootstrapBreakerOpen(self.source, until_dt.isoformat())
 
     async def _check_daily_cap(self) -> None:
@@ -172,9 +171,14 @@ class FarvaterScraper:
         """Increment counter, set TTL to next UTC midnight on first hit."""
         new = await self._redis.incr(_DAILY_COUNT_REDIS_KEY)
         if new == 1:
-            now = datetime.now(timezone.utc)
-            tomorrow = (now.replace(hour=0, minute=0, second=0, microsecond=0)
-                        .replace(day=now.day) ).timestamp() + 86400 - now.timestamp()
+            now = datetime.now(UTC)
+            tomorrow = (
+                (
+                    now.replace(hour=0, minute=0, second=0, microsecond=0).replace(day=now.day)
+                ).timestamp()
+                + 86400
+                - now.timestamp()
+            )
             await self._redis.expire(_DAILY_COUNT_REDIS_KEY, int(tomorrow))
 
     async def _record_bad(self) -> None:
@@ -182,8 +186,8 @@ class FarvaterScraper:
         await self._redis.expire(_CONSECUTIVE_BAD_KEY, 600)  # 10 min window
         if bad >= self._settings.farvater_breaker_threshold:
             # Trip the breaker for 1 hour.
-            until = datetime.now(timezone.utc).timestamp() + 3600
-            until_dt = datetime.fromtimestamp(until, tz=timezone.utc)
+            until = datetime.now(UTC).timestamp() + 3600
+            until_dt = datetime.fromtimestamp(until, tz=UTC)
             await self._redis.set(_BREAKER_REDIS_KEY, until_dt.isoformat(), ex=3600)
             self._log.warning(
                 "farvater.breaker_tripped",

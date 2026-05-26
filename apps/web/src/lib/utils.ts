@@ -3,7 +3,14 @@
  * `clsx` + `tailwind-merge` deps (we don't have conflicting utilities yet).
  */
 
-type ClassValue = string | number | boolean | null | undefined | ClassValue[] | Record<string, boolean>;
+type ClassValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | ClassValue[]
+  | Record<string, boolean>;
 
 export function cn(...inputs: ClassValue[]): string {
   const out: string[] = [];

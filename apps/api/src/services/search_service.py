@@ -1,24 +1,22 @@
 """Hotel search service.
 
-Reads `hotel_calendar_prices` MV (post migration 002, keyed on
-hotel_id, check_in, meal_plan) so the search results carry a real
-`min_price_uah` and can be sorted cheapest-first.
+Reads `current_prices` MV so search results carry a real offer price,
+the matching Farvater deep link, and exact/fallback nights metadata.
 
 Two query regimes:
 
-  1. `check_in` given → INNER JOIN the MV on `(hotel_id, check_in)`
-     with an optional `meal_plan` filter. The effective price is
-     `COALESCE(min_<nights>n, min_price_uah)` so a hotel without a
-     7n/10n/14n bucket for that specific date still surfaces with its
-     generic per-day MIN — better than NULL/dropped.
+  1. `nights` given → choose the exact-night offer per hotel first;
+     if a hotel has no exact-night offer, fall back to its cheapest
+     current offer and mark `nights_fallback=true`.
 
-  2. `check_in` omitted → LEFT JOIN a subquery that gives the
-     all-time MIN per hotel (optionally meal-plan-filtered). Hotels
-     without any prices still appear (LEFT JOIN), sorted by
-     review_score for editorial ranking.
+  2. `nights` omitted → choose the cheapest current offer per hotel.
 
-ORDER BY is consistent across both regimes:
-  effective_price ASC NULLS LAST, review_score DESC NULLS LAST.
+Exact-night hotels are ranked before fallback hotels globally. That
+keeps search honest: fallback rows are visible, but they do not outrank
+real matches for the requested duration.
+
+ORDER BY is whitelist-driven across both regimes. Unknown values fall back to
+price ascending so URL input can never become arbitrary SQL.
 
 We hand-write SQL (text()) rather than going through SQLAlchemy ORM
 because the MV isn't mapped (intentional — it's storage, not domain).
@@ -35,23 +33,39 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.schemas.search import PaginatedSearchResults, SearchResultItem
 from src.services.meal_normalizer import raw_codes_for
 
-# Whitelist for the nights → column mapping. Keeps a user-supplied int
-# from sneaking into the SQL string. Anything outside this set falls back
-# to the generic min_price_uah column.
-_NIGHTS_COLUMN = {7: "min_7n", 10: "min_10n", 14: "min_14n"}
-
-
-def _price_expr(nights: int | None, table_alias: str = "p") -> str:
-    """Return the SQL expression for the per-hotel effective price.
-
-    For 7/10/14 we COALESCE to min_price_uah so a hotel with offers for
-    that day but not for the requested duration still surfaces with its
-    generic minimum (the on-click offers fetch will narrow it down).
-    """
-    col = _NIGHTS_COLUMN.get(nights or 0)
-    if col is None:
-        return f"{table_alias}.min_price_uah"
-    return f"COALESCE({table_alias}.{col}, {table_alias}.min_price_uah)"
+_SORT_ORDER_BY = {
+    "price_asc": """\
+            px.nights_exact    DESC NULLS LAST,
+            px.effective_price ASC NULLS LAST,
+            h.review_score     DESC NULLS LAST,
+            h.id               ASC
+    """,
+    "price_desc": """\
+            px.nights_exact    DESC NULLS LAST,
+            px.effective_price DESC NULLS LAST,
+            h.review_score     DESC NULLS LAST,
+            h.id               ASC
+    """,
+    "rating_desc": """\
+            px.nights_exact    DESC NULLS LAST,
+            h.review_score     DESC NULLS LAST,
+            px.effective_price ASC NULLS LAST,
+            h.id               ASC
+    """,
+    "name_asc": """\
+            px.nights_exact    DESC NULLS LAST,
+            h.name_uk          ASC NULLS LAST,
+            px.effective_price ASC NULLS LAST,
+            h.id               ASC
+    """,
+    "stars_desc": """\
+            px.nights_exact    DESC NULLS LAST,
+            h.stars            DESC NULLS LAST,
+            h.review_score     DESC NULLS LAST,
+            px.effective_price ASC NULLS LAST,
+            h.id               ASC
+    """,
+}
 
 
 async def search_hotels(
@@ -65,21 +79,32 @@ async def search_hotels(
     stars_min: int | None = None,
     adults: int | None = None,
     kids: list[int] | None = None,
+    sort: str = "price_asc",
     limit: int = 20,
     offset: int = 0,
 ) -> PaginatedSearchResults:
-    """Hotel facet search with real prices from `hotel_calendar_prices`."""
-    price_expr = _price_expr(nights)
+    """Hotel facet search with real prices from `current_prices`."""
+    order_by = _SORT_ORDER_BY.get(sort, _SORT_ORDER_BY["price_asc"])
 
     # Meal plan: expand canonical key ('all_inclusive') → raw codes
     # ['AI', 'UAI']. Raw codes pass through as singletons (back-compat).
     # When omitted, the SQL skips the meal filter entirely.
     meal_codes = raw_codes_for(meal_plan) if meal_plan else None
-    meal_filter = "AND meal_plan IN :meal_codes" if meal_codes else ""
+    current_price_meal_filter = "AND cp.meal_plan IN :meal_codes" if meal_codes else ""
+    current_price_date_filter = (
+        "AND cp.check_in = CAST(:check_in AS DATE)" if check_in is not None else ""
+    )
+    exact_first_order = (
+        "CASE WHEN cp.nights = CAST(:nights AS INTEGER) THEN 0 ELSE 1 END,"
+        if nights is not None
+        else ""
+    )
+    requested_nights_expr = "CAST(:nights AS INTEGER)" if nights is not None else "NULL::INTEGER"
 
     params: dict[str, object] = {
         "country": country.upper() if country else None,
         "check_in": check_in,
+        "nights": nights,
         "price_max": price_max,
         "stars_min": stars_min,
         "limit": limit,
@@ -88,44 +113,33 @@ async def search_hotels(
     if meal_codes:
         params["meal_codes"] = meal_codes
 
-    # Build the price subquery / join differently depending on whether we
-    # have a target date. The two CTEs always project the same columns:
-    # (hotel_id, effective_price) — so the outer SELECT is identical.
-    if check_in is not None:
-        # Date-specific path: INNER JOIN the MV row(s) for that day. If a
-        # hotel has no MV row for `check_in`, it does not appear in the
-        # results — which matches user intent ("show me hotels with prices
-        # for this date").
-        prices_cte = f"""
-            prices AS (
-                SELECT
-                    hotel_id,
-                    MIN({price_expr}) AS effective_price
-                FROM hotel_calendar_prices p
-                WHERE check_in = CAST(:check_in AS DATE)
-                  {meal_filter}
-                GROUP BY hotel_id
-            )
-        """
-        # INNER JOIN: a hotel only shows up if it has a row for that date.
-        join_clause = "JOIN prices px ON px.hotel_id = h.id"
-    else:
-        # No-date path: pull the all-time MIN per hotel. This is still a
-        # price search, not a static catalog, so JOIN (not LEFT JOIN) keeps
-        # meal-specific filters honest: a hotel without a matching price row
-        # must not render a "from —" card in a results grid.
-        prices_cte = f"""
-            prices AS (
-                SELECT
-                    hotel_id,
-                    MIN({price_expr}) AS effective_price
-                FROM hotel_calendar_prices p
-                WHERE 1=1
-                  {meal_filter}
-                GROUP BY hotel_id
-            )
-        """
-        join_clause = "JOIN prices px ON px.hotel_id = h.id"
+    prices_cte = f"""
+        prices AS (
+            SELECT
+                cp.hotel_id,
+                (ARRAY_AGG(
+                    cp.price_uah
+                    ORDER BY {exact_first_order} cp.price_uah ASC NULLS LAST, cp.observed_at DESC
+                ))[1] AS effective_price,
+                (ARRAY_AGG(
+                    cp.nights
+                    ORDER BY {exact_first_order} cp.price_uah ASC NULLS LAST, cp.observed_at DESC
+                ))[1] AS effective_nights,
+                (ARRAY_AGG(
+                    cp.deep_link
+                    ORDER BY {exact_first_order} (cp.deep_link IS NULL), cp.price_uah ASC NULLS LAST, cp.observed_at DESC
+                ))[1] AS deep_link,
+                {requested_nights_expr} AS requested_nights,
+                COALESCE(BOOL_OR(cp.nights = CAST(:nights AS INTEGER)), FALSE) AS nights_exact,
+                MAX(cp.observed_at) AS last_observed_at
+            FROM current_prices cp
+            WHERE 1=1
+              {current_price_date_filter}
+              {current_price_meal_filter}
+            GROUP BY cp.hotel_id
+        )
+    """
+    join_clause = "JOIN prices px ON px.hotel_id = h.id"
 
     # Common WHERE fragments. We use CAST(:x AS TYPE) IS NULL so asyncpg
     # can infer parameter types when the filter is absent (same pattern
@@ -165,10 +179,8 @@ async def search_hotels(
     if meal_codes:
         count_sql = count_sql.bindparams(bindparam("meal_codes", expanding=True))
 
-    # Page query. Project the columns SearchResultItem needs, ordering by
-    # cheapest first (NULLS LAST so priceless hotels go to the bottom),
-    # review_score as tiebreak. h.id at the end makes pagination stable
-    # when prices and review_scores tie.
+    # Page query. Project the columns SearchResultItem needs. h.id at the
+    # end of every whitelisted sort makes pagination stable when values tie.
     page_sql = text(
         f"""
         WITH {prices_cte}
@@ -179,6 +191,10 @@ async def search_hotels(
             h.stars           AS stars,
             h.destination_id  AS destination_id,
             px.effective_price AS min_price_uah,
+            px.deep_link      AS deep_link,
+            px.requested_nights AS requested_nights,
+            px.effective_nights AS effective_nights,
+            px.last_observed_at AS last_observed_at,
             h.review_score    AS review_score,
             -- Search-result cards need a thumbnail; without one the grid
             -- looks broken. We pull the whole jsonb (small — usually
@@ -190,9 +206,7 @@ async def search_hotels(
         {join_clause}
         WHERE {base_where}
         ORDER BY
-            px.effective_price ASC NULLS LAST,
-            h.review_score     DESC NULLS LAST,
-            h.id               ASC
+{order_by}
         LIMIT :limit OFFSET :offset
         """
     )
@@ -210,7 +224,20 @@ async def search_hotels(
             stars=row["stars"],
             destination_id=row["destination_id"],
             min_price_uah=(int(row["min_price_uah"]) if row["min_price_uah"] is not None else None),
+            deep_link=row["deep_link"],
+            requested_nights=(
+                int(row["requested_nights"]) if row["requested_nights"] is not None else None
+            ),
+            effective_nights=(
+                int(row["effective_nights"]) if row["effective_nights"] is not None else None
+            ),
             review_score=(float(row["review_score"]) if row["review_score"] is not None else None),
+            last_observed_at=row["last_observed_at"],
+            nights_fallback=(
+                row["requested_nights"] is not None
+                and row["effective_nights"] is not None
+                and int(row["requested_nights"]) != int(row["effective_nights"])
+            ),
             # asyncpg already decoded the jsonb → Python list; defensive
             # coalesce in case a future driver returns None instead.
             photos=list(row["photos"] or []),

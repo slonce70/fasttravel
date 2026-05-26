@@ -16,10 +16,22 @@ const TAIL_NAV = [
 async function getTopCountries(): Promise<CountryOut[]> {
   try {
     const all = await fetchDestinations({ revalidate: 3600 });
-    return all.filter((c) => c.hotel_count > 0).slice(0, 5);
+    return uniqueCountriesByIso(all)
+      .filter((c) => c.hotel_count > 0)
+      .slice(0, 5);
   } catch {
     return [];
   }
+}
+
+function uniqueCountriesByIso(countries: CountryOut[]): CountryOut[] {
+  const seen = new Set<string>();
+  return countries.filter((country) => {
+    const iso = country.country_iso2.toUpperCase();
+    if (seen.has(iso)) return false;
+    seen.add(iso);
+    return true;
+  });
 }
 
 export async function Header() {
@@ -29,7 +41,9 @@ export async function Header() {
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70">
       <Container className="flex h-14 items-center justify-between gap-6">
         <Link href="/" className="flex items-center gap-2 font-semibold text-brand-800">
-          <span aria-hidden className="text-xl">✈️</span>
+          <span aria-hidden className="text-xl">
+            ✈️
+          </span>
           <span className="text-base sm:text-lg">FastTravel</span>
           <span className="hidden text-xs font-normal text-slate-400 sm:inline">
             календар цін на тури
@@ -56,17 +70,15 @@ export async function Header() {
                 <span className="block cursor-default rounded px-3 py-2 text-sm text-slate-700 transition-colors group-hover:bg-slate-100 group-hover:text-brand-800">
                   Напрямки ▾
                 </span>
-                <div className="invisible absolute right-0 top-full z-40 mt-1 w-56 rounded-lg border border-slate-200 bg-white p-1 opacity-0 shadow-lg transition group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+                <div className="invisible absolute right-0 top-full z-40 mt-1 w-56 rounded-lg border border-slate-200 bg-white p-1 opacity-0 shadow-lg transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
                   {topCountries.map((c) => (
                     <Link
-                      key={c.country_iso2}
+                      key={`${c.country_iso2}-${c.id}`}
                       href={`/destinations/${c.country_slug}`}
                       className="block rounded px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 hover:text-brand-800"
                     >
                       {c.name_uk}
-                      <span className="ml-2 text-xs text-slate-400">
-                        {c.hotel_count}
-                      </span>
+                      <span className="ml-2 text-xs text-slate-400">{c.hotel_count}</span>
                     </Link>
                   ))}
                 </div>
@@ -86,10 +98,7 @@ export async function Header() {
         </nav>
         {/* Mobile: minimalist quick-links. Hamburger comes in Phase 2. */}
         <nav aria-label="Швидкі дії" className="md:hidden">
-          <Link
-            href="/deals"
-            className="rounded px-3 py-2 text-sm font-medium text-accent-600"
-          >
+          <Link href="/deals" className="rounded px-3 py-2 text-sm font-medium text-accent-600">
             Знижки
           </Link>
         </nav>

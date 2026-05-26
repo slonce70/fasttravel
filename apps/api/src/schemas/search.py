@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -13,7 +13,8 @@ class SearchQuery(BaseModel):
     price_max: int | None = Field(default=None, ge=0)
     stars_min: int | None = Field(default=None, ge=1, le=5)
     adults: int | None = Field(default=None, ge=1, le=9)
-    kids: list[int] = []
+    kids: list[int] = Field(default_factory=list)
+    sort: str = Field(default="price_asc", max_length=32)
     limit: int = Field(default=20, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
 
@@ -27,12 +28,25 @@ class SearchResultItem(BaseModel):
     stars: int | None
     destination_id: int | None
     min_price_uah: int | None = None
+    deep_link: str | None = None
+    requested_nights: int | None = None
+    effective_nights: int | None = None
     review_score: float | None = None
+    # Sprint 2.5 — when the price was last observed by our scraper.
+    # Read from `hotel_calendar_prices.last_observed_at` (added in 002).
+    # Frontend can render "оновлено N год тому" when this is older than
+    # 6 hours; null when no price observation exists.
+    last_observed_at: datetime | None = None
+    # Sprint 2.6 — true when the user requested a specific nights count
+    # but the hotel only has offers for OTHER durations. The current
+    # row's `min_price_uah` is then a fallback, not the requested
+    # nights' price; the UI should badge it accordingly.
+    nights_fallback: bool = False
     # Thumbnail for the search-result card. Returned as the full photos_jsonb
     # list so the frontend can render whichever index it wants (currently
     # picks [0]). Defaults to an empty list rather than None to keep the
     # consumer's Array.map() unguarded — far fewer null-checks downstream.
-    photos: list[dict] = []
+    photos: list[dict[str, object]] = Field(default_factory=list)
 
 
 class PaginatedSearchResults(BaseModel):
@@ -41,6 +55,6 @@ class PaginatedSearchResults(BaseModel):
     limit: int
     offset: int
     price_basis_adults: int = 2
-    price_basis_kids: list[int] = []
+    price_basis_kids: list[int] = Field(default_factory=list)
     pax_supported: bool = True
     pax_note: str | None = None

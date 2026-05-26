@@ -3,6 +3,7 @@
 Reads DATABASE_URL via the application's pydantic Settings so a single
 .env drives both the app and migrations.
 """
+
 from __future__ import annotations
 
 import asyncio

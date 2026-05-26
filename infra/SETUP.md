@@ -114,7 +114,7 @@ This is **expected** — A1.Flex in EU regions is constantly oversubscribed.
 
 ## 6. Wait for cloud-init (~5 min after apply)
 
-The VM exists but `apt update && apt upgrade -y && install Docker/nginx/...`
+The VM exists but `apt update && apt upgrade -y && install Docker/certbot/...`
 takes ~3-7 min. SSH in and check:
 
 ```bash
@@ -125,7 +125,6 @@ cloud-init status --wait        # blocks until done
 cat /etc/fasttravel-bootstrap.completed
 docker --version
 docker compose version
-nginx -v
 ufw status
 systemctl status fail2ban
 ```
@@ -139,46 +138,60 @@ Expected: all green, ufw shows 22/80/443 ALLOW, fail2ban active.
 In your Cloudflare dashboard → **Add a site** → enter your domain. After
 NS-change is propagated (a few minutes):
 
-1. **DNS → Records → Add record**: type `A`, name `@`, IPv4 = your Oracle Reserved IP, proxy status **Proxied** (orange cloud). Add another for `www`.
+1. **DNS → Records → Add record**: type `A`, name `api`, IPv4 = your Oracle Reserved IP, proxy status **Proxied** (orange cloud). The public web frontend (`@` / `www`) is attached to the Cloudflare Worker, not to the VPS.
 2. **SSL/TLS → Overview**: set to **Full (strict)** once you've got a Let's Encrypt cert. For initial setup use **Full**.
 3. **SSL/TLS → Edge Certificates**: enable **Always Use HTTPS**, **Automatic HTTPS Rewrites**, **HSTS** (only after you're sure HTTPS works — HSTS has a 6-month commit).
 
 ---
 
-## 8. Install nginx + Let's Encrypt cert (5 min)
+## 8. Provision Let's Encrypt cert for container nginx (5 min)
 
-Copy the config onto the VM (from your laptop, in the repo root):
-
-```bash
-scp -i ~/.ssh/fasttravel_oracle \
-    infra/nginx/fasttravel.conf \
-    ubuntu@<public_ip>:/tmp/fasttravel.conf
-```
-
-On the VM:
+Production uses the nginx container from `docker-compose.prod.yml`, not host
+nginx. Certbot runs on the host only to create/renew files under
+`/etc/letsencrypt`, which the container mounts read-only.
 
 ```bash
-sudo mv /tmp/fasttravel.conf /etc/nginx/sites-available/fasttravel
-# Replace placeholder domain
-sudo sed -i 's/fasttravel\.com\.ua/<your-domain>/g' /etc/nginx/sites-available/fasttravel
-sudo ln -sf /etc/nginx/sites-available/fasttravel /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t && sudo systemctl reload nginx
-
-# Provision the TLS cert
-sudo certbot --nginx \
-  -d <your-domain> -d www.<your-domain> \
-  --email you@example.com --agree-tos --no-eff-email --redirect
+# On the VM, before starting the compose nginx container:
+sudo certbot certonly --standalone \
+  -d api.<your-domain> \
+  --email you@example.com --agree-tos --no-eff-email
 ```
 
-Verify: `curl -I https://<your-domain>` returns `200` (or `404` until the
-app is deployed — that's the configured default).
+If your API domain is not `api.fasttravel.com.ua`, edit
+`infra/nginx/fasttravel.conf` in the repo checkout before starting the stack:
+
+```bash
+sudo -u fasttravel sed -i 's/api\.fasttravel\.com\.ua/api.<your-domain>/g' \
+  /opt/fasttravel/infra/nginx/fasttravel.conf
+```
 
 ### Grafana basic-auth
 
 ```bash
-sudo apt-get install -y apache2-utils
 sudo htpasswd -c /etc/nginx/.htpasswd-grafana admin   # prompts for password
+```
+
+The file is mounted into the nginx container by `docker-compose.prod.yml`.
+
+### Certbot renewal hooks
+
+The compose nginx container owns ports 80/443 after deploy, so standalone
+renewal must stop it briefly during the ACME challenge:
+
+```bash
+sudo install -d /etc/letsencrypt/renewal-hooks/pre /etc/letsencrypt/renewal-hooks/post
+
+sudo tee /etc/letsencrypt/renewal-hooks/pre/fasttravel-stop-nginx.sh >/dev/null <<'SH'
+#!/usr/bin/env bash
+docker stop ft_nginx >/dev/null 2>&1 || true
+SH
+sudo chmod +x /etc/letsencrypt/renewal-hooks/pre/fasttravel-stop-nginx.sh
+
+sudo tee /etc/letsencrypt/renewal-hooks/post/fasttravel-start-nginx.sh >/dev/null <<'SH'
+#!/usr/bin/env bash
+docker start ft_nginx >/dev/null 2>&1 || true
+SH
+sudo chmod +x /etc/letsencrypt/renewal-hooks/post/fasttravel-start-nginx.sh
 ```
 
 ---
@@ -206,36 +219,35 @@ sudo systemctl enable --now fasttravel-keepalive.timer   # hourly
 systemctl list-timers --all | grep fasttravel
 ```
 
-> **Note**: `fasttravel-stack.service` will fail until you deploy
-> `docker-compose.prod.yml` to `/opt/fasttravel/` (next step). That's fine.
+> **Note**: `fasttravel-stack.service` will exit harmlessly until you deploy a
+> full repo checkout plus `.env` to `/opt/fasttravel/` (next step). The prod
+> compose file is an overlay and must always be used together with
+> `docker-compose.yml`.
 
 ---
 
-## 10. Deploy the application (handled by the app-track agent)
+## 10. Deploy the application
 
-When the application code is ready:
+When the application code is ready, `/opt/fasttravel` must be a git checkout.
+The GitHub deploy workflow runs `git pull --ff-only origin main` there before
+pulling GHCR images.
 
 ```bash
-# On your laptop, in the repo root:
-scp -i ~/.ssh/fasttravel_oracle \
-    docker-compose.prod.yml \
-    .env.example \
-    ubuntu@<public_ip>:/opt/fasttravel/
-
-# Also rsync the grafana provisioning so Grafana picks up dashboards on boot
-rsync -avz -e "ssh -i ~/.ssh/fasttravel_oracle" \
-    infra/grafana/ \
-    fasttravel@<public_ip>:/opt/fasttravel/infra/grafana/
+# On the VM:
+sudo rm -rf /opt/fasttravel
+sudo -u fasttravel git clone git@github.com:<owner>/<repo>.git /opt/fasttravel
+cd /opt/fasttravel
 ```
 
 On the VM:
 
 ```bash
 cd /opt/fasttravel
-sudo -u fasttravel cp .env.example .env
-sudo -u fasttravel $EDITOR .env   # paste real secrets
+sudo -u fasttravel ./infra/scripts/secrets-bootstrap.sh .env
+sudo -u fasttravel $EDITOR .env   # paste real secrets + GHCR image tags
+sudo -u fasttravel ENV_FILE=.env STRICT_ENV=1 ./infra/scripts/production-preflight.sh
 sudo systemctl restart fasttravel-stack.service
-docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 ```
 
 ---
@@ -244,12 +256,13 @@ docker compose -f docker-compose.prod.yml ps
 
 ```bash
 # From your laptop
-curl -fsS https://<your-domain>/api/health   # should return {"status":"ok"} once API is up
+curl -fsS https://api.<your-domain>/health   # should return {"status":"ok"} once API is up
 
 # On the VM
 sudo journalctl -u fasttravel-stack.service -n 50 --no-pager
 sudo journalctl -u fasttravel-snapshot.service -n 50 --no-pager
-docker compose -f /opt/fasttravel/docker-compose.prod.yml logs --tail=100
+cd /opt/fasttravel
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=100
 systemctl list-timers --all | grep fasttravel
 ```
 
@@ -291,7 +304,8 @@ sudo cloud-init status --long
 sudo cat /var/log/cloud-init-output.log | less
 
 # Stack health
-docker compose -f /opt/fasttravel/docker-compose.prod.yml ps
+cd /opt/fasttravel
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 docker stats --no-stream
 
 # Healthcheck script (runs every minute via crontab)

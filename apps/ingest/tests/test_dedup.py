@@ -7,6 +7,7 @@ We don't test the TTL expiry itself — fakeredis honours `ex=` and we
 trust Redis to do its job. What matters is the SET-NX-EX atomicity
 (no GET-then-SET race).
 """
+
 from __future__ import annotations
 
 from datetime import date

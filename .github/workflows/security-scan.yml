@@ -4,10 +4,8 @@
 #   - Schedule: every Monday at 04:00 UTC.
 #   - workflow_dispatch for ad-hoc runs.
 #
-# Failure policy: jobs report findings to the GitHub Security tab (SARIF
-# upload) and to the run log, but do NOT fail the workflow on findings.
-# We surface them; the human triages. Tighten to fail-on-critical once we
-# have a clean baseline.
+# Failure policy: HIGH/CRITICAL findings fail the workflow. SARIF still uploads
+# with `if: always()` so the GitHub Security tab keeps the details.
 
 name: Security Scan
 
@@ -48,7 +46,7 @@ jobs:
             file: ./apps/api/Dockerfile
             tag: fasttravel/api:scan
           - name: bot
-            context: ./apps/bot
+            context: ./apps
             file: ./apps/bot/Dockerfile
             tag: fasttravel/bot:scan
           - name: scheduler
@@ -83,7 +81,7 @@ jobs:
           output: trivy-${{ matrix.image.name }}.sarif
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-          exit-code: "0"   # do not fail; we report via SARIF
+          exit-code: "1"
 
       - name: Upload SARIF to Security tab
         if: always()
@@ -101,7 +99,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [api, scheduler]
+        service: [api, scheduler, ingest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -119,11 +117,9 @@ jobs:
         working-directory: apps/${{ matrix.service }}
         run: poetry install --no-root --only main
 
-      - name: Run pip-audit (informational)
+      - name: Run pip-audit
         working-directory: apps/${{ matrix.service }}
-        # `|| true` keeps the job green; findings show in the log.
-        # Tighten to fail-on-vuln once we have a clean baseline.
-        run: poetry run pip-audit --strict || true
+        run: poetry run pip-audit --strict
 
   # ---------------------------------------------------------------------------
   # npm audit on the web app.
@@ -149,9 +145,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install deps
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
-      - name: Audit (high + critical, informational)
-        # `|| true` so we don't gate on transitive deps we can't immediately
-        # upgrade. The log surfaces the findings.
-        run: pnpm audit --audit-level high || true
+      - name: Audit (high + critical)
+        run: pnpm audit --audit-level high

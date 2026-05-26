@@ -4,6 +4,7 @@ We deliberately keep this lean — DB integration tests live in
 apps/scheduler (which actually owns the snapshot job). Here we
 test pure logic: normalizers, dedup, client circuit breakers.
 """
+
 from __future__ import annotations
 
 import pytest

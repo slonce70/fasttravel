@@ -23,6 +23,15 @@ systemctl list-timers --all | grep fasttravel
 journalctl -u fasttravel-snapshot.service -n 50 --no-pager
 ```
 
+The production compose file is an overlay. All units intentionally call:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ...
+```
+
+Do not run `docker-compose.prod.yml` by itself; it does not define standalone
+images/build contexts for every service.
+
 ## Timezone note
 
 `OnCalendar=*-*-* 06,18:00:00` uses the **host** timezone, which is set to

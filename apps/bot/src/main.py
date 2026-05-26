@@ -67,6 +67,7 @@ async def _idle_until_signal() -> None:
 async def main() -> None:
     configure_logging()
     settings = get_settings()
+    settings.assert_prod_secrets()
 
     # Optional observability — Sentry only init's when SENTRY_DSN is set,
     # Prometheus exporter always boots (scrape is opt-in via Prometheus config).
@@ -82,9 +83,23 @@ async def main() -> None:
     if not settings.telegram_bot_token:
         log.warning(
             "bot.no_token",
-            note="TELEGRAM_BOT_TOKEN unset — bot idle, scheduler.post_deals also no-ops",
+            note="TELEGRAM_BOT_TOKEN unset — polling skipped; alert webhook still runs",
         )
-        await _idle_until_signal()
+        # Sprint 2.3 — even without a bot token the /alerts webhook
+        # stays up so AlertManager doesn't see persistent connection
+        # refusals; it returns 202 with a "no_channel" note that
+        # tells operators why nothing reaches Telegram.
+        from src.alert_webhook import start_alert_webhook
+
+        alert_runner = await start_alert_webhook(
+            None,  # type: ignore[arg-type]
+            port=int(settings.alert_webhook_port),
+            channel_id=None,
+        )
+        try:
+            await _idle_until_signal()
+        finally:
+            await alert_runner.cleanup()
         log.info("bot.stopped", reason="no_token")
         return
 
@@ -106,6 +121,7 @@ async def main() -> None:
     # main-menu dispatch), wizards / sub-flows after so their FSM-state
     # filters fall through to the catch-all only when no state is active.
     # Late imports keep the entrypoint side-effect-free for test imports.
+    from src.handlers.admin_discovery import router as discovery_router
     from src.handlers.commands import router as commands_router
     from src.handlers.deals import router as deals_router
     from src.handlers.destinations import router as destinations_router
@@ -119,8 +135,22 @@ async def main() -> None:
     dp.include_router(destinations_router)
     dp.include_router(subscribe_router)
     dp.include_router(profile_router)
+    # Discovery last — `my_chat_member` doesn't compete with any other
+    # router so order is purely cosmetic, but keeping it at the tail
+    # makes it visible as "operational tool" in the routers list.
+    dp.include_router(discovery_router)
 
     log.info("bot.starting", environment=settings.environment)
+    # Sprint 2.3 — spawn aiohttp.web server for AlertManager webhooks.
+    # Lives alongside aiogram polling; both share the same event loop.
+    # Port 9103 (after 9101 scheduler, 9102 bot metrics).
+    from src.alert_webhook import start_alert_webhook
+
+    alert_runner = await start_alert_webhook(
+        bot,
+        port=int(settings.alert_webhook_port),
+        channel_id=settings.telegram_channel_id,
+    )
     try:
         # Publish command list + open it via the blue MenuButton. Idempotent;
         # cheap to call on every boot so we don't drift if @BotFather is
@@ -135,6 +165,7 @@ async def main() -> None:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot, handle_signals=True)
     finally:
+        await alert_runner.cleanup()
         await close_client()
         await close_engine()
         await bot.session.close()

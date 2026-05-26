@@ -49,7 +49,10 @@ class Settings(BaseSettings):
     api_port: int = 8000
     # Stored raw to avoid pydantic-settings' JSON pre-parsing of list fields.
     # Use `.cors_origins` to get the parsed list.
-    cors_origins_raw: str = Field(default="http://localhost:3000", alias="cors_origins")
+    cors_origins_raw: str = Field(
+        default="http://localhost:3000,http://localhost:3100,http://127.0.0.1:3100",
+        alias="cors_origins",
+    )
 
     # --- Sentry (optional — only init when DSN present) ---
     sentry_dsn: str | None = None

@@ -4,6 +4,20 @@ global:
   scrape_interval: 30s
   evaluation_interval: 30s
 
+# Alert / recording rules. Rules live under infra/prometheus/rules/ and
+# are mounted by docker-compose.yml at /etc/prometheus/rules/. Use
+# `promtool check rules infra/prometheus/rules/fasttravel.yml` to
+# validate before commit; CI does the same in the docker-build job.
+rule_files:
+  - "/etc/prometheus/rules/fasttravel.yml"
+
+# Sprint 2.3 — Prometheus pushes firing/resolved alerts to AlertManager,
+# which then POSTs to the bot's /alerts webhook for Telegram delivery.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
 scrape_configs:
   - job_name: 'fasttravel-api'
     metrics_path: /metrics

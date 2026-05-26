@@ -1,7 +1,6 @@
 """Scheduler entrypoint — wires AsyncIOScheduler to all periodic jobs.
 
 Schedule (Europe/Kyiv):
-- snapshot_stub             — 04:00 (price ingest placeholder until clients ship)
 - snapshot_catalog_farvater — 03:00 (P1-1: catalog HTML-only daily crawl)
 - snapshot_farvater         — 06:00 / 18:00 (full catalog+price snapshot)
 - snapshot_hot              — hourly :30 (P1-3: top-N viewed → refresh queue)
@@ -31,38 +30,48 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from src import jobs as scheduler_jobs
 from src.config import get_settings
 from src.infra.logging import get_logger
-from src.infra.metrics import start_metrics_server, track_job_metrics
-from src.infra.sentry import configure_sentry
-from src.jobs import (
-    cleanup_partitions as _cleanup_partitions,
-    detect_deals as _detect_deals,
-    notify_subscribers as _notify_subscribers,
-    post_deals as _post_deals,
-    refresh_views as _refresh_views,
-    refresh_worker_loop,
-    sitemap_long_tail_ingest as _sitemap_long_tail_ingest,
-    snapshot_catalog_farvater as _snapshot_catalog_farvater,
-    snapshot_farvater as _snapshot_farvater,
-    snapshot_hot as _snapshot_hot,
-    snapshot_stub as _snapshot_stub,
+from src.infra.metrics import (
+    bootstrap_last_successful_snapshots,
+    start_metrics_server,
+    track_job_metrics,
 )
+from src.infra.sentry import configure_sentry
 
 # Decorate every job at registration so the metric labels stay consistent
 # and the underlying job modules don't have to import `metrics` themselves.
 # `refresh_worker_loop` is excluded: it's a long-running loop, not a job
 # invocation, so the run-counter/duration model doesn't fit cleanly.
-cleanup_partitions = track_job_metrics("cleanup_partitions")(_cleanup_partitions)
-detect_deals = track_job_metrics("detect_deals")(_detect_deals)
-notify_subscribers = track_job_metrics("notify_subscribers")(_notify_subscribers)
-post_deals = track_job_metrics("post_deals")(_post_deals)
-refresh_views = track_job_metrics("refresh_views")(_refresh_views)
-sitemap_long_tail_ingest = track_job_metrics("sitemap_long_tail_ingest")(_sitemap_long_tail_ingest)
-snapshot_catalog_farvater = track_job_metrics("snapshot_catalog_farvater")(_snapshot_catalog_farvater)
-snapshot_farvater = track_job_metrics("snapshot_farvater")(_snapshot_farvater)
-snapshot_hot = track_job_metrics("snapshot_hot")(_snapshot_hot)
-snapshot_stub = track_job_metrics("snapshot_stub")(_snapshot_stub)
+canary_farvater_schema = track_job_metrics("canary_farvater_schema")(
+    scheduler_jobs.canary_farvater_schema
+)
+cleanup_partitions = track_job_metrics("cleanup_partitions")(scheduler_jobs.cleanup_partitions)
+decay_active_prices = track_job_metrics("decay_active_prices")(scheduler_jobs.decay_active_prices)
+detect_deals = track_job_metrics("detect_deals")(scheduler_jobs.detect_deals)
+refresh_baselines = track_job_metrics("refresh_baselines")(scheduler_jobs.refresh_baselines)
+notify_subscribers = track_job_metrics("notify_subscribers")(scheduler_jobs.notify_subscribers)
+post_deals = track_job_metrics("post_deals")(scheduler_jobs.post_deals)
+refresh_worker_loop = scheduler_jobs.refresh_worker_loop
+refresh_views = track_job_metrics("refresh_views")(scheduler_jobs.refresh_views)
+sitemap_long_tail_ingest = track_job_metrics("sitemap_long_tail_ingest")(
+    scheduler_jobs.sitemap_long_tail_ingest
+)
+# Resilient wrapper — retries on transient network errors (DNS, connect,
+# timeout) with exponential backoff and records failures to scrape_runs.
+# Used for the startup one-shot resume and a daily fallback CronTrigger.
+sitemap_long_tail_ingest_resilient = track_job_metrics("sitemap_long_tail_ingest_resilient")(
+    scheduler_jobs.sitemap_long_tail_ingest_resilient
+)
+snapshot_catalog_farvater = track_job_metrics("snapshot_catalog_farvater")(
+    scheduler_jobs.snapshot_catalog_farvater
+)
+snapshot_farvater = track_job_metrics("snapshot_farvater")(scheduler_jobs.snapshot_farvater)
+snapshot_hot = track_job_metrics("snapshot_hot")(scheduler_jobs.snapshot_hot)
+# Sprint 1C — promo-bucket sweep. Behind FT_STATIC_TOURS_SWEEP_ENABLED
+# env flag (default off); the job no-ops when disabled.
+static_tours_sweep = track_job_metrics("static_tours_sweep")(scheduler_jobs.static_tours_sweep)
 
 log = get_logger(__name__)
 
@@ -81,8 +90,7 @@ def _build_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=TIMEZONE, job_defaults=_JOB_DEFAULTS)
 
     # Live farvater.travel ingest — pulls real prices for ~600 hotels across
-    # 11 countries twice daily (06:00 + 18:00 Kyiv). Stub remains registered
-    # under a separate id so we can A/B against the placeholder logs.
+    # 11 countries twice daily (06:00 + 18:00 Kyiv).
     scheduler.add_job(
         snapshot_farvater,
         CronTrigger(hour="6,18", minute=0, timezone=TIMEZONE),
@@ -110,21 +118,26 @@ def _build_scheduler() -> AsyncIOScheduler:
         name="sitemap_long_tail_ingest (weekly Sun 02:00 Kyiv)",
     )
     scheduler.add_job(
-        sitemap_long_tail_ingest,
+        sitemap_long_tail_ingest_resilient,
         DateTrigger(
             run_date=datetime.now(UTC) + timedelta(seconds=30),
             timezone=TIMEZONE,
         ),
         id="sitemap_long_tail_ingest_startup",
-        name="sitemap_long_tail_ingest (startup one-shot resume)",
+        name="sitemap_long_tail_ingest (startup one-shot resume, resilient)",
     )
+    # Daily fallback at 04:45 so we don't wait a full week to recover if the
+    # Sunday run was killed mid-flight or skipped. Idempotent via slug dedup;
+    # no local cap: already-ingested slugs are skipped, fresh hotels continue
+    # until the supported-country sitemap is exhausted.
+    # Slot is 04:45 — after cleanup_partitions (04:30), before any business-hour
+    # traffic. Resilient wrapper handles transient DNS/connect failures.
     scheduler.add_job(
-        snapshot_stub,
-        CronTrigger(hour=4, minute=0, timezone=TIMEZONE),
-        id="snapshot_stub",
-        name="snapshot_stub (04:00 Kyiv heartbeat — telemetry only)",
+        sitemap_long_tail_ingest_resilient,
+        CronTrigger(hour=4, minute=45, timezone=TIMEZONE),
+        id="sitemap_long_tail_ingest_daily_fallback",
+        name="sitemap_long_tail_ingest (daily 04:45 Kyiv fallback, uncapped)",
     )
-
     # Refresh MVs first, then detect deals, then post — chained on the hour.
     scheduler.add_job(
         refresh_views,
@@ -163,18 +176,49 @@ def _build_scheduler() -> AsyncIOScheduler:
         name="post_deals (every 15 min)",
     )
 
-    # Daily housekeeping — drop partitions older than retention (pg_partman
-    # config set in migration 001 via partman.part_config).
-    #
-    # Slot is 04:30 (not 03:00) so it doesn't collide with snapshot_catalog_farvater
-    # — APScheduler `max_instances=1` would make one of the two miss its tick if
-    # they fired at the same minute. partman.run_maintenance() is time-agnostic so
-    # the shift has zero downside.
+    # Sprint 1C — promo-bucket sweep. Cheap (~10-50 POSTs/run), every
+    # 2 hours at :20 so it doesn't collide with refresh_views (:05),
+    # detect_deals (:10), notify_subscribers (:15), or snapshot_hot (:30).
+    # No-ops when FT_STATIC_TOURS_SWEEP_ENABLED is unset.
+    scheduler.add_job(
+        static_tours_sweep,
+        CronTrigger(hour="*/2", minute=20, timezone=TIMEZONE),
+        id="static_tours_sweep",
+        name="static_tours_sweep (every 2h :20 Kyiv)",
+    )
+
+    # Sprint 1F off-peak ladder. Each runs once a day, 15 min apart, so
+    # one wobble doesn't cascade. Order chosen so each consumer sees the
+    # state its predecessor produced:
+    #   04:00 decay_active_prices — drop stale `has_active_prices` rows
+    #   04:15 refresh_baselines   — non-CONCURRENT MV refresh of price_baselines
+    #   04:30 cleanup_partitions  — pg_partman housekeeping
+    #   04:45 sitemap_long_tail   — small daily fallback (registered above)
+    scheduler.add_job(
+        decay_active_prices,
+        CronTrigger(hour=4, minute=0, timezone=TIMEZONE),
+        id="decay_active_prices",
+        name="decay_active_prices (daily 04:00 Kyiv)",
+    )
+    scheduler.add_job(
+        refresh_baselines,
+        CronTrigger(hour=4, minute=15, timezone=TIMEZONE),
+        id="refresh_baselines",
+        name="refresh_baselines (daily 04:15 Kyiv)",
+    )
     scheduler.add_job(
         cleanup_partitions,
         CronTrigger(hour=4, minute=30, timezone=TIMEZONE),
         id="cleanup_partitions",
         name="cleanup_partitions (daily 04:30 Kyiv)",
+    )
+    # Sprint 3.7 — schema canary. Fires once a day at 05:00 Kyiv, after
+    # the housekeeping ladder finishes. Cheap (~2 POSTs); never raises.
+    scheduler.add_job(
+        canary_farvater_schema,
+        CronTrigger(hour=5, minute=0, timezone=TIMEZONE),
+        id="canary_farvater_schema",
+        name="canary_farvater_schema (daily 05:00 Kyiv)",
     )
 
     return scheduler
@@ -182,12 +226,14 @@ def _build_scheduler() -> AsyncIOScheduler:
 
 async def main() -> None:
     settings = get_settings()
+    settings.assert_prod_secrets()
 
     # Optional observability — Sentry only init's when SENTRY_DSN env is set,
     # Prometheus exporter always boots (Prometheus scrape is opt-in via
     # infra/prometheus/prometheus.yml; nothing breaks if it's unscraped).
     sentry_enabled = configure_sentry()
     start_metrics_server(settings.metrics_port)
+    await bootstrap_last_successful_snapshots()
     log.info(
         "scheduler.booting",
         environment=settings.environment,

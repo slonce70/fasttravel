@@ -1,10 +1,14 @@
 node_modules
 .next
+.open-next
 .vercel
 .wrangler
+playwright-report
+test-results
 .env
 .env.local
 .env.*.local
+.dev.vars
 *.log
 .DS_Store
 next-env.d.ts

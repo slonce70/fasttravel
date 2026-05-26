@@ -9,9 +9,12 @@ resolve slug -> id via GET /api/hotels/{slug} and reuse the id thereafter.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
+from collections.abc import Awaitable, Coroutine
 from datetime import UTC, date, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
@@ -22,7 +25,7 @@ from src.deps import get_db
 from src.infra.cache import get_redis
 from src.infra.limiter import limiter
 from src.infra.logging import get_logger
-from src.models import Hotel
+from src.models import Hotel, HotelSlugAlias
 from src.schemas.calendar import CalendarDay, OfferOut
 from src.schemas.hotel import HotelOut
 from src.services.calendar_service import get_calendar, get_offers
@@ -54,13 +57,19 @@ REFRESH_QUEUE_MAX_LEN = 200
 # Keep strong references to fire-and-forget tasks so the event loop's weak
 # ref doesn't garbage-collect them mid-flight. CPython has bitten plenty
 # of people with this pattern.
-_pending_tasks: set[asyncio.Task] = set()
+_pending_tasks: set[asyncio.Task[Any]] = set()
 
 
-def _spawn_fire_and_forget(coro) -> None:
+def _spawn_fire_and_forget(coro: Coroutine[Any, Any, Any]) -> None:
     t = asyncio.create_task(coro)
     _pending_tasks.add(t)
     t.add_done_callback(_pending_tasks.discard)
+
+
+async def _maybe_await_redis(value: Awaitable[Any] | Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 @router.get("/{slug}", response_model=HotelOut)
@@ -68,6 +77,12 @@ async def get_hotel(slug: str, session: AsyncSession = Depends(get_db)) -> Hotel
     hotel = await session.scalar(
         select(Hotel).where(Hotel.canonical_slug == slug, Hotel.is_active.is_(True))
     )
+    if hotel is None:
+        hotel = await session.scalar(
+            select(Hotel)
+            .join(HotelSlugAlias, HotelSlugAlias.hotel_id == Hotel.id)
+            .where(HotelSlugAlias.source_slug == slug, Hotel.is_active.is_(True))
+        )
     if hotel is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="hotel not found")
     return HotelOut.model_validate(hotel)
@@ -82,8 +97,8 @@ async def _bump_hot_counter(hotel_id: int) -> None:
     try:
         redis = get_redis()
         key = f"hot:hotel:{hotel_id}"
-        await redis.incr(key)
-        await redis.expire(key, HOT_KEY_TTL_S)
+        await _maybe_await_redis(redis.incr(key))
+        await _maybe_await_redis(redis.expire(key, HOT_KEY_TTL_S))
     except Exception as exc:  # noqa: BLE001 — telemetry only
         log.debug("hot_counter.bump_failed", hotel_id=hotel_id, error=str(exc))
 
@@ -98,6 +113,7 @@ async def hotel_calendar(
     # docstring in calendar_service.get_calendar for the dual-shape rules.
     meal: str | None = Query(default=None, max_length=16),
     meal_plan: str | None = Query(default=None, max_length=16),
+    nights: int | None = Query(default=None, ge=1, le=30),
     session: AsyncSession = Depends(get_db),
 ) -> list[CalendarDay]:
     if to_date < from_date:
@@ -116,6 +132,7 @@ async def hotel_calendar(
         from_date,
         to_date,
         meal_plan=effective_meal_plan,
+        nights=nights,
     )
 
 
@@ -148,6 +165,7 @@ class RefreshResponse(BaseModel):
 async def trigger_refresh(
     request: Request,
     hotel_id: int,
+    nights: int | None = Query(default=None, ge=1, le=30),
     session: AsyncSession = Depends(get_db),
 ) -> RefreshResponse:
     """Stale-while-revalidate: enqueue a background live-price fetch.
@@ -200,14 +218,18 @@ async def trigger_refresh(
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="hotel mapping invalid")
 
     redis = get_redis()
-    cache_key = f"refresh:hotel:{hotel_id}"
+    cache_key = (
+        f"refresh:hotel:{hotel_id}"
+        if nights is None
+        else f"refresh:hotel:{hotel_id}:nights:{nights}"
+    )
 
     # Queue cap — hard ceiling on the persistent list so an attacker
     # rotating hotel_ids can't flood Redis (the list is appendonly →
     # persisted to disk). Reject 503 well below the OOM threshold so
     # capacity exhaustion is visible in metrics instead of swap thrashing.
     try:
-        qlen = await redis.llen(REFRESH_QUEUE_KEY)
+        qlen = await _maybe_await_redis(redis.llen(REFRESH_QUEUE_KEY))
         if qlen >= REFRESH_QUEUE_MAX_LEN:
             log.warning("refresh.queue_full", current=int(qlen), cap=REFRESH_QUEUE_MAX_LEN)
             raise HTTPException(
@@ -220,8 +242,8 @@ async def trigger_refresh(
         log.warning("refresh.queue_len_check_failed", error=str(exc))
     try:
         # SET NX EX — succeed only if no recent refresh for this hotel.
-        acquired = await redis.set(
-            cache_key, str(int(time.time())), nx=True, ex=REFRESH_MIN_INTERVAL_S
+        acquired = await _maybe_await_redis(
+            redis.set(cache_key, str(int(time.time())), nx=True, ex=REFRESH_MIN_INTERVAL_S)
         )
     except Exception as exc:
         log.warning("refresh.redis_unavailable", error=str(exc))
@@ -230,20 +252,21 @@ async def trigger_refresh(
     if not acquired:
         return RefreshResponse(queued=False, eta_seconds=0, reason="recently_refreshed")
 
-    payload = json.dumps(
-        {
-            "hotel_id": hotel_id,
-            "farvater_key": str(farvater_key),
-            "requested_at": datetime.now(UTC).isoformat(),
-            "trigger": "user",
-        }
-    )
+    job = {
+        "hotel_id": hotel_id,
+        "farvater_key": str(farvater_key),
+        "requested_at": datetime.now(UTC).isoformat(),
+        "trigger": "user",
+    }
+    if nights is not None:
+        job["requested_nights"] = [nights]
+    payload = json.dumps(job)
     try:
-        await redis.lpush(REFRESH_QUEUE_KEY, payload)
+        await _maybe_await_redis(redis.lpush(REFRESH_QUEUE_KEY, payload))
     except Exception as exc:  # noqa: BLE001 — drop lock so user can retry
         log.error("refresh.enqueue_failed", hotel_id=hotel_id, error=str(exc))
         try:
-            await redis.delete(cache_key)
+            await _maybe_await_redis(redis.delete(cache_key))
         except Exception:  # noqa: BLE001
             pass
         raise HTTPException(

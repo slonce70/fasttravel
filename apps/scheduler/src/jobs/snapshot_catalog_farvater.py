@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import text
 
@@ -57,7 +58,7 @@ SCRAPE_SOURCE = "catalog_only"
 
 
 async def _process_catalog_hotel(
-    client,
+    client: Any,
     url_path: str,
     iso2: str,
     operator_id: int,
@@ -72,7 +73,7 @@ async def _process_catalog_hotel(
         return 0
 
     async with async_session_factory() as db:
-        hotel_db_id = await _upsert_hotel(db, meta, dest_id)
+        hotel_db_id = await _upsert_hotel(db, meta, dest_id, operator_id)
         await _upsert_mapping(db, hotel_db_id, operator_id, meta)
         await db.commit()
     log.info(
@@ -85,7 +86,7 @@ async def _process_catalog_hotel(
 
 
 async def _record_run(
-    db,
+    db: Any,
     operator_id: int,
     status: str,
     rows_inserted: int,
@@ -176,6 +177,17 @@ async def snapshot_catalog_farvater(*, max_per_country: int | None = None) -> in
         async with async_session_factory() as db:
             await _record_run(db, operator_id, "success", total_seen, started_at=started_at)
             await db.commit()
+        # Mirror snapshot_farvater: stamp staleness gauge on success only.
+        try:
+            import time as _time
+
+            from src.infra.metrics import LAST_SUCCESSFUL_SNAPSHOT
+
+            LAST_SUCCESSFUL_SNAPSHOT.labels(scheduled_job="snapshot_catalog_farvater").set(
+                _time.time()
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("farvater.catalog.metrics_set_failed")
         log.info("farvater.catalog.done", seen=total_seen)
         return total_seen
 

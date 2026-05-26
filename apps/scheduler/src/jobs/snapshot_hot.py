@@ -23,7 +23,9 @@ of that.
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable
 from datetime import UTC, datetime
+from typing import cast
 
 from sqlalchemy import text
 
@@ -132,11 +134,7 @@ async def snapshot_hot(*, top_n: int = TOP_N) -> int:
     for key in lock_keys:
         pipe.exists(key)
     lock_results = await pipe.execute()
-    locked = {
-        hid
-        for hid, exists in zip(mapping.keys(), lock_results, strict=False)
-        if exists
-    }
+    locked = {hid for hid, exists in zip(mapping.keys(), lock_results, strict=False) if exists}
 
     now_iso = datetime.now(UTC).isoformat()
     queued = 0
@@ -157,8 +155,20 @@ async def snapshot_hot(*, top_n: int = TOP_N) -> int:
                 "hot_count": count,
             }
         )
-        await redis.lpush(QUEUE_KEY, payload)
+        await cast(Awaitable[int], redis.lpush(QUEUE_KEY, payload))
         queued += 1
+
+    # Sprint 2.2 — REFRESH_QUEUE_DEPTH was declared in metrics.py from
+    # the start but never updated. Stamp it at the tail of every
+    # snapshot_hot tick so the dashboard reflects current depth (the
+    # refresh_worker drains continuously, so this gauge moves between
+    # ticks too — best-effort snapshot is good enough for alerting).
+    try:
+        from src.infra.metrics import REFRESH_QUEUE_DEPTH
+
+        REFRESH_QUEUE_DEPTH.set(await cast(Awaitable[int], redis.llen(QUEUE_KEY)))
+    except Exception:  # noqa: BLE001
+        log.exception("snapshot_hot.metrics_set_failed")
 
     log.info(
         "snapshot_hot.queued",

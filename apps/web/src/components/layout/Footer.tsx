@@ -8,10 +8,22 @@ async function getTopCountries(): Promise<CountryOut[]> {
     const all = await fetchDestinations({ revalidate: 3600 });
     // API already sorts by hotel_count DESC — take first 6 with at least one
     // hotel. If the catalog is sparse this may yield fewer items; that's fine.
-    return all.filter((c) => c.hotel_count > 0).slice(0, 6);
+    return uniqueCountriesByIso(all)
+      .filter((c) => c.hotel_count > 0)
+      .slice(0, 6);
   } catch {
     return [];
   }
+}
+
+function uniqueCountriesByIso(countries: CountryOut[]): CountryOut[] {
+  const seen = new Set<string>();
+  return countries.filter((country) => {
+    const iso = country.country_iso2.toUpperCase();
+    if (seen.has(iso)) return false;
+    seen.add(iso);
+    return true;
+  });
 }
 
 export async function Footer() {
@@ -27,7 +39,7 @@ export async function Footer() {
             </h2>
             <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
               {topCountries.map((c) => (
-                <li key={c.country_iso2}>
+                <li key={`${c.country_iso2}-${c.id}`}>
                   <Link
                     href={`/destinations/${c.country_slug}`}
                     className="text-slate-700 hover:text-brand-800"
@@ -58,10 +70,7 @@ export async function Footer() {
                 </Link>
               </li>
               <li>
-                <a
-                  href="mailto:hello@fasttravel.com.ua"
-                  className="hover:text-slate-700"
-                >
+                <a href="mailto:hello@fasttravel.com.ua" className="hover:text-slate-700">
                   hello@fasttravel.com.ua
                 </a>
               </li>

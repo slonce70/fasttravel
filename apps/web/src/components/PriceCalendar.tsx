@@ -8,12 +8,13 @@
  * shows the per-night minimum price as a compact label (e.g. "22.4к"). Days
  * flagged as deals get a 🔥 emoji indicator.
  *
- * API contract: GET /api/hotels/{id}/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD[&meal=AI]
+ * API contract: GET /api/hotels/{id}/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD[&meal=AI][&nights=7]
  *   - `mealPlan` is forwarded as `?meal=` so the backend narrows the MV to
  *     that meal-plan (post migration 002). Omitting it returns the
  *     across-plans MIN per day.
- *   - `nights` is still client-side: the response carries
- *     min_7n/min_10n/min_14n columns and we pick the field here.
+ *   - `nights` is forwarded so the backend can aggregate exact-duration
+ *     offers from `current_prices`; hotel-detail UI exposes the same 7..14
+ *     night window that Farvater snapshots collect.
  *   - See apps/api/src/routers/hotels.py + services/calendar_service.py.
  */
 
@@ -25,7 +26,12 @@ import { uk } from 'date-fns/locale';
 import { fetchCalendar } from '@/lib/api-client';
 import type { CalendarDay, MealPlan, Nights } from '@/lib/types';
 import { addDays, cn, isoDate } from '@/lib/utils';
-import { formatMealPlan, formatPriceCompact, formatRelativeTime, formatDateLong } from '@/lib/format';
+import {
+  formatMealPlan,
+  formatPriceCompact,
+  formatRelativeTime,
+  formatDateLong,
+} from '@/lib/format';
 import { buildPriceScale, colorForPrice, type ColorScale } from '@/lib/deal-color';
 import { Skeleton } from './ui';
 
@@ -39,6 +45,9 @@ export interface PriceCalendarProps {
   /** How many days forward to render. Default = 90 (MVP window). */
   horizonDays?: number;
   onDateSelect?: (date: Date) => void;
+  onRefreshPrices?: () => void;
+  isRefreshingPrices?: boolean;
+  refreshNotice?: string | null;
 }
 
 export function PriceCalendar({
@@ -48,6 +57,9 @@ export function PriceCalendar({
   selectedDate,
   horizonDays = 90,
   onDateSelect,
+  onRefreshPrices,
+  isRefreshingPrices = false,
+  refreshNotice,
 }: PriceCalendarProps) {
   const [selected, setSelected] = useState<Date | undefined>();
 
@@ -58,15 +70,15 @@ export function PriceCalendar({
   const effectiveMealPlan = mealPlan === 'ALL' ? undefined : mealPlan;
   const mealLabel = mealPlan === 'ALL' ? 'будь-яке харчування' : formatMealPlan(mealPlan);
 
-  const { data, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch, dataUpdatedAt } = useQuery({
     // mealPlan participates in the queryKey so toggling AI↔HB refetches
     // (otherwise TanStack would serve the cached AI prices when the user
     // flips to HB and the heatmap would lie).
-    queryKey: ['calendar', hotelId, fromIso, toIso, effectiveMealPlan ?? 'ALL'],
+    queryKey: ['calendar', hotelId, fromIso, toIso, nights, effectiveMealPlan ?? 'ALL'],
     queryFn: ({ signal }) =>
       fetchCalendar(
         hotelId,
-        { from: fromIso, to: toIso, mealPlan: effectiveMealPlan },
+        { from: fromIso, to: toIso, mealPlan: effectiveMealPlan, nights },
         { signal },
       ),
     // Short staleTime so the on-mount background refresh (HotelView triggers
@@ -80,7 +92,7 @@ export function PriceCalendar({
   return (
     <section
       aria-label="Календар цін на тури"
-      className="rounded-2xl bg-slate-100/60 p-4 ring-1 ring-slate-200"
+      className="max-w-full overflow-hidden rounded-2xl bg-slate-100/60 p-3 ring-1 ring-slate-200 sm:p-4"
     >
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-slate-800">
@@ -91,16 +103,6 @@ export function PriceCalendar({
         </h2>
         <Legend />
       </div>
-      {!hasPrecomputedColumn(nights) && (
-        <p
-          className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200"
-          role="status"
-        >
-          Ціна на сітці показана для будь-якої тривалості. Натисніть день, щоб побачити
-          точні пропозиції для {nights} ночей.
-        </p>
-      )}
-
       {isError ? (
         <ErrorState onRetry={() => refetch()} />
       ) : isLoading ? (
@@ -137,14 +139,22 @@ export function PriceCalendar({
 
       <div className="mt-3 flex items-center justify-between text-xs text-slate-500">
         <span aria-live="polite">
-          {dataUpdatedAt > 0 ? `Оновлено ${formatRelativeTime(new Date(dataUpdatedAt))}` : ''}
+          {refreshNotice ??
+            (dataUpdatedAt > 0 ? `Оновлено ${formatRelativeTime(new Date(dataUpdatedAt))}` : '')}
         </span>
         <button
           type="button"
-          onClick={() => refetch()}
-          className="rounded px-2 py-1 hover:bg-slate-200"
+          onClick={() => {
+            if (onRefreshPrices) {
+              onRefreshPrices();
+              return;
+            }
+            void refetch();
+          }}
+          disabled={isRefreshingPrices || isFetching}
+          className="rounded px-2 py-1 hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60"
         >
-          Оновити
+          {isRefreshingPrices || isFetching ? 'Оновлюємо…' : 'Оновити'}
         </button>
       </div>
     </section>
@@ -161,7 +171,14 @@ interface PriceDayButtonProps extends DayButtonProps {
   nights: Nights;
 }
 
-function PriceDayButton({ day, modifiers, byDate, scale, nights, ...buttonProps }: PriceDayButtonProps) {
+function PriceDayButton({
+  day,
+  modifiers,
+  byDate,
+  scale,
+  nights,
+  ...buttonProps
+}: PriceDayButtonProps) {
   const key = isoDate(day.date);
   const row = byDate.get(key);
   const price = pickPriceForNights(row, nights);
@@ -189,7 +206,7 @@ function PriceDayButton({ day, modifiers, byDate, scale, nights, ...buttonProps 
       }
       title={discountHint}
       className={cn(
-        'group relative flex h-14 w-14 flex-col items-center justify-center rounded-lg border border-transparent text-xs transition-all',
+        'group relative flex h-11 w-11 flex-col items-center justify-center rounded-lg border border-transparent text-xs transition-all sm:h-14 sm:w-14',
         'focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1',
         isDisabled && 'cursor-not-allowed opacity-40',
         !isDisabled && price != null && 'hover:scale-105 hover:border-slate-400 hover:shadow-md',
@@ -206,7 +223,7 @@ function PriceDayButton({ day, modifiers, byDate, scale, nights, ...buttonProps 
       >
         {day.date.getDate()}
       </span>
-      <span className="mt-1 leading-none text-[10px] font-medium text-slate-700">
+      <span className="mt-1 text-[10px] font-medium leading-none text-slate-700">
         {price != null ? formatPriceCompact(price) : '—'}
       </span>
       {isDeal && (
@@ -235,22 +252,13 @@ function stripTime(d: Date): Date {
 /**
  * Pick the right per-nights min price from a calendar row.
  *
- * The MV only pre-aggregates 7/10/14n columns (see ADR-007). For any other
- * duration we fall back to `min_price_uah` — the generic min across ALL
- * nights for that check-in date — and let the on-click offers fetch surface
- * the precise per-nights price.
+ * Backend returns `prices_by_night` keyed by stringified night count
+ * (e.g. `{"7": 50000, "8": 52000, "14": 47000}`). Falls back to
+ * `min_price_uah` when the requested duration has no observations.
  */
 function pickPriceForNights(row: CalendarDay | undefined, nights: Nights): number | null {
   if (!row) return null;
-  if (nights === 7) return row.min_7n ?? row.min_price_uah ?? null;
-  if (nights === 10) return row.min_10n ?? row.min_price_uah ?? null;
-  if (nights === 14) return row.min_14n ?? row.min_price_uah ?? null;
-  return row.min_price_uah ?? null;
-}
-
-/** True iff the MV has a dedicated min-price column for `nights`. */
-function hasPrecomputedColumn(nights: Nights): boolean {
-  return nights === 7 || nights === 10 || nights === 14;
+  return row.prices_by_night?.[String(nights)] ?? row.min_price_uah ?? null;
 }
 
 function buildDayIndex(rows: CalendarDay[], nights: Nights) {
@@ -269,11 +277,7 @@ function buildDayIndex(rows: CalendarDay[], nights: Nights) {
  * the backend percentile-rule heuristic (ADR-006) at the display layer so
  * the 🔥 emoji appears even when the `deals` table hasn't been populated yet.
  */
-function isDealCandidate(
-  row: CalendarDay | undefined,
-  scale: ColorScale,
-  nights: Nights,
-): boolean {
+function isDealCandidate(row: CalendarDay | undefined, scale: ColorScale, nights: Nights): boolean {
   const price = pickPriceForNights(row, nights);
   if (price == null || scale.sorted.length < 8) return false;
   const p15Index = Math.floor(scale.sorted.length * 0.15);
@@ -335,9 +339,7 @@ function EmptyState() {
 function ErrorState({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="rounded-xl bg-white p-12 text-center text-slate-700 ring-1 ring-slate-200">
-      <p className="text-base font-medium text-danger-600">
-        Не вдалося завантажити ціни
-      </p>
+      <p className="text-base font-medium text-danger-600">Не вдалося завантажити ціни</p>
       <p className="mt-2 text-sm text-slate-500">
         Перевірте з'єднання або спробуйте ще раз через декілька секунд.
       </p>

@@ -66,6 +66,9 @@ backups/
 # Logs
 logs/
 *.log.*
+/.codex-shots/
+/test-results/
+/playwright-report/
 
 # Frontend build artifacts
 public/sitemap.xml
@@ -74,3 +77,4 @@ public/robots.txt.cached
 # OS
 *~
 .Trash-*
+infra/prometheus/.webhook_secret

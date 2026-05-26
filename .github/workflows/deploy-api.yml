@@ -1,14 +1,15 @@
 # Deploy backend services (api, bot, scheduler) to the VPS via SSH.
 #
 # Trigger: push to main, but only when backend or infra files change.
-# Frontend is deployed separately by the Cloudflare Pages git integration.
+# Frontend is deployed separately by the Cloudflare Workers/OpenNext pipeline.
 #
 # Flow:
 #   1. Build api/bot/scheduler images, tag with both `sha-<short>` and `latest`,
 #      push to GitHub Container Registry (ghcr.io/<owner>/<repo>-<service>).
-#   2. SSH into the VPS, pull the new images, run alembic migrations once,
-#      then `docker compose up -d` only the backend services.
-#   3. Verify /health responds 200 and report container state.
+#   2. SSH into the VPS, log in to GHCR with the workflow-scoped GITHUB_TOKEN,
+#      pull the new images, run alembic migrations once, then `docker compose up
+#      -d` only the backend services.
+#   3. Verify /health from inside the API container and report container state.
 #
 # Required GitHub secrets:
 #   DEPLOY_SSH_HOST          — VPS IP / hostname
@@ -16,6 +17,9 @@
 #   DEPLOY_SSH_KEY           — Private key (OpenSSH PEM)
 #   DEPLOY_SSH_KNOWN_HOSTS   — Output of `ssh-keyscan <host>` (optional, TOFU fallback)
 #   DEPLOY_NOTIFY_WEBHOOK    — Optional Slack/Discord webhook for failure alerts
+#
+# GHCR pull auth on the VPS uses the ephemeral built-in GITHUB_TOKEN. No PAT is
+# required as long as GHCR packages are linked to this repository.
 #
 # Graceful skip: if DEPLOY_SSH_HOST is empty (local-first phase, no VPS yet),
 # the whole job no-ops. Images are NOT built or pushed in that case to save
@@ -31,6 +35,7 @@ on:
       - "apps/bot/**"
       - "apps/scheduler/**"
       - "apps/ingest/**"
+      - "apps/shared/**"
       - "infra/**"
       - "docker-compose.yml"
       - "docker-compose.prod.yml"
@@ -55,6 +60,8 @@ jobs:
     env:
       DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
       DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_NOTIFY_WEBHOOK: ${{ secrets.DEPLOY_NOTIFY_WEBHOOK }}
       REGISTRY: ghcr.io
       IMAGE_PREFIX: ghcr.io/${{ github.repository }}
 
@@ -62,8 +69,15 @@ jobs:
       - name: Gate — skip when VPS secrets missing (local-first phase)
         id: gate
         run: |
-          if [ -z "${DEPLOY_SSH_HOST}" ]; then
-            echo "Skipping deploy: DEPLOY_SSH_HOST secret not set (local-first phase)."
+          missing=()
+          for name in DEPLOY_SSH_HOST DEPLOY_SSH_USER DEPLOY_SSH_KEY; do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Skipping deploy: missing required VPS secret(s): ${missing[*]}."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -111,7 +125,8 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         uses: docker/build-push-action@v6
         with:
-          context: ./apps/bot
+          context: ./apps
+          file: ./apps/bot/Dockerfile
           push: true
           tags: |
             ${{ steps.tags.outputs.prefix }}-bot:${{ steps.tags.outputs.sha }}
@@ -124,7 +139,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           # Build context is ./apps (one level above) because the scheduler
-          # Dockerfile vendors apps/bot/src/publishers/. See apps/scheduler/Dockerfile.
+          # Dockerfile vendors apps/shared/. See apps/scheduler/Dockerfile.
           context: ./apps
           file: ./apps/scheduler/Dockerfile
           push: true
@@ -139,7 +154,7 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          echo "${DEPLOY_SSH_KEY}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           if [ -n "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" ]; then
             echo "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
@@ -158,8 +173,18 @@ jobs:
           set -euo pipefail
           cd /opt/fasttravel
 
+          export GHCR_PULL_USERNAME='${{ github.actor }}'
+          export GHCR_PULL_TOKEN='${{ secrets.GITHUB_TOKEN }}'
+          export API_IMAGE="${{ steps.tags.outputs.prefix }}-api:${{ steps.tags.outputs.sha }}"
+          export BOT_IMAGE="${{ steps.tags.outputs.prefix }}-bot:${{ steps.tags.outputs.sha }}"
+          export SCHEDULER_IMAGE="${{ steps.tags.outputs.prefix }}-scheduler:${{ steps.tags.outputs.sha }}"
+
           echo "==> git pull"
           git pull --ff-only origin main
+
+          echo "==> docker login ghcr.io"
+          printf '%s' "${GHCR_PULL_TOKEN}" | docker login ghcr.io \
+            -u "${GHCR_PULL_USERNAME}" --password-stdin >/dev/null
 
           echo "==> docker compose pull (backend services)"
           docker compose -f docker-compose.yml -f docker-compose.prod.yml pull api bot scheduler
@@ -175,23 +200,29 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 
           echo "==> health check"
+          api_ok=0
           for i in 1 2 3 4 5 6 7 8 9 10; do
-            if curl -fsS http://localhost:8000/health > /dev/null; then
+            if docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api \
+              python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()" > /dev/null; then
               echo "Health check OK on attempt $i"
-              exit 0
+              api_ok=1
+              break
             fi
             echo "Health check attempt $i failed, retrying in 3s..."
             sleep 3
           done
-          echo "Health check failed after 10 attempts"
-          exit 1
+          if [ "$api_ok" != "1" ]; then
+            echo "Health check failed after 10 attempts"
+            exit 1
+          fi
+
+          echo "==> production preflight"
+          STRICT_ENV=1 ./infra/scripts/production-preflight.sh
           REMOTE
 
       - name: Notify on failure (optional webhook)
-        if: failure() && steps.gate.outputs.skip != 'true' && env.NOTIFY != ''
-        env:
-          NOTIFY: ${{ secrets.DEPLOY_NOTIFY_WEBHOOK }}
+        if: failure() && steps.gate.outputs.skip != 'true' && env.DEPLOY_NOTIFY_WEBHOOK != ''
         run: |
           curl -fsS -X POST -H 'Content-Type: application/json' \
             -d "{\"text\":\"FastTravel deploy failed: ${{ github.repository }}@${{ github.sha }} — see ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
-            "${NOTIFY}" || true
+            "${DEPLOY_NOTIFY_WEBHOOK}" || true

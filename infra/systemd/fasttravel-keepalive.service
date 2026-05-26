@@ -18,7 +18,7 @@ WorkingDirectory=/opt/fasttravel
 EnvironmentFile=-/opt/fasttravel/.env
 # Touches the heartbeat table; expected to exist after migration `001_init.sql`.
 # Falls back to a no-op if the table is missing so it doesn't spam the journal.
-ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml exec -T postgres \
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T postgres \
   psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0 -c \
   "INSERT INTO heartbeats(observed_at, source) VALUES (NOW(), 'systemd-keepalive') ON CONFLICT DO NOTHING;"
 TimeoutStartSec=60

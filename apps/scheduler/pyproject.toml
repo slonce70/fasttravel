@@ -35,6 +35,9 @@ prometheus-client = "^0.21.0"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
 pytest-asyncio = "^0.24.0"
+# fakeredis covers tests that exercise Redis-touching code paths
+# (snapshot_hot, refresh_worker) without spinning a real Redis.
+fakeredis = "^2.26.1"
 ruff = "^0.7.4"
 mypy = "^1.13.0"
 
@@ -63,6 +66,10 @@ ignore = [
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["asyncpg.*", "apscheduler.*"]
+ignore_missing_imports = true
 
 [build-system]
 requires = ["poetry-core"]

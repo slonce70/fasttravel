@@ -16,10 +16,9 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-
 from shared.publishers.broadcast import escape_markdown_v2
+
 from src.infra.db import delete_all_user_data, ensure_subscriber, list_subscriptions
-from src.keyboards.main_menu import main_menu_kb
 
 router = Router(name="profile")
 
@@ -28,7 +27,11 @@ def _profile_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔔 Мої підписки", callback_data="prof:subs")],
-            [InlineKeyboardButton(text="🗑 Видалити всі дані", callback_data="prof:delete")],
+            [
+                InlineKeyboardButton(
+                    text="🗑 Видалити всі дані", callback_data="prof:delete"
+                )
+            ],
         ]
     )
 
@@ -37,7 +40,9 @@ def _confirm_delete_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Так, видалити", callback_data="prof:delete:yes"),
+                InlineKeyboardButton(
+                    text="Так, видалити", callback_data="prof:delete:yes"
+                ),
                 InlineKeyboardButton(text="Скасувати", callback_data="prof:delete:no"),
             ]
         ]

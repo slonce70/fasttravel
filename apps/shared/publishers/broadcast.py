@@ -13,6 +13,7 @@ aiogram v3 surface notes:
     We wrap in a single retry loop with the suggested delay; persistent
     rate-limiting should surface as a job failure so APScheduler can log.
 """
+
 from __future__ import annotations
 
 import asyncio

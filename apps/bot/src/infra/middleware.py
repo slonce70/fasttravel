@@ -72,7 +72,7 @@ class ThrottleMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         user_id: int | None = None
-        if isinstance(event, (Message, CallbackQuery)) and event.from_user:
+        if isinstance(event, Message | CallbackQuery) and event.from_user:
             user_id = event.from_user.id
         if user_id is None:
             return await handler(event, data)

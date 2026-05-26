@@ -15,7 +15,7 @@ apps/api/
       hotels.py             /api/hotels/{slug}, /api/hotels/{id}/{calendar,offers}
       search.py             /api/search
       deals.py              /api/deals
-    services/               Business logic (read-only stubs for now)
+    services/               Business logic for search, calendar, deals, redirects
     models/                 SQLAlchemy 2.x async ORM
     schemas/                Pydantic 2 response/request models
     infra/                  DB engine, Redis client, structlog, Sentry
@@ -48,7 +48,7 @@ docker compose exec postgres psql -U fasttravel -d fasttravel -c \
    REFRESH MATERIALIZED VIEW hotel_calendar_prices; \
    REFRESH MATERIALIZED VIEW price_baselines;"
 
-# 5. Bring up the rest of the stack
+# 5. Bring up the rest of the backend/runtime stack
 docker compose up -d
 ```
 
@@ -59,6 +59,14 @@ Then:
 - Prometheus metrics: <http://localhost:8000/metrics>
 - Grafana: <http://localhost:3001> (admin / admin)
 - Prometheus: <http://localhost:9090>
+
+The Next.js frontend is not a compose service. Run it from `apps/web`:
+
+```bash
+cd ../web
+pnpm install
+NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm dev
+```
 
 ## Migrations
 
@@ -115,14 +123,15 @@ handler automatically carries the id.
 | `GET` | `/api/search?country=tr&stars_min=4&limit=20&offset=0` | Hotel search (facets only on MVP) |
 | `GET` | `/api/deals?country=tr&limit=50&offset=0` | Recent detected deals |
 
-## Known stubs
+## Production contracts
 
-- `services/calendar_service.py` and `services/deal_service.py` are wired
-  to real SQL but read from MVs that are empty until ingest lands.
-- Search ignores `check_in_min` / `check_in_max` / `price_max` for now
-  (TODO once ingest writes data and MVs refresh).
-- Affiliate URL signing / click tracking lives in
-  `services/redirect_service.py` as a no-op template substitution.
+- `Settings.assert_prod_secrets()` refuses to boot `ENVIRONMENT=prod`
+  with default `_change_me` database passwords.
+- Calendar/search/deals endpoints read from real tables and materialized
+  views populated by scheduler ingest jobs; no demo seed path is required.
+- Affiliate redirects are template-based until partner APIs provide final
+  signing rules; unavailable partners should stay explicit rather than
+  silently pretending checkout happens on FastTravel.
 
 ## Architectural decisions worth knowing
 

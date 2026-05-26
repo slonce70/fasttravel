@@ -3,6 +3,7 @@
 TBO only ships content (not pricing for UA). The pipeline calls this
 once per hotel as a hotel-content refresh — NOT every snapshot.
 """
+
 from __future__ import annotations
 
 from typing import Any

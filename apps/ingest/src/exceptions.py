@@ -6,6 +6,7 @@ mark a `scrape_runs` row as `failed`, `skipped_no_token`, or
 `partial_success`. Bare `Exception` from a client always means "we don't
 know what happened, fail loud".
 """
+
 from __future__ import annotations
 
 
@@ -27,9 +28,7 @@ class ClientNotConfigured(IngestError):
     def __init__(self, source: str, missing_env: str) -> None:
         self.source = source
         self.missing_env = missing_env
-        super().__init__(
-            f"{source} client not configured — set env var {missing_env} to enable"
-        )
+        super().__init__(f"{source} client not configured — set env var {missing_env} to enable")
 
 
 class ITTourNotConfigured(ClientNotConfigured):
@@ -49,9 +48,7 @@ class UpstreamHTTPError(IngestError):
         self.source = source
         self.status_code = status_code
         self.body_excerpt = body_excerpt
-        super().__init__(
-            f"{source} returned HTTP {status_code}: {body_excerpt[:200]}"
-        )
+        super().__init__(f"{source} returned HTTP {status_code}: {body_excerpt[:200]}")
 
 
 class RateLimitExceeded(UpstreamHTTPError):
@@ -91,8 +88,7 @@ class BootstrapBreakerOpen(IngestError):
         self.source = source
         self.until_iso = until_iso
         super().__init__(
-            f"{source} circuit breaker open until {until_iso} — "
-            "too many consecutive 429/403"
+            f"{source} circuit breaker open until {until_iso} — " "too many consecutive 429/403"
         )
 
 
@@ -103,6 +99,5 @@ class BootstrapDailyCapHit(IngestError):
         self.source = source
         self.used = used
         super().__init__(
-            f"{source} daily cap reached ({used} requests) — "
-            "will reset at next UTC midnight"
+            f"{source} daily cap reached ({used} requests) — " "will reset at next UTC midnight"
         )

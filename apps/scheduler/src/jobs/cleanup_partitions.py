@@ -59,8 +59,8 @@ _FALLBACK_LIST_OLD = text(
     WHERE parent.relname = 'price_observations'
       AND child.relname  ~ '^price_observations_p[0-9_]+$'
       AND to_date(
-            substring(child.relname FROM 'p([0-9]+)$'),
-            'YYYYMMDD'
+            substring(child.relname FROM 'p([0-9]{4}_[0-9]{2}_[0-9]{2})$'),
+            'YYYY_MM_DD'
           ) < (CURRENT_DATE - make_interval(days => :retention_days))
     """
 )

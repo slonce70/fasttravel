@@ -57,10 +57,7 @@ export function priceColor(rank: number): string {
  * Convenience wrapper: given the full set of visible prices and one specific
  * price, return the matching cell background color.
  */
-export function colorForPrice(
-  scale: ColorScale,
-  price: number | null | undefined,
-): string | null {
+export function colorForPrice(scale: ColorScale, price: number | null | undefined): string | null {
   if (price == null) return null;
   return priceColor(priceRank(scale, price));
 }

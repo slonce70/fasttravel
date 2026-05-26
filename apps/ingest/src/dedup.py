@@ -1,7 +1,7 @@
 """Offer-level deduplication via Redis.
 
 Rationale: we run a snapshot twice per day across thousands of
-hotel × config combinations. Most of those combinations will return
+hotel x config combinations. Most of those combinations will return
 EXACTLY the same price between morning and evening — operators
 re-quote relatively rarely. If we let every observation hit
 `price_observations`, the table doubles in size for nothing.
@@ -15,6 +15,7 @@ evidence. That's fine — the deal detector cares about CHANGES,
 not stability. If a price never changes, the absence of new rows
 IS the signal that it stayed put.
 """
+
 from __future__ import annotations
 
 import hashlib

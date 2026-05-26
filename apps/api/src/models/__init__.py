@@ -11,8 +11,10 @@ from src.models.deal import Deal
 from src.models.destination import Destination
 from src.models.hotel import Hotel
 from src.models.hotel_operator_mapping import HotelOperatorMapping
+from src.models.hotel_slug_alias import HotelSlugAlias
 from src.models.operator import Operator
 from src.models.price_observation import PriceObservation
+from src.models.promo_offer import PromoOffer
 from src.models.scrape_run import ScrapeRun
 from src.models.telegram_subscriber import TelegramSubscriber
 
@@ -22,8 +24,10 @@ __all__ = [
     "Destination",
     "Hotel",
     "HotelOperatorMapping",
+    "HotelSlugAlias",
     "Operator",
     "PriceObservation",
+    "PromoOffer",
     "ScrapeRun",
     "TelegramSubscriber",
 ]

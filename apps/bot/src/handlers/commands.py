@@ -16,8 +16,8 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
-
 from shared.publishers.broadcast import escape_markdown_v2
+
 from src.config import get_settings
 from src.keyboards.main_menu import (
     DEALS,
@@ -34,14 +34,12 @@ router = Router(name="commands")
 
 def _channel_buttons() -> InlineKeyboardMarkup:
     s = get_settings()
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📡 Канал з знижками", url=s.public_channel_link),
-                InlineKeyboardButton(text="🌐 Сайт", url=s.public_site_url),
-            ]
-        ]
-    )
+    buttons = [
+        InlineKeyboardButton(text="📡 Канал з знижками", url=s.public_channel_link)
+    ]
+    if s.public_site_url:
+        buttons.append(InlineKeyboardButton(text="🌐 Сайт", url=s.public_site_url))
+    return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
 @router.message(CommandStart())
@@ -80,7 +78,7 @@ async def cmd_help(message: Message) -> None:
         "  • /subscribe — підписатися на персональні алерти\n"
         "  • /profile — мій профіль і підписки\n"
         "  • /channel — публічний канал з усіма знижками\n\n"
-        "Сайт із календарем цін: https://fasttravel\\.com\\.ua\n"
+        "Календар цін доступний у боті через /search\n"
         "Питання: hello@fasttravel\\.com\\.ua"
     )
     await message.answer(

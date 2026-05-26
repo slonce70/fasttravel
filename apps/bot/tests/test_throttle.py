@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 
 import pytest
 from aiogram.types import Chat, Message, User
-
 from src.infra.middleware import ThrottleMiddleware
 
 
@@ -22,9 +21,7 @@ def _make_message(uid: int) -> Message:
         message_id=1,
         date=datetime.now(timezone.utc),
         chat=Chat.model_construct(id=uid, type="private"),
-        from_user=User.model_construct(
-            id=uid, is_bot=False, first_name="Test"
-        ),
+        from_user=User.model_construct(id=uid, is_bot=False, first_name="Test"),
         text="hi",
     )
 

@@ -1,0 +1,3 @@
+NEXTJS_ENV=development
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_TELEGRAM_CHANNEL_URL=https://t.me/testtyhhh

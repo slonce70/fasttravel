@@ -38,6 +38,7 @@ constraint and silently drops the loser.
 Backfill: clean existing dupes before adding the constraint, keeping
 the row with the highest `discount_pct` per group.
 """
+
 from alembic import op
 
 revision = "006"

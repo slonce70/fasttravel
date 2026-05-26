@@ -28,6 +28,7 @@ Backwards compatibility for callers that omit `meal_plan`:
   when no meal_plan is given (MIN across meal-plan rows for the same
   check_in). This keeps the public shape stable.
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence

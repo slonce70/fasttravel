@@ -23,8 +23,21 @@ RUN pip install --no-cache-dir \
     "sqlalchemy[asyncio]==2.0.36" \
     asyncpg==0.30.0
 
+# INSTALL_DEV=true layers in pytest + fakeredis so the same image can run
+# the bot test suite. Default off keeps prod minimal.
+ARG INSTALL_DEV=false
+RUN if [ "$INSTALL_DEV" = "true" ]; then \
+        pip install --no-cache-dir pytest==8.3.3 pytest-asyncio==0.24.0 fakeredis==2.26.1 ruff==0.7.4; \
+    fi
+
 # Bot source.
 COPY bot/src/ ./src/
+
+# Test source + pytest config (asyncio_mode=auto) — always copied so the
+# prod image is identical regardless of INSTALL_DEV variant. The bot has
+# no pyproject.toml, so pytest config lives in pytest.ini.
+COPY bot/tests/ ./tests/
+COPY bot/pytest.ini ./pytest.ini
 
 # Shared Python packages (PYTHONPATH=/app means `from shared.publishers...`
 # resolves to ./shared/publishers/).

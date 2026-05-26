@@ -54,12 +54,13 @@ def _countries_list_kb(destinations: list[dict[str, Any]]) -> InlineKeyboardMark
                 )
             ]
         )
-    if not rows:
+    settings = get_settings()
+    if not rows and settings.public_site_url:
         rows.append(
             [
                 InlineKeyboardButton(
                     text="Сайт із календарем цін",
-                    url=get_settings().public_site_url,
+                    url=settings.public_site_url,
                 )
             ]
         )
@@ -68,23 +69,27 @@ def _countries_list_kb(destinations: list[dict[str, Any]]) -> InlineKeyboardMark
 
 def _drill_kb(iso: str) -> InlineKeyboardMarkup:
     settings = get_settings()
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔍 Знайти тури в цю країну",
-                    callback_data=f"ds:search:{iso}",
-                )
-            ],
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="🔍 Знайти тури в цю країну",
+                callback_data=f"ds:search:{iso}",
+            )
+        ]
+    ]
+    if settings.public_site_url:
+        rows.append(
             [
                 InlineKeyboardButton(
                     text="🌐 Всі готелі на сайті",
-                    url=f"{settings.public_site_url}/destinations/{iso.lower()}?utm_source=tg_bot",
+                    url=f"{settings.public_site_url.rstrip('/')}/destinations/{iso.lower()}?utm_source=tg_bot",
                 )
-            ],
-            [InlineKeyboardButton(text="◀ До списку країн", callback_data="ds:back")],
-        ]
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text="◀ До списку країн", callback_data="ds:back")]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def show_destinations(message: Message) -> None:
@@ -132,9 +137,7 @@ async def cb_back(query: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("ds:search:"))
-async def cb_search_in_country(
-    query: CallbackQuery, state: FSMContext
-) -> None:
+async def cb_search_in_country(query: CallbackQuery, state: FSMContext) -> None:
     iso = (query.data or "").split(":", 2)[2]
     # Hand off to the wizard with country pre-filled (skip choosing_country step)
     await state.clear()

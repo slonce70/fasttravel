@@ -9,6 +9,7 @@ in the project plan. Extensions (pg_trgm, btree_gin, pg_cron, pg_partman)
 are bootstrapped by infra/postgres/init-extensions.sh on first cluster
 init, so this migration only depends on them existing.
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -110,9 +111,7 @@ def upgrade() -> None:
         ["destination_id"],
         postgresql_where=sa.text("is_active"),
     )
-    op.execute(
-        "CREATE INDEX ix_hotels_name_uk_trgm ON hotels USING gin (name_uk gin_trgm_ops)"
-    )
+    op.execute("CREATE INDEX ix_hotels_name_uk_trgm ON hotels USING gin (name_uk gin_trgm_ops)")
 
     # ----- hotel_operator_mapping --------------------------------------
     op.create_table(
@@ -395,9 +394,7 @@ def downgrade() -> None:
     op.execute("DROP MATERIALIZED VIEW IF EXISTS current_prices")
 
     # Detach partman bookkeeping before dropping the parent.
-    op.execute(
-        "DELETE FROM partman.part_config WHERE parent_table = 'public.price_observations'"
-    )
+    op.execute("DELETE FROM partman.part_config WHERE parent_table = 'public.price_observations'")
     op.execute("DROP TABLE IF EXISTS price_observations CASCADE")
 
     op.drop_table("scrape_runs")

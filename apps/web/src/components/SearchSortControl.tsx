@@ -1,0 +1,53 @@
+'use client';
+
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import {
+  DEFAULT_SEARCH_SORT,
+  SEARCH_SORT_OPTIONS,
+  normalizeSearchSort,
+  type SearchSort,
+} from '@/lib/search-sort';
+
+interface SearchSortControlProps {
+  value: SearchSort;
+}
+
+export function SearchSortControl({ value }: SearchSortControlProps) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useSearchParams();
+
+  function handleChange(nextValue: SearchSort) {
+    const qs = new URLSearchParams(params.toString());
+    qs.delete('offset');
+    qs.delete('amp;offset');
+    qs.delete('amp;sort');
+
+    if (nextValue === DEFAULT_SEARCH_SORT) {
+      qs.delete('sort');
+    } else {
+      qs.set('sort', nextValue);
+    }
+
+    const query = qs.toString();
+    router.push(query ? `${pathname}?${query}` : pathname);
+  }
+
+  return (
+    <label className="flex items-center gap-2 text-sm text-slate-600">
+      <span className="font-medium">Сортування</span>
+      <select
+        aria-label="Сортування результатів"
+        value={normalizeSearchSort(value)}
+        onChange={(event) => handleChange(normalizeSearchSort(event.target.value))}
+        className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-600"
+      >
+        {SEARCH_SORT_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}

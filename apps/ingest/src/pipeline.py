@@ -13,12 +13,12 @@ Design notes:
     efficiency. ~3,000 rows per snapshot is a single ~10ms statement
     against Postgres on Oracle ARM.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from decimal import Decimal
-from typing import Literal
+from datetime import UTC, date, datetime
+from typing import Any, Literal
 
 import structlog
 from redis.asyncio import Redis
@@ -89,7 +89,7 @@ async def run_snapshot(
     """
     nights_list = nights_list or [7, 10, 14]
     meal_plans = meal_plans or ["AI", "HB"]
-    report = SnapshotReport(source=source, started_at=datetime.now(timezone.utc))
+    report = SnapshotReport(source=source, started_at=datetime.now(UTC))
 
     try:
         collected = await _collect_offers(
@@ -106,7 +106,7 @@ async def run_snapshot(
         # just a no-op. The scheduler should already gate on this, but we
         # log here for the audit trail.
         log.warning("pipeline.source_skipped", source=source, reason=str(e))
-        report.finished_at = datetime.now(timezone.utc)
+        report.finished_at = datetime.now(UTC)
         return report
 
     deduped: list[NormalizedOffer] = []
@@ -119,7 +119,7 @@ async def run_snapshot(
 
     if deduped:
         report.offers_inserted = await _bulk_insert(db, deduped, hotels)
-    report.finished_at = datetime.now(timezone.utc)
+    report.finished_at = datetime.now(UTC)
 
     log.info(
         "pipeline.snapshot_complete",
@@ -174,32 +174,23 @@ async def _collect_offers(
                     report.errors.append(f"hotel {hotel.external_id}: {e}")
 
     elif source == "farvater":
-        # Bootstrap source. Only HTML metadata parse is wired today —
-        # XHR price extraction stays a stub until HAR capture lands.
-        from src.clients.farvater_scraper import FarvaterScraper
-        from src.normalizers.farvater_normalizer import parse_calendar_xhr
-
-        async with FarvaterScraper(redis) as scraper:
-            for hotel in hotels:
-                report.hotels_processed += 1
-                try:
-                    raw = await scraper.fetch_calendar_xhr(hotel.external_id)
-                    offers = parse_calendar_xhr(raw)
-                    collected.extend(offers)
-                    report.offers_collected += len(offers)
-                except (NotImplementedError, ClientNotConfigured) as e:
-                    # Expected during bootstrap phase.
-                    report.errors.append(f"hotel {hotel.external_id}: {e}")
-                except IngestError as e:
-                    report.errors.append(f"hotel {hotel.external_id}: {e}")
+        # Sprint 3.6 — explicitly refuse and point operators at the
+        # production path. The Sprint 1B-1F static_tours_sweep + the
+        # scheduler's snapshot_farvater own farvater ingest end-to-end;
+        # routing through the generic ingest pipeline would silently
+        # bypass the production rate budget, schema canary, and the
+        # `static_tours_sweep` promo channel. Remove this branch entirely
+        # once we're certain no caller still passes `source='farvater'`.
+        raise ValueError(
+            "farvater is handled by apps/scheduler (snapshot_farvater + "
+            "static_tours_sweep); generic ingest pipeline does not own it."
+        )
 
     elif source == "tbo":
         # TBO is content-only — does not produce price offers, only
         # NormalizedHotelContent. The caller should route TBO through
         # a separate refresh_hotel_content() entrypoint, not run_snapshot.
-        raise ValueError(
-            "TBO does not produce price offers — use refresh_hotel_content() instead"
-        )
+        raise ValueError("TBO does not produce price offers — use refresh_hotel_content() instead")
 
     else:
         raise ValueError(f"Unknown source: {source}")
@@ -223,32 +214,41 @@ async def _bulk_insert(
     import json
 
     by_external = {h.external_id: h for h in hotels}
-    rows: list[dict] = []
-    observed_at = datetime.now(timezone.utc)
+    operator_codes = sorted({offer.operator_code for offer in offers if offer.operator_code})
+    operator_ids = await _load_operator_ids(db, operator_codes)
+    rows: list[dict[str, Any]] = []
+    observed_at = datetime.now(UTC)
     for offer in offers:
         hotel = by_external.get(offer.hotel_external_id)
         if hotel is None:
             continue  # unknown hotel — skip silently
-        rows.append({
-            "observed_at": observed_at,
-            "hotel_id": hotel.canonical_hotel_id,
-            "check_in": offer.check_in,
-            "nights": offer.nights,
-            "meal_plan": offer.meal_plan,
-            "room_category": offer.room_category,
-            "adults": offer.adults,
-            "departure_city": offer.departure_city,
-            "price_uah": offer.price_uah,
-            "price_original": offer.price_original,
-            "currency": offer.currency,
-            "fx_rate_to_uah": offer.fx_rate_to_uah,
-            "deep_link": offer.deep_link,
-            "raw_payload": json.dumps(offer.raw_payload),
-            # operator_id is resolved later via a SQL trigger or by the
-            # caller; we leave it NULL here to keep ingest decoupled from
-            # the operators table.
-            "operator_id": None,
-        })
+        operator_id = operator_ids.get(offer.operator_code)
+        if operator_id is None:
+            log.warning(
+                "pipeline.offer_skipped_unknown_operator",
+                hotel_external_id=offer.hotel_external_id,
+                operator_code=offer.operator_code,
+            )
+            continue
+        rows.append(
+            {
+                "observed_at": observed_at,
+                "hotel_id": hotel.canonical_hotel_id,
+                "operator_id": operator_id,
+                "check_in": offer.check_in,
+                "nights": offer.nights,
+                "meal_plan": offer.meal_plan,
+                "room_category": offer.room_category,
+                "adults": offer.adults,
+                "departure_city": offer.departure_city,
+                "price_uah": offer.price_uah,
+                "price_original": offer.price_original,
+                "currency": offer.currency,
+                "fx_rate_to_uah": offer.fx_rate_to_uah,
+                "deep_link": offer.deep_link,
+                "raw_payload": json.dumps(offer.raw_payload),
+            }
+        )
 
     if not rows:
         return 0
@@ -263,7 +263,26 @@ async def _bulk_insert(
             :room_category, :adults, :departure_city, :price_uah, :price_original,
             :currency, :fx_rate_to_uah, :deep_link, CAST(:raw_payload AS jsonb)
         )
+        ON CONFLICT
+          (hotel_id, operator_id, check_in, nights, meal_plan, observed_at)
+        DO NOTHING
     """)
-    await db.execute(stmt, rows)
+    result = await db.execute(stmt, rows)
     await db.commit()
-    return len(rows)
+    rowcount = getattr(result, "rowcount", None)
+    return int(rowcount) if rowcount is not None and rowcount >= 0 else len(rows)
+
+
+async def _load_operator_ids(db: AsyncSession, codes: list[str]) -> dict[str, int]:
+    if not codes:
+        return {}
+
+    result = await db.execute(
+        text("""
+            SELECT id, code
+            FROM operators
+            WHERE code = ANY(CAST(:codes AS text[]))
+        """),
+        {"codes": codes},
+    )
+    return {str(row["code"]): int(row["id"]) for row in result.mappings().all()}

@@ -2,8 +2,8 @@
 
 Pagination: 5 deals per page rendered as one summary message followed by
 nav buttons. Tapping ◀▶ edits the same message so the chat doesn't
-balloon. Each card has a deep-link button to the hotel page on the web
-+ a "Купити" button if a deep_link is present.
+balloon. Each card gets one action button: the hotel name, linked to the
+live operator offer when available.
 
 State is held entirely in callback_data — no FSM context required, so a
 user can use /deals while a /search wizard is mid-flight without losing
@@ -48,18 +48,15 @@ def _build_keyboard(
     for d in deals:
         slug = d.get("hotel_slug")
         deep_link = d.get("deep_link")
-        row: list[InlineKeyboardButton] = []
-        if slug:
-            row.append(
-                InlineKeyboardButton(
-                    text=f"📖 {(d.get('hotel_name_uk') or 'Готель')[:24]}",
-                    url=f"{settings.public_site_url}/hotels/{slug}?utm_source=tg_bot&utm_medium=deals",
-                )
+        hotel_name = (d.get("hotel_name_uk") or "Готель")[:24]
+        url = deep_link
+        if not url and slug and settings.public_site_url:
+            url = (
+                f"{settings.public_site_url.rstrip('/')}/hotels/{slug}"
+                "?utm_source=tg_bot&utm_medium=deals"
             )
-        if deep_link:
-            row.append(InlineKeyboardButton(text="🛒 Купити", url=deep_link))
-        if row:
-            rows.append(row)
+        if url:
+            rows.append([InlineKeyboardButton(text=f"📖 {hotel_name}", url=url)])
 
     nav: list[InlineKeyboardButton] = []
     if page > 1:

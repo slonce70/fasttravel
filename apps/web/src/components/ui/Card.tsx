@@ -8,10 +8,7 @@ export function Card({
 }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
   return (
     <div
-      className={cn(
-        'rounded-xl bg-white shadow-sm ring-1 ring-slate-200/70',
-        className,
-      )}
+      className={cn('rounded-xl bg-white shadow-sm ring-1 ring-slate-200/70', className)}
       {...rest}
     >
       {children}

@@ -20,14 +20,23 @@ this over SQLAlchemy `relationship()` + `selectinload()` because:
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from typing import Any
+
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Deal, Destination, Hotel
 from src.schemas.deal import DealOut, PaginatedDeals
 
+# Sprint 2.4 — deals older than this aren't shown on /api/deals. The
+# Sprint 0.5 alerts (`StaleSnapshot`, 14h) and the static_tours_sweep
+# 24h freshness window for promo_offers both feed deals; 48h gives the
+# UI feed a comfortable buffer over them. Past 48h the deep_link is
+# likely to 404 or quote a different price on farvater.
+DEAL_FRESHNESS_HOURS = 48
 
-def _select_deal_columns() -> tuple:
+
+def _select_deal_columns() -> tuple[Any, ...]:
     """The flat column tuple used by both list_deals and get_deal_by_id."""
     return (
         Deal.id,
@@ -92,6 +101,14 @@ async def list_deals(
         # Telegram broadcaster uses, so the UI feed and the channel
         # stay in sync.
         .where(Deal.source.in_(_REAL_DEAL_SOURCES))
+        # Public deals must be measurable discounts. Operator bucket membership
+        # without a strike-through belongs in /api/promotions, not here.
+        .where(Deal.discount_pct > 0)
+        # Sprint 2.4 — drop deals whose underlying price observation has
+        # likely aged out of `current_prices` (14-day window). 48h keeps
+        # UI honest about offer freshness without burning users on dead
+        # deep_links.
+        .where(Deal.detected_at >= func.now() - text(f"INTERVAL '{DEAL_FRESHNESS_HOURS} hours'"))
     )
     if country_iso2:
         # When filtering by country we need destination to exist + match,
@@ -122,6 +139,9 @@ async def get_deal_by_id(session: AsyncSession, deal_id: int) -> DealOut | None:
         .join(Hotel, Hotel.id == Deal.hotel_id)
         .outerjoin(Destination, Destination.id == Hotel.destination_id)
         .where(Deal.id == deal_id)
+        .where(Deal.source.in_(_REAL_DEAL_SOURCES))
+        .where(Deal.discount_pct > 0)
+        .where(Deal.detected_at >= func.now() - text(f"INTERVAL '{DEAL_FRESHNESS_HOURS} hours'"))
     )
     row = (await session.execute(stmt)).first()
     if row is None:

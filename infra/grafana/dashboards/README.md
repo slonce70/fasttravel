@@ -43,16 +43,18 @@ type the ID. This is a 30-second one-time step the runbook covers.
 
 ## fasttravel-app.json panels
 
-1. Snapshot job duration (last 24 h) — Prometheus histogram from APScheduler.
-2. Deals detected per hour — `sum(rate(fasttravel_deals_detected_total[1h]))`.
-3. `price_observations` row count — `pg_stat_user_tables` for the partitioned table.
-4. MV refresh duration (last 6 h) — `fasttravel_mv_refresh_seconds`.
+1. Scheduler job duration (last 24 h) — `fasttravel_job_duration_seconds`.
+2. Scheduler runs by job/outcome — `fasttravel_job_runs_total`.
+3. Refresh queue depth — `fasttravel_refresh_queue_depth`.
+4. Bot handler latency — `fasttravel_bot_handler_latency_seconds`.
 
-Custom metrics expected in the FastAPI/scheduler code:
+Custom metrics expected in the scheduler/bot code:
 
-- `fasttravel_snapshot_seconds` (histogram)
-- `fasttravel_deals_detected_total` (counter)
-- `fasttravel_mv_refresh_seconds{view="current_prices|hotel_calendar_prices|price_baselines"}` (histogram)
+- `fasttravel_job_runs_total{job, outcome}` (counter)
+- `fasttravel_job_duration_seconds{job}` (histogram)
+- `fasttravel_refresh_queue_depth` (gauge)
+- `fasttravel_bot_messages_total{handler, outcome}` (counter)
+- `fasttravel_bot_handler_latency_seconds{handler}` (histogram)
 
 If those metrics aren't published yet, the panels render "No data" but don't
 break.

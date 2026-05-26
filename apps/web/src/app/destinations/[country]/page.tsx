@@ -7,12 +7,7 @@ import { Container } from '@/components/layout/Container';
 import { DealCard } from '@/components/DealCard';
 import { HotelCard } from '@/components/HotelCard';
 import { SearchForm } from '@/components/SearchForm';
-import {
-  fetchDeals,
-  fetchDestination,
-  fetchDestinations,
-  searchHotels,
-} from '@/lib/api-client';
+import { fetchDeals, fetchDestination, fetchDestinations, searchHotels } from '@/lib/api-client';
 import type { CountryOut, Deal } from '@/lib/types';
 
 /**
@@ -40,7 +35,7 @@ function accusative(name: string): string {
   const map: Record<string, string> = {
     Туреччина: 'Туреччину',
     Єгипет: 'Єгипет',
-    'ОАЕ': 'ОАЕ',
+    ОАЕ: 'ОАЕ',
     Греція: 'Грецію',
     Іспанія: 'Іспанію',
     Болгарія: 'Болгарію',
@@ -102,9 +97,14 @@ export default async function CountryDestinationPage({
 
   const [results, deals, countries] = await Promise.all([
     searchHotels(
-      { country: country.country_iso2, limit: 50 },
+      { country: country.country_iso2, sort: 'rating_desc', limit: 50 },
       { revalidate: 3600 },
-    ).catch(() => ({ items: [], total: 0, limit: 50, offset: 0 })),
+    ).catch(() => ({
+      items: [],
+      total: 0,
+      limit: 50,
+      offset: 0,
+    })),
     getFeaturedDeals(country.country_iso2),
     getCountriesList(),
   ]);
@@ -133,10 +133,7 @@ export default async function CountryDestinationPage({
           </p>
           <div className="mt-6">
             <Suspense fallback={<div className="h-44 rounded-2xl bg-white/10" />}>
-              <SearchForm
-                countries={countries}
-                defaultCountry={country.country_iso2}
-              />
+              <SearchForm countries={countries} defaultCountry={country.country_iso2} />
             </Suspense>
           </div>
         </Container>
@@ -145,12 +142,10 @@ export default async function CountryDestinationPage({
       {!hasHotels ? (
         <Container>
           <div className="rounded-xl bg-white p-10 text-center ring-1 ring-slate-200">
-            <p className="text-base font-semibold text-slate-900">
-              Поки немає готелів у каталозі
-            </p>
+            <p className="text-base font-semibold text-slate-900">Поки немає готелів у каталозі</p>
             <p className="mt-2 text-sm text-slate-500">
-              Слідкуй за оновленнями — підпишись на Telegram-канал, і ми пришлемо
-              перші тури в цей напрямок одразу як вони з’являться.
+              Слідкуй за оновленнями — підпишись на Telegram-канал, і ми пришлемо перші тури в цей
+              напрямок одразу як вони з’являться.
             </p>
             <Link
               href="/telegram"
@@ -164,21 +159,13 @@ export default async function CountryDestinationPage({
         <Container className="space-y-10">
           {country.regions.length > 0 && (
             <section aria-labelledby="regions-heading">
-              <h2
-                id="regions-heading"
-                className="mb-4 text-2xl font-bold text-slate-900"
-              >
+              <h2 id="regions-heading" className="mb-4 text-2xl font-bold text-slate-900">
                 Курорти {country.name_uk === 'Україна' ? 'України' : country.name_uk}
               </h2>
               <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
                 {country.regions.map((r) => (
-                  <div
-                    key={r.id}
-                    className="rounded-xl bg-white p-4 ring-1 ring-slate-200"
-                  >
-                    <h3 className="text-base font-semibold text-slate-900">
-                      {r.name_uk}
-                    </h3>
+                  <div key={r.id} className="rounded-xl bg-white p-4 ring-1 ring-slate-200">
+                    <h3 className="text-base font-semibold text-slate-900">{r.name_uk}</h3>
                     <p className="mt-1 text-xs text-slate-500">
                       {r.hotel_count > 0
                         ? `${r.hotel_count} готелів у каталозі`
@@ -215,10 +202,7 @@ export default async function CountryDestinationPage({
           )}
 
           <section aria-labelledby="top-hotels-heading">
-            <h2
-              id="top-hotels-heading"
-              className="mb-4 text-2xl font-bold text-slate-900"
-            >
+            <h2 id="top-hotels-heading" className="mb-4 text-2xl font-bold text-slate-900">
               Топ готелів за рейтингом
             </h2>
             {results.items.length === 0 ? (

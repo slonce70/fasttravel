@@ -46,6 +46,20 @@ def test_render_search_hit_escapes_special_chars_in_name():
     assert "\\!" in out
 
 
+def test_render_search_hit_marks_nights_fallback():
+    hit = {
+        "name_uk": "Bin Billa Hotel",
+        "min_price_uah": 27401,
+        "requested_nights": 8,
+        "effective_nights": 7,
+        "nights_fallback": True,
+    }
+    out = render_search_hit(hit)
+
+    assert "⚠️ ціна за 7 ноч" in out
+    assert "не за 8" in out
+
+
 def test_render_deal_full():
     row = {
         "discount_pct": 38,

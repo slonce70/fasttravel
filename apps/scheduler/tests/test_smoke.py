@@ -21,7 +21,8 @@ def test_jobs_importable():
         post_deals,
         refresh_views,
         sitemap_long_tail_ingest,
-        snapshot_stub,
+        snapshot_farvater,
+        snapshot_hot,
     )
 
     assert callable(cleanup_partitions)
@@ -29,7 +30,8 @@ def test_jobs_importable():
     assert callable(post_deals)
     assert callable(refresh_views)
     assert callable(sitemap_long_tail_ingest)
-    assert callable(snapshot_stub)
+    assert callable(snapshot_farvater)
+    assert callable(snapshot_hot)
 
 
 def test_main_module_importable():
@@ -50,3 +52,13 @@ def test_scheduler_registers_weekly_and_startup_sitemap_ingest():
         "sitemap_long_tail_ingest",
         "sitemap_long_tail_ingest_startup",
     }.issubset(job_ids)
+
+
+def test_scheduler_does_not_register_placeholder_jobs():
+    """Production scheduler must not report fake heartbeat jobs as ingest."""
+    from src import main
+
+    scheduler = main._build_scheduler()
+
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert "snapshot_stub" not in job_ids

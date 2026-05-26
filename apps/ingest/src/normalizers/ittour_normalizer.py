@@ -4,6 +4,7 @@ Field-name assumptions live HERE in one place so that, when the real
 docs land, a single edit per field is enough. Every assumed key is
 flagged with `# DOC` in a comment.
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -120,3 +121,17 @@ def normalize_offer(raw: dict[str, Any], *, operator_code: str) -> NormalizedOff
         deep_link=deep_link,
         raw_payload=raw,
     )
+
+
+def parse_search_response(
+    raw_offers: list[dict[str, Any]],
+    fallback_hotel_external_id: str,
+) -> list[NormalizedOffer]:
+    offers: list[NormalizedOffer] = []
+    for raw in raw_offers:
+        normalized_raw = dict(raw)
+        normalized_raw.setdefault("hotel_id", fallback_hotel_external_id)
+        offer = normalize_offer(normalized_raw, operator_code="ittour")
+        if offer is not None:
+            offers.append(offer)
+    return offers

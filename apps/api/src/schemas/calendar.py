@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CalendarDay(BaseModel):
@@ -13,16 +13,19 @@ class CalendarDay(BaseModel):
     the response stays one-row-per-day (backwards-compatible shape).
     When `meal_plan` is supplied (?meal_plan=AI), this field echoes the
     filter value, one row per (day, meal_plan).
+
+    `prices_by_night` is a map ``{"7": 50000, "8": 52000, ...}`` keyed by
+    stringified night count. With ``?nights=N`` it contains a single
+    entry for the requested N; without it, the full MV map (currently
+    nights 7..14, see migration 016). Missing nights mean no offers
+    were observed for that duration — frontend falls back to
+    ``min_price_uah`` for display.
     """
 
     check_in: date
     meal_plan: str | None = None
     min_price_uah: int | None = None
-    # MIN(price) filtered per nights bucket — lets the UI render different
-    # heatmaps for 7n/10n/14n without an extra round trip.
-    min_7n: int | None = None
-    min_10n: int | None = None
-    min_14n: int | None = None
+    prices_by_night: dict[str, int] = Field(default_factory=dict)
     observed_at: datetime | None = None
 
 

@@ -1,0 +1,184 @@
+# Deploy the Next.js/OpenNext frontend to Cloudflare Workers.
+#
+# This workflow intentionally no-ops until Cloudflare secrets are configured.
+# Once enabled, it repeats the same quality gates as CI before publishing.
+
+name: Deploy Web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/deploy-web.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Cloudflare Worker environment to deploy"
+        required: true
+        default: "production"
+        type: choice
+        options:
+          - production
+          - preview
+
+concurrency:
+  group: deploy-web-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+  PNPM_VERSION: "9.12.0"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Cloudflare Workers deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - name: Check Cloudflare secrets
+        id: gate
+        working-directory: .
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          FRONTEND_PREVIEW_URL: ${{ vars.FRONTEND_PREVIEW_URL || secrets.FRONTEND_PREVIEW_URL }}
+          FRONTEND_PRODUCTION_URL: ${{ vars.FRONTEND_PRODUCTION_URL || secrets.FRONTEND_PRODUCTION_URL }}
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'https://api.fasttravel.com.ua' }}
+          NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ vars.NEXT_PUBLIC_TELEGRAM_CHANNEL_URL || 'https://t.me/testtyhhh' }}
+          PREVIEW_NEXT_PUBLIC_API_URL: ${{ vars.PREVIEW_NEXT_PUBLIC_API_URL || 'https://staging-api.fasttravel.com.ua' }}
+          PREVIEW_NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ vars.PREVIEW_NEXT_PUBLIC_TELEGRAM_CHANNEL_URL || vars.NEXT_PUBLIC_TELEGRAM_CHANNEL_URL || 'https://t.me/testtyhhh' }}
+          REQUESTED_ENV: ${{ inputs.environment || 'production' }}
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping web deploy: CLOUDFLARE_ACCOUNT_ID/CLOUDFLARE_API_TOKEN are not configured."
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          smoke_url="$FRONTEND_PRODUCTION_URL"
+          public_api_url="$NEXT_PUBLIC_API_URL"
+          public_telegram_url="$NEXT_PUBLIC_TELEGRAM_CHANNEL_URL"
+          if [ "$REQUESTED_ENV" = "preview" ] && [ -n "$FRONTEND_PREVIEW_URL" ]; then
+            smoke_url="$FRONTEND_PREVIEW_URL"
+          fi
+          if [ "$REQUESTED_ENV" = "preview" ]; then
+            public_api_url="$PREVIEW_NEXT_PUBLIC_API_URL"
+            public_telegram_url="$PREVIEW_NEXT_PUBLIC_TELEGRAM_CHANNEL_URL"
+          fi
+
+          echo "public_api_url=$public_api_url" >> "$GITHUB_OUTPUT"
+          echo "public_telegram_url=$public_telegram_url" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$smoke_url" ]; then
+            echo "smoke=true" >> "$GITHUB_OUTPUT"
+            echo "smoke_url=$smoke_url" >> "$GITHUB_OUTPUT"
+          else
+            echo "smoke=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.deploy == 'true'
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        if: steps.gate.outputs.deploy == 'true'
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        if: steps.gate.outputs.deploy == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        if: steps.gate.outputs.deploy == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Security audit
+        if: steps.gate.outputs.deploy == 'true'
+        run: pnpm audit --prod --audit-level moderate
+
+      - name: Lint
+        if: steps.gate.outputs.deploy == 'true'
+        run: pnpm lint
+
+      - name: Typecheck
+        if: steps.gate.outputs.deploy == 'true'
+        run: pnpm typecheck
+
+      - name: Unit tests
+        if: steps.gate.outputs.deploy == 'true'
+        run: pnpm test
+
+      - name: Build Cloudflare Workers output
+        if: steps.gate.outputs.deploy == 'true'
+        env:
+          NEXT_PUBLIC_API_URL: ${{ steps.gate.outputs.public_api_url }}
+          NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ steps.gate.outputs.public_telegram_url }}
+        run: pnpm cf:build
+
+      - name: Dry-run deploy bundle
+        if: steps.gate.outputs.deploy == 'true'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NEXT_PUBLIC_API_URL: ${{ steps.gate.outputs.public_api_url }}
+          NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ steps.gate.outputs.public_telegram_url }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.environment }}" = "preview" ]; then
+            pnpm exec wrangler deploy --env preview --dry-run --outdir .open-next-dry-run
+          else
+            pnpm exec wrangler deploy --env="" --dry-run --outdir .open-next-dry-run
+          fi
+
+      - name: Deploy production Worker
+        if: steps.gate.outputs.deploy == 'true' && (github.event_name == 'push' || inputs.environment == 'production')
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NEXT_PUBLIC_API_URL: ${{ steps.gate.outputs.public_api_url }}
+          NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ steps.gate.outputs.public_telegram_url }}
+        run: pnpm cf:deploy
+
+      - name: Deploy preview Worker
+        if: steps.gate.outputs.deploy == 'true' && github.event_name == 'workflow_dispatch' && inputs.environment == 'preview'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          NEXT_PUBLIC_API_URL: ${{ steps.gate.outputs.public_api_url }}
+          NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ steps.gate.outputs.public_telegram_url }}
+        run: pnpm cf:deploy:preview
+
+      - name: Install Chromium for deployed smoke
+        if: steps.gate.outputs.deploy == 'true' && steps.gate.outputs.smoke == 'true'
+        run: pnpm test:e2e:install
+
+      - name: Smoke deployed frontend
+        if: steps.gate.outputs.deploy == 'true' && steps.gate.outputs.smoke == 'true'
+        env:
+          WEB_E2E_BASE_URL: ${{ steps.gate.outputs.smoke_url }}
+        run: pnpm test:e2e
+
+      - name: Upload deployed smoke artifacts
+        if: always() && steps.gate.outputs.deploy == 'true' && steps.gate.outputs.smoke == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-web-smoke-artifacts
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          retention-days: 7
+          if-no-files-found: ignore

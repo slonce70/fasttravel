@@ -11,7 +11,8 @@ Search is two-phase:
 The exact endpoint paths and response shapes here are based on the
 public documentation snapshot we have. Both will need verification
 against the canonical docs once the account contract is signed.
-TODO(@user): confirm the following once ittour ships final docs:
+
+Integration contract to confirm once ittour ships final docs:
   * path of init endpoint (could be /v1/search/init or /search/start)
   * polling status enum (we assume "pending" / "done" / "failed")
   * offer payload field names — see ittour_normalizer.py for assumptions
@@ -19,14 +20,15 @@ TODO(@user): confirm the following once ittour ships final docs:
 If ITTOUR_API_TOKEN is empty, the client refuses to instantiate; the
 pipeline catches `ITTourNotConfigured` and records a skipped run.
 """
+
 from __future__ import annotations
 
 import asyncio
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 from src.clients.base import BaseClient
-from src.exceptions import ITTourNotConfigured, IngestError
+from src.exceptions import IngestError, ITTourNotConfigured
 from src.settings import get_settings
 
 
@@ -87,7 +89,7 @@ class ITTourClient(BaseClient):
             "meal_plan": meal_plan,
             "departure_city": departure_city,
         }
-        # TODO(@user): verify "/search/init" path against canonical docs
+        # Contract pending partner confirmation: "/search/init".
         init_resp = await self._post("/search/init", json=body)
         init_payload = init_resp.json()
         search_uuid = init_payload.get("uuid")
@@ -100,7 +102,7 @@ class ITTourClient(BaseClient):
         deadline = self._poll_timeout_s
         elapsed = 0.0
         while elapsed < deadline:
-            # TODO(@user): verify path "/search/results"
+            # Contract pending partner confirmation: "/search/results".
             resp = await self._get("/search/results", params={"uuid": search_uuid})
             data = resp.json()
             status = data.get("status")
@@ -108,9 +110,7 @@ class ITTourClient(BaseClient):
                 offers = data.get("offers") or []
                 return list(offers)
             if status == "failed":
-                raise IngestError(
-                    f"ittour search {search_uuid} failed: {data.get('error')!r}"
-                )
+                raise IngestError(f"ittour search {search_uuid} failed: {data.get('error')!r}")
             await asyncio.sleep(self._poll_interval_s)
             elapsed += self._poll_interval_s
         raise IngestError(f"ittour search {search_uuid} timed out after {deadline}s")
@@ -118,16 +118,35 @@ class ITTourClient(BaseClient):
     # ----- hotel content ---------------------------------------------------
 
     async def fetch_hotel(self, hotel_id: str) -> dict[str, Any]:
-        # TODO(@user): verify path "/hotels/{id}"
+        # Contract pending partner confirmation: "/hotels/{id}".
         resp = await self._get(f"/hotels/{hotel_id}")
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
 
     async def fetch_hotel_calendar(
         self, hotel_id: str, from_date: date, to_date: date
     ) -> dict[str, Any]:
-        # TODO(@user): verify path "/hotels/{id}/calendar"
+        # Contract pending partner confirmation: "/hotels/{id}/calendar".
         resp = await self._get(
             f"/hotels/{hotel_id}/calendar",
             params={"from": from_date.isoformat(), "to": to_date.isoformat()},
         )
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
+
+    async def search_hotel(
+        self,
+        hotel_id: str,
+        check_in_range: tuple[date, date],
+        nights_list: list[int],
+        meal_plans: list[str],
+    ) -> list[dict[str, Any]]:
+        """Compatibility adapter for the generic ingest pipeline.
+
+        The partner contract is still pending, so we fetch the hotel calendar
+        payload and leave nights/meal filtering to the upstream response or
+        normalizer once the exact schema is confirmed.
+        """
+        payload = await self.fetch_hotel_calendar(hotel_id, check_in_range[0], check_in_range[1])
+        raw_offers = payload.get("offers") or payload.get("calendar") or []
+        if not isinstance(raw_offers, list):
+            return []
+        return [offer for offer in raw_offers if isinstance(offer, dict)]

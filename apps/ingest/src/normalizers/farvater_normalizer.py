@@ -14,13 +14,15 @@ What this module deliberately does NOT do:
   * Render JavaScript. If the data isn't in the static HTML, the
     bootstrap source can't help us — we need ittour direct.
 """
+
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import Any
 
 from selectolax.parser import HTMLParser
 
-from src.normalizers.base import NormalizedHotelContent
+from src.normalizers.base import NormalizedHotelContent, NormalizedOffer
 
 
 def parse_hotel_card_html(html: str) -> NormalizedHotelContent | None:
@@ -60,11 +62,13 @@ def parse_hotel_card_html(html: str) -> NormalizedHotelContent | None:
     )
 
 
-def parse_calendar_xhr(payload: dict[str, Any]) -> list:
-    """Return list[NormalizedOffer] from the (TBD) calendar XHR payload.
+def parse_calendar_xhr(payload: dict[str, Any]) -> list[NormalizedOffer]:
+    """Return list[NormalizedOffer] from Farvater's private calendar payload.
 
-    This stays a stub until we capture the real endpoint shape. When
-    that happens, the function will look approximately like:
+    The generic ingest package does not yet know Farvater's private XHR
+    shape; production prices currently come from scheduler snapshot jobs.
+    Once a HAR capture pins this endpoint, the function should look roughly
+    like:
 
         offers = []
         for entry in payload["data"]["calendar"]:
@@ -81,8 +85,8 @@ def parse_calendar_xhr(payload: dict[str, Any]) -> list:
         return offers
     """
     raise NotImplementedError(
-        "farvater calendar XHR shape unknown — "
-        "capture via DevTools HAR and implement parse_calendar_xhr()"
+        "farvater calendar XHR shape unknown for generic ingest — "
+        "production Farvater prices are handled by scheduler snapshots"
     )
 
 
@@ -90,8 +94,9 @@ def parse_calendar_xhr(payload: dict[str, Any]) -> list:
 # Internal helpers — selectolax CSS queries, all defensive.
 # ---------------------------------------------------------------------------
 
+
 def _extract_stars(tree: HTMLParser) -> int | None:
-    # Two common patterns: explicit data attribute, or N×star icons.
+    # Two common patterns: explicit data attribute, or N-star icons.
     node = tree.css_first("[data-hotel-stars]")
     if node is not None:
         raw = node.attributes.get("data-hotel-stars")
@@ -111,7 +116,13 @@ def _extract_photo_urls(tree: HTMLParser) -> list[str]:
             urls.append(src if src.startswith("http") else f"https:{src}")
     # Dedupe while preserving order.
     seen: set[str] = set()
-    return [u for u in urls if not (u in seen or seen.add(u))][:10]
+    unique: list[str] = []
+    for url in urls:
+        if url in seen:
+            continue
+        seen.add(url)
+        unique.append(url)
+    return unique[:10]
 
 
 def _extract_description(tree: HTMLParser) -> str | None:
@@ -125,13 +136,9 @@ def _extract_review_stats(tree: HTMLParser) -> tuple[float | None, int | None]:
     score = None
     count = None
     if score_node is not None:
-        try:
+        with suppress(ValueError):
             score = float(score_node.text(strip=True).replace(",", "."))
-        except ValueError:
-            pass
     if count_node is not None:
-        try:
+        with suppress(ValueError):
             count = int("".join(c for c in count_node.text() if c.isdigit()))
-        except ValueError:
-            pass
     return score, count

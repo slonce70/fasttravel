@@ -31,11 +31,10 @@ export function HotelPhotoCarousel({ photos, alt }: HotelPhotoCarouselProps) {
   const main = photos[activeIndex] ?? photos[0]!;
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
       <div className="relative aspect-[16/7] w-full overflow-hidden rounded-2xl bg-slate-100">
-        {/* Using a plain <img> — Cloudflare Pages ships images via the
-            CDN directly; next/image optimization needs Sharp which isn't
-            on edge runtime. See next.config.mjs `images.unoptimized`. */}
+        {/* Using a plain <img> until Cloudflare Images is wired. See
+            next.config.mjs `images.unoptimized`. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={main.url}
@@ -46,11 +45,11 @@ export function HotelPhotoCarousel({ photos, alt }: HotelPhotoCarouselProps) {
       </div>
       {photos.length > 1 && (
         <ul
-          className="flex snap-x snap-mandatory gap-2 overflow-x-auto pb-1"
+          className="flex w-full max-w-full snap-x snap-mandatory gap-2 overflow-x-auto pb-1"
           aria-label="Інші фото"
         >
           {photos.map((p, i) => (
-            <li key={p.url} className="snap-start">
+            <li key={p.url} className="shrink-0 snap-start">
               <button
                 type="button"
                 onClick={() => setActiveIndex(i)}
@@ -61,12 +60,7 @@ export function HotelPhotoCarousel({ photos, alt }: HotelPhotoCarouselProps) {
                 )}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={p.url}
-                  alt=""
-                  className="h-full w-full object-cover"
-                  loading="lazy"
-                />
+                <img src={p.url} alt="" className="h-full w-full object-cover" loading="lazy" />
               </button>
             </li>
           ))}

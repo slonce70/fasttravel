@@ -54,4 +54,15 @@ class Deal(Base):
     # NULL = legacy / unknown → treated as non-real and filtered out.
     source: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
+    # Why detect_deals flagged this row — orthogonal to `source` which
+    # is the upstream pipeline. Added in migration 013.
+    # Values: 'percentile' (warm/cold percentile rule),
+    #         'promo_discount' (promo_offers with real strike-through),
+    #         'peer_anomaly' (Phase 2 ML detector, future).
+    # NOT NULL with server_default='percentile' so historical rows get
+    # the right value retroactively.
+    detection_method: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="percentile"
+    )
+
     operator: Mapped["Operator"] = relationship(back_populates="deals")

@@ -27,6 +27,7 @@ table (small) so we don't need CONCURRENTLY (the alembic transaction is
 fine for this size). When tables grow to 100M rows revisit with
 `CONCURRENTLY` + `--sql` output applied out-of-band.
 """
+
 from alembic import op
 
 revision = "005"
