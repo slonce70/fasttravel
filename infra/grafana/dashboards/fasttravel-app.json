@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "FastTravel application metrics — snapshot duration, deals throughput, row counts, MV refresh duration.",
+  "description": "FastTravel application metrics from the API, scheduler, and Telegram bot exporters.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -21,7 +21,7 @@
   "panels": [
     {
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "description": "p50 / p95 latency of the twice-daily snapshot job.",
+      "description": "p50 / p95 wall-clock duration for each scheduler job.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -36,58 +36,51 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.50, sum(rate(fasttravel_snapshot_seconds_bucket[1h])) by (le))",
-          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.50, sum(rate(fasttravel_job_duration_seconds_bucket[6h])) by (le, job))",
+          "legendFormat": "{{job}} p50",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(fasttravel_snapshot_seconds_bucket[1h])) by (le))",
-          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum(rate(fasttravel_job_duration_seconds_bucket[6h])) by (le, job))",
+          "legendFormat": "{{job}} p95",
           "refId": "B"
         }
       ],
-      "title": "Snapshot job duration",
+      "title": "Scheduler job duration",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "description": "New deals inserted into the `deals` table per hour.",
+      "description": "Scheduler runs grouped by job and outcome over the last hour.",
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "green", "value": 5 }
-            ]
-          },
+          "color": { "mode": "palette-classic" },
           "unit": "short"
         }
       },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "id": 2,
       "options": {
-        "colorMode": "background",
-        "graphMode": "area",
+        "colorMode": "value",
+        "graphMode": "none",
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(increase(fasttravel_deals_detected_total[1h]))",
+          "expr": "sum by (job, outcome) (increase(fasttravel_job_runs_total[1h]))",
+          "legendFormat": "{{job}} {{outcome}}",
           "refId": "A"
         }
       ],
-      "title": "Deals detected (last hour)",
+      "title": "Scheduler runs (last hour)",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "description": "Live row count of the partitioned `price_observations` table — sourced from postgres_exporter `pg_stat_user_tables_n_live_tup`.",
+      "description": "Live Redis refresh queue depth published by scheduler jobs.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -101,17 +94,17 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "sum(pg_stat_user_tables_n_live_tup{relname=~\"price_observations.*\"})",
-          "legendFormat": "rows",
+          "expr": "fasttravel_refresh_queue_depth",
+          "legendFormat": "queue depth",
           "refId": "A"
         }
       ],
-      "title": "price_observations row count",
+      "title": "Refresh queue depth",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "description": "Time taken to REFRESH MATERIALIZED VIEW CONCURRENTLY for each of the three MVs.",
+      "description": "p95 duration of Telegram bot handlers, grouped by handler.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -125,12 +118,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "Prometheus" },
-          "expr": "histogram_quantile(0.95, sum(rate(fasttravel_mv_refresh_seconds_bucket[6h])) by (le, view))",
-          "legendFormat": "{{view}} p95",
+          "expr": "histogram_quantile(0.95, sum(rate(fasttravel_bot_handler_latency_seconds_bucket[15m])) by (le, handler))",
+          "legendFormat": "{{handler}} p95",
           "refId": "A"
         }
       ],
-      "title": "MV refresh duration (p95)",
+      "title": "Bot handler latency (p95)",
       "type": "timeseries"
     }
   ],

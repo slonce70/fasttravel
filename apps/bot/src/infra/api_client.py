@@ -97,7 +97,9 @@ async def search_hotels(**params: Any) -> dict[str, Any]:
         raise ApiError("search failed") from exc
 
 
-async def get_deals(limit: int = 10, offset: int = 0, country: str | None = None) -> dict[str, Any]:
+async def get_deals(
+    limit: int = 10, offset: int = 0, country: str | None = None
+) -> dict[str, Any]:
     """`/api/deals` paginated. country is optional ISO2."""
     params: dict[str, Any] = {"limit": limit, "offset": offset}
     if country:

@@ -1,0 +1,118 @@
+# FastTravel Prometheus alert rules.
+#
+# Sprint 0.5 scope: stale-snapshot detection only — enough to alert on the
+# real production failure mode where snapshot_farvater silently stops
+# producing rows (DNS issue, Cloudflare 403 spike, container exited).
+# Sprint 2 expands this with promo detection, scrape failure rate, queue
+# backlog, and AlertManager → Telegram routing.
+#
+# Validation:
+#   docker run --rm -v $(pwd)/infra/prometheus:/etc/prometheus \
+#     prom/prometheus:latest \
+#     promtool check rules /etc/prometheus/rules/fasttravel.yml
+
+groups:
+  - name: fasttravel-snapshot-staleness
+    interval: 1m
+    rules:
+      - alert: StaleSnapshot
+        # We DON'T use "no prices written in 30 min" because that
+        # legitimately stays at zero between the 06:00 and 18:00 Kyiv
+        # snapshot windows. Instead we look at the per-job
+        # last-successful-snapshot timestamp — set ONLY on successful
+        # job completion. If snapshot_farvater hasn't finished a
+        # successful run in 14 hours, something is wrong (the gap
+        # between scheduled runs is 12h, so 14h gives one cycle of
+        # tolerance before paging).
+        expr: |
+          absent(fasttravel_last_successful_snapshot_unixtime{scheduled_job="snapshot_farvater"})
+          or
+          time() - max by (scheduled_job) (fasttravel_last_successful_snapshot_unixtime{scheduled_job="snapshot_farvater"}) > 14 * 3600
+        for: 5m
+        labels:
+          severity: critical
+          team: data
+        annotations:
+          summary: "snapshot_farvater hasn't completed successfully in >14h"
+          description: |
+            The 12h snapshot has missed at least one scheduled run.
+            Likely causes: DNS / Cloudflare lockout on farvater.travel,
+            scheduler container crashed, or a job is timing out past
+            its window. Check `docker compose logs scheduler` and
+            `SELECT * FROM scrape_runs ORDER BY started_at DESC LIMIT 10`.
+
+      - alert: StaleCatalog
+        # snapshot_catalog_farvater runs daily 03:00 Kyiv. 36h gives
+        # one missed cycle plus headroom.
+        expr: |
+          absent(fasttravel_last_successful_snapshot_unixtime{scheduled_job="snapshot_catalog_farvater"})
+          or
+          time() - max by (scheduled_job) (fasttravel_last_successful_snapshot_unixtime{scheduled_job="snapshot_catalog_farvater"}) > 36 * 3600
+        for: 5m
+        labels:
+          severity: warning
+          team: data
+        annotations:
+          summary: "snapshot_catalog_farvater hasn't completed successfully in >36h"
+          description: |
+            Daily catalog refresh is overdue. has_active_prices flags
+            and last_seen_at timestamps will start drifting; new
+            farvater hotels won't appear in search. Same triage as
+            StaleSnapshot.
+
+  - name: fasttravel-detector-health
+    interval: 1m
+    rules:
+      - alert: DealsDetectorIdle
+        # detect_deals runs hourly :10. If we go 3 hours without a
+        # single success the deal pipeline is broken. We DON'T alert on
+        # "no deals detected" because legitimately quiet hotel pricing
+        # can produce zero deals for hours — we alert on the JOB itself
+        # failing to complete. The scheduler-started guard prevents
+        # restart noise before the first hourly run has had 3h to occur.
+        expr: |
+          (
+            increase(fasttravel_job_runs_total{scheduled_job="detect_deals",outcome="success"}[3h]) == 0
+          )
+          and on()
+          (
+            time() - max(fasttravel_scheduler_started_unixtime) > 3 * 3600
+          )
+        for: 5m
+        labels:
+          severity: warning
+          team: data
+        annotations:
+          summary: "detect_deals has not completed successfully in >3h"
+          description: |
+            Either the scheduler stopped firing the hourly tick (check
+            the StaleSnapshot alert; same root cause likely) or the
+            detect_deals job is failing every run (check
+            `fasttravel_job_runs_total{scheduled_job="detect_deals"}` by outcome).
+
+      - alert: FarvaterBreakerTripped
+        expr: |
+          increase(fasttravel_farvater_breaker_trips_total[1h]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: data
+        annotations:
+          summary: "Farvater circuit breaker tripped"
+          description: |
+            The production Farvater HTTP client opened its breaker after
+            repeated 403/429 responses. Check scheduler logs before
+            retrying manually.
+
+      - alert: RefreshQueueBacklog
+        expr: |
+          fasttravel_refresh_queue_depth > 1000
+        for: 10m
+        labels:
+          severity: warning
+          team: data
+        annotations:
+          summary: "Refresh queue backlog is high"
+          description: |
+            Redis refresh queue has stayed above 1000 items for 10 minutes.
+            Check refresh_worker throughput and Farvater upstream errors.

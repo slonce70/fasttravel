@@ -76,7 +76,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_tsf_chat_id", table_name="telegram_subscriber_filters")
-    op.drop_index(
-        "ix_tsf_active_country_price", table_name="telegram_subscriber_filters"
-    )
+    op.drop_index("ix_tsf_active_country_price", table_name="telegram_subscriber_filters")
     op.drop_table("telegram_subscriber_filters")

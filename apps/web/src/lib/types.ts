@@ -11,18 +11,16 @@
  * avoid a translation layer. Components convert at the render boundary only.
  */
 
+import type { SearchSort } from './search-sort';
+
 /**
- * Number of nights for a tour package. Was previously a literal union
- * `7 | 10 | 14` (the only durations the materialized view pre-aggregates),
- * but the UI now lets users pick arbitrary durations (3, 5, 21, custom…).
- *
- * The MV still only has `min_7n`/`min_10n`/`min_14n` columns; for other
- * values PriceCalendar falls back to the generic `min_price_uah` cell.
+ * Number of nights for a tour package. The calendar endpoint accepts this
+ * value and aggregates exact-duration offers from current_prices.
  */
 export type Nights = number;
 
-/** Durations the calendar can render with a real per-nights price column. */
-export const PRECOMPUTED_NIGHTS = [7, 10, 14] as const;
+/** Scheduled Farvater price snapshots are collected for these nights. */
+export const PRECOMPUTED_NIGHTS = [7, 8, 9, 10, 11, 12, 13, 14] as const;
 export type PrecomputedNights = (typeof PRECOMPUTED_NIGHTS)[number];
 
 export type MealPlan = 'ALL' | 'AI' | 'UAI' | 'HB' | 'BB' | 'FB' | 'RO';
@@ -54,18 +52,21 @@ export interface Hotel {
 }
 
 /** apps/api/src/schemas/calendar.py :: CalendarDay
- *  One row per (hotel, check_in_date[, meal_plan]) with min-price buckets
- *  for each nights duration. UI selects which bucket to render from the
- *  `nights` prop. `meal_plan` echoes the `?meal=` filter when supplied;
- *  null when the backend re-aggregated across plans.
+ *  One row per hotel/check-in date. With `?nights=`, `min_price_uah` is the
+ *  exact-duration minimum from current_prices and `prices_by_night` contains
+ *  a single entry for that duration. Without `?nights=`, the API returns the
+ *  full MV shape — `prices_by_night` is a map keyed by stringified night
+ *  count (e.g. `{"7": 50000, "8": 52000, "10": 49000, "14": 47000}`), and
+ *  `min_price_uah` is the cross-nights minimum used as a fallback.
+ *  `meal_plan` echoes a raw meal code when not re-aggregated, and null when
+ *  the backend aggregates across meal plans.
  */
 export interface CalendarDay {
   check_in: string; // ISO date (YYYY-MM-DD)
   meal_plan: string | null;
   min_price_uah: number | null;
-  min_7n: number | null;
-  min_10n: number | null;
-  min_14n: number | null;
+  /** Keyed by stringified night count. Empty when no nights matched. */
+  prices_by_night: Record<string, number>;
   observed_at: string | null; // ISO datetime
 }
 
@@ -114,6 +115,47 @@ export interface PaginatedDeals {
   offset: number;
 }
 
+/** apps/api/src/schemas/promotion.py :: PromotionOut */
+export interface Promotion {
+  id: number;
+  observed_at: string;
+  bucket_slug: string;
+  system_key: string;
+  check_in: string;
+  nights: number;
+  meal_plan: string;
+  price_uah: number;
+  red_price_uah: number | null;
+  discount_pct: number;
+  has_real_discount: boolean;
+  is_hot: boolean;
+  is_early: boolean;
+  is_best_deal: boolean;
+  is_recommended: boolean;
+  is_choice_farvater: boolean;
+  is_otp: boolean;
+  is_last_seats: boolean;
+  is_black_friday: boolean;
+  is_vip: boolean;
+  operator_name: string | null;
+  promotion_end_date: string | null;
+  deep_link: string;
+  hotel_id: number;
+  hotel_slug: string;
+  hotel_name_uk: string;
+  hotel_stars: number | null;
+  hotel_photo_url: string | null;
+  destination_name: string | null;
+  country_iso2: string | null;
+}
+
+export interface PaginatedPromotions {
+  items: Promotion[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 /** apps/api/src/schemas/search.py :: SearchResultItem */
 export interface SearchResultItem {
   hotel_id: number;
@@ -122,7 +164,19 @@ export interface SearchResultItem {
   stars: number | null;
   destination_id: number | null;
   min_price_uah: number | null;
+  deep_link: string | null;
+  requested_nights: number | null;
+  effective_nights: number | null;
   review_score: number | null;
+  /** Sprint 2.5 — server timestamp of the last price observation. */
+  last_observed_at: string | null;
+  /**
+   * Sprint 2.6 — true when the user requested a specific nights count
+   * but only OTHER durations have prices; the row's min_price_uah is a
+   * fallback, not the exact requested duration's price. Card should
+   * badge this so users aren't misled.
+   */
+  nights_fallback: boolean;
   // Thumbnail set, same shape as HotelOut.photos_jsonb. The card picks
   // photos[0]; empty array → placeholder graphic.
   photos: HotelPhoto[];
@@ -143,7 +197,7 @@ export interface SearchParams {
   country?: string;
   /** ISO date (YYYY-MM-DD) — narrows results to hotels with prices on this day. */
   check_in?: string;
-  /** Tour duration; 7/10/14 use dedicated MV columns, others fall back to MIN. */
+  /** Tour duration used for exact-price filtering. */
   nights?: number;
   /** Meal plan code (`AI`, `HB`, `BB`, ...) — see migration 002. */
   meal_plan?: string;
@@ -156,6 +210,7 @@ export interface SearchParams {
    */
   adults?: number;
   kids?: number[];
+  sort?: SearchSort;
   limit?: number;
   offset?: number;
 }

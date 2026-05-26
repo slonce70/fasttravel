@@ -18,6 +18,7 @@ single multiplexed connection halves handshake cost during the snapshot
 burst window. curl_cffi (farvater) does NOT use this base class because
 it has its own session lifecycle.
 """
+
 from __future__ import annotations
 
 import asyncio

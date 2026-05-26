@@ -26,7 +26,14 @@ RUN pip install "poetry==${POETRY_VERSION}"
 COPY scheduler/pyproject.toml ./
 COPY scheduler/poetry.lock* ./
 
-RUN poetry install --no-root --only main
+# INSTALL_DEV=true pulls in dev deps (pytest, fakeredis) so the image
+# can run the test suite. Flipped on by docker-compose.test.yml only.
+ARG INSTALL_DEV=false
+RUN if [ "$INSTALL_DEV" = "true" ]; then \
+        poetry install --no-root --with dev; \
+    else \
+        poetry install --no-root --only main; \
+    fi
 
 # ---------- Runtime stage ----------
 FROM python:3.12-slim-bookworm AS runtime
@@ -45,8 +52,13 @@ RUN apt-get update \
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
+# pyproject.toml in runtime so pytest picks up asyncio_mode=auto when
+# the image runs under the test overlay (docker-compose.test.yml).
+COPY --chown=app:app scheduler/pyproject.toml ./
+
 # App source for scheduler.
 COPY --chown=app:app scheduler/src/ ./src/
+COPY --chown=app:app scheduler/scripts/ ./scripts/
 COPY --chown=app:app scheduler/tests/ ./tests/
 
 # Shared Python packages used by both bot and scheduler (Telegram publisher,

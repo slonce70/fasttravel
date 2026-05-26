@@ -8,7 +8,12 @@ DB calls outside of subscribe / profile flows.
 
 from __future__ import annotations
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from src.config import get_settings
 from src.infra.logging import get_logger
@@ -21,15 +26,8 @@ _SESSIONMAKER: async_sessionmaker[AsyncSession] | None = None
 
 
 def _build_url() -> str:
-    """Resolve a Postgres URL — uses scheduler-style env DATABASE_URL when
-    the env var is present (docker compose injects it), otherwise reads
-    the explicit pieces. Falling back to .env keeps local-test smooth."""
-    import os
-    explicit = os.environ.get("DATABASE_URL")
-    if explicit:
-        return explicit
-    # Conservative default that matches the docker-compose service name.
-    return "postgresql+asyncpg://fasttravel:fasttravel_dev_change_me@postgres:5432/fasttravel"
+    """Resolve the Postgres URL from typed settings."""
+    return get_settings().database_url
 
 
 def get_engine() -> AsyncEngine:

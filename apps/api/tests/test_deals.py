@@ -31,6 +31,7 @@ async def _seed_minimal_deal(
     deal_price: int = 8000,
     baseline_p50: int = 12000,
     discount_pct: float = 33.0,
+    source: str | None = "farvater_scrape",
 ) -> SeededDeal:
     """Insert one operator + destination + hotel + deal via raw SQL.
 
@@ -80,7 +81,8 @@ async def _seed_minimal_deal(
             text(
                 "INSERT INTO deals (hotel_id, operator_id, check_in, nights, "
                 "meal_plan, price_uah, baseline_p50, discount_pct, deep_link, "
-                "detected_at) VALUES (:h, :o, :ci, :n, :m, :p, :b, :d, :dl, :dt) "
+                "detected_at, source) "
+                "VALUES (:h, :o, :ci, :n, :m, :p, :b, :d, :dl, :dt, :source) "
                 "RETURNING id"
             ),
             {
@@ -93,7 +95,12 @@ async def _seed_minimal_deal(
                 "b": baseline_p50,
                 "d": discount_pct,
                 "dl": "https://example.com/affiliate?h=1",
-                "dt": datetime(2026, 5, 22, 10, 30, tzinfo=timezone.utc),
+                # Sprint 2.4 added a 48h freshness filter to deal_service.
+                # Seed with a "just now" timestamp so the public endpoint
+                # returns the row; tests that need an explicitly stale
+                # deal can override `detected_at` via kwargs.
+                "dt": datetime.now(timezone.utc),
+                "source": source,
             },
         )
     ).scalar_one()
@@ -138,6 +145,36 @@ async def test_get_deal_by_id_returns_404_when_missing(
 
 
 @pytest.mark.asyncio
+async def test_get_deal_by_id_hides_legacy_or_synthetic_deals(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    seeded = await _seed_minimal_deal(db_session, source=None)
+
+    response = await client.get(f"/api/deals/{seeded.deal_id}")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "deal not found"
+
+
+@pytest.mark.asyncio
+async def test_get_deal_by_id_hides_zero_discount_deals(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    seeded = await _seed_minimal_deal(
+        db_session,
+        deal_price=12000,
+        baseline_p50=12000,
+        discount_pct=0.0,
+        source="farvater_scrape",
+    )
+
+    response = await client.get(f"/api/deals/{seeded.deal_id}")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "deal not found"
+
+
+@pytest.mark.asyncio
 async def test_list_deals_includes_joined_hotel_fields(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -156,3 +193,22 @@ async def test_list_deals_includes_joined_hotel_fields(
     assert "hotel_stars" in first
     assert "hotel_photo_url" in first
     assert "destination_name" in first
+
+
+@pytest.mark.asyncio
+async def test_list_deals_excludes_zero_discount_deals(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    seeded = await _seed_minimal_deal(
+        db_session,
+        deal_price=12000,
+        baseline_p50=12000,
+        discount_pct=0.0,
+        source="farvater_scrape",
+    )
+
+    response = await client.get("/api/deals?limit=200")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert all(item["id"] != seeded.deal_id for item in body["items"])

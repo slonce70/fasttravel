@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # Bot token absence is a first-class state: post_deals skips gracefully.
     telegram_bot_token: str | None = None
     telegram_channel_id: str | None = None
+    public_site_url: str = "https://fasttravel.com.ua"
 
     # --- Job tuning ---
     # Telegram channel daily post cap (anti-spam contract with subscribers).
@@ -74,6 +75,27 @@ class Settings(BaseSettings):
     @property
     def telegram_enabled(self) -> bool:
         return bool(self.telegram_bot_token) and bool(self.telegram_channel_id)
+
+    def assert_prod_secrets(self) -> None:
+        """Refuse to boot prod with local defaults or broken channel posting."""
+        if not self.is_prod:
+            return
+
+        forbidden_markers = ("_change_me", "fasttravel_dev")
+        offenders: list[str] = []
+        if any(marker in self.database_url for marker in forbidden_markers):
+            offenders.append("DATABASE_URL")
+        if self.deals_daily_cap > 0:
+            if not self.telegram_bot_token:
+                offenders.append("TELEGRAM_BOT_TOKEN")
+            if not self.telegram_channel_id:
+                offenders.append("TELEGRAM_CHANNEL_ID")
+        if offenders:
+            raise RuntimeError(
+                "Refusing to start scheduler in prod with unsafe or missing settings: "
+                + ", ".join(offenders)
+                + ". Run infra/scripts/secrets-bootstrap.sh and re-deploy."
+            )
 
 
 @lru_cache(maxsize=1)

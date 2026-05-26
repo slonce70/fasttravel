@@ -77,6 +77,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}
       DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}
       REDIS_URL: redis://redis:6379/0
+      FASTTRAVEL_ALLOW_E2E_SEED: ${FASTTRAVEL_ALLOW_E2E_SEED:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,9 +105,11 @@ services:
     restart: unless-stopped
     env_file: .env
     # 9102 = Prometheus exporter (see apps/bot/src/infra/metrics.py).
-    # Internal-only via `expose`; prod nginx doesn't proxy it.
+    # 9103 = AlertManager webhook receiver (see apps/bot/src/alert_webhook.py).
+    # Both internal-only via `expose`; prod nginx doesn't proxy them.
     expose:
       - "9102"
+      - "9103"
     environment:
       # Bot reads /api so it talks to the api service via service-DNS.
       API_BASE_URL: http://api:8000
@@ -116,6 +119,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
+      ALERTMANAGER_WEBHOOK_SECRET: ${ALERTMANAGER_WEBHOOK_SECRET:-}
     depends_on:
       api:
         condition: service_healthy
@@ -155,19 +159,43 @@ services:
       - fasttravel
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.55.1
     container_name: ft_prometheus
     restart: unless-stopped
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"
+    depends_on:
+      - alertmanager
+    networks:
+      - fasttravel
+
+  # Sprint 2.3 — AlertManager fans firing alerts out to the bot's
+  # /alerts webhook (port 9103). Internal-only; the operator hits the
+  # web UI by tunnelling from the host.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: ft_alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./infra/prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Webhook secret file (gitignored). AlertManager reads via
+      # `credentials_file` in alertmanager.yml so the bearer token never
+      # appears in the committed config.
+      - ./infra/prometheus/.webhook_secret:/etc/alertmanager/webhook_secret:ro
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    ports:
+      - "9093:9093"
     networks:
       - fasttravel
 
   grafana:
-    image: grafana/grafana-oss:latest
+    image: grafana/grafana-oss:11.3.1
     container_name: ft_grafana
     restart: unless-stopped
     environment:

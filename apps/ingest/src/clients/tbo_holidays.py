@@ -10,9 +10,10 @@ Auth is HTTP Basic; credentials live in env (TBO_USERNAME / TBO_PASSWORD).
 If either is empty the constructor raises `TBONotConfigured` and
 `pipeline.run_snapshot` records the run as `skipped_no_token`.
 """
+
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -52,10 +53,10 @@ class TBOClient(BaseClient):
         """
         body = {"Hotelcodes": hotel_code, "Language": "EN"}
         response = await self._post("/HotelDetails", json=body, auth=self._auth)
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     async def fetch_city_list(self, country_code: str) -> dict[str, Any]:
         """POST /CityList for reference seed data."""
         body = {"CountryCode": country_code}
         response = await self._post("/CityList", json=body, auth=self._auth)
-        return response.json()
+        return cast(dict[str, Any], response.json())

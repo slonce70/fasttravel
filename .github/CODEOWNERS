@@ -1,30 +1,29 @@
 # CODEOWNERS — auto-assigns reviewers based on path globs.
 #
-# TODO(setup): replace @YOUR_USERNAME with the actual GitHub handle(s) after
-# repo init. Multiple owners possible: `* @alice @bob`. Teams use @org/team-slug.
+# Multiple owners possible: `* @alice @bob`. Teams use @org/team-slug.
 #
 # Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
 
 # Default owner for everything not matched below.
-* @YOUR_USERNAME
+* @slonce70
 
 # Backend services
-/apps/api/         @YOUR_USERNAME
-/apps/scheduler/   @YOUR_USERNAME
-/apps/bot/         @YOUR_USERNAME
-/apps/ingest/      @YOUR_USERNAME
+/apps/api/         @slonce70
+/apps/scheduler/   @slonce70
+/apps/bot/         @slonce70
+/apps/ingest/      @slonce70
 
 # Frontend
-/apps/web/         @YOUR_USERNAME
+/apps/web/         @slonce70
 
 # Infrastructure
-/infra/            @YOUR_USERNAME
-/docker-compose.yml      @YOUR_USERNAME
-/docker-compose.prod.yml @YOUR_USERNAME
+/infra/            @slonce70
+/docker-compose.yml      @slonce70
+/docker-compose.prod.yml @slonce70
 
 # CI / repo meta
-/.github/          @YOUR_USERNAME
+/.github/          @slonce70
 
 # Architecture / decisions — gate behind explicit review.
-/docs/ARCHITECTURE.md @YOUR_USERNAME
-/docs/DECISIONS.md    @YOUR_USERNAME
+/docs/ARCHITECTURE.md @slonce70
+/docs/DECISIONS.md    @slonce70

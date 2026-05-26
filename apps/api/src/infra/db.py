@@ -71,7 +71,7 @@ async def ping_db() -> bool:
 
     async with async_engine.connect() as conn:
         result = await conn.execute(text("SELECT 1"))
-        return result.scalar_one() == 1
+        return bool(result.scalar_one() == 1)
 
 
 async def dispose_engine() -> None:

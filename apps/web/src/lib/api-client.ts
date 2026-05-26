@@ -15,13 +15,14 @@ import type {
   Hotel,
   Offer,
   PaginatedDeals,
+  PaginatedPromotions,
   PaginatedSearchResults,
   SearchParams,
 } from './types';
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ??
-  // Build-time fallback so Cloudflare Pages doesn't crash if env var missing.
+  // Build-time fallback so OpenNext/Cloudflare Workers builds don't crash if env var is missing.
   'http://localhost:8000';
 
 export class ApiError extends Error {
@@ -35,9 +36,30 @@ export class ApiError extends Error {
   }
 }
 
+export function userMessageForApiError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 400 || error.status === 422) {
+      return 'Перевірте параметри пошуку і спробуйте ще раз.';
+    }
+    if (error.status === 404) {
+      return 'Нічого не знайдено за цим запитом.';
+    }
+    return 'Сервіс тимчасово недоступний. Спробуйте ще раз за хвилину.';
+  }
+  if (error instanceof TypeError) {
+    return 'Не вдалося зʼєднатися із сервісом. Перевірте інтернет і спробуйте ще раз.';
+  }
+  if (error instanceof Error && /^API \d{3}\b/.test(error.message)) {
+    return 'Сервіс тимчасово недоступний. Спробуйте ще раз за хвилину.';
+  }
+  return 'Не вдалося завантажити дані. Спробуйте ще раз.';
+}
+
 interface FetchOptions {
   /** Pass through to Next.js fetch for ISR; ignored in browser. */
   revalidate?: number;
+  /** Explicit cache policy for correctness-sensitive server fetches. */
+  cache?: RequestCache;
   /** AbortSignal for client-side cancellation. */
   signal?: AbortSignal;
 }
@@ -45,6 +67,7 @@ interface FetchOptions {
 async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const url = `${API_BASE}${path}`;
   const init: RequestInit & { next?: { revalidate?: number } } = {
+    cache: opts.cache,
     headers: { Accept: 'application/json' },
     signal: opts.signal,
   };
@@ -64,10 +87,11 @@ async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
 // ---------------------------------------------------------------------------
 
 /** Resolves slug → full hotel object. Returns null on 404 (SEO-friendly). */
-export async function fetchHotel(slug: string): Promise<Hotel | null> {
+export async function fetchHotel(slug: string, opts: FetchOptions = {}): Promise<Hotel | null> {
   try {
+    const fetchOptions = opts.cache ? opts : { revalidate: 3600, ...opts };
     return await apiFetch<Hotel>(`/api/hotels/${encodeURIComponent(slug)}`, {
-      revalidate: 3600,
+      ...fetchOptions,
     });
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return null;
@@ -81,11 +105,14 @@ export interface CalendarParams {
   /**
    * Optional meal-plan filter forwarded as `?meal=` to the backend (post
    * migration 002). When omitted the response carries the MIN across all
-   * meal plans for each day. The `nights` selector is still client-side
-   * — the response carries min_7n/min_10n/min_14n columns.
+   * meal plans for each day.
+   *
+   * When `nights` is supplied the backend aggregates exact-duration offers
+   * from `current_prices`; otherwise it falls back to the legacy calendar MV.
    * See apps/api/src/services/calendar_service.py.
    */
   mealPlan?: string;
+  nights?: number;
 }
 
 export async function fetchCalendar(
@@ -95,6 +122,7 @@ export async function fetchCalendar(
 ): Promise<CalendarDay[]> {
   const qs = new URLSearchParams({ from: params.from, to: params.to });
   if (params.mealPlan) qs.set('meal', params.mealPlan);
+  if (params.nights !== undefined) qs.set('nights', String(params.nights));
   return apiFetch<CalendarDay[]>(`/api/hotels/${hotelId}/calendar?${qs.toString()}`, opts);
 }
 
@@ -127,13 +155,21 @@ export async function fetchOffers(
 export interface RefreshResponse {
   queued: boolean;
   eta_seconds?: number;
+  reason?: string | null;
+}
+
+export interface RefreshOptions extends FetchOptions {
+  nights?: number;
 }
 
 export async function triggerHotelRefresh(
   hotelId: number,
-  opts: FetchOptions = {},
+  opts: RefreshOptions = {},
 ): Promise<RefreshResponse | null> {
-  const url = `${API_BASE}/api/hotels/${hotelId}/refresh`;
+  const qs = new URLSearchParams();
+  if (opts.nights !== undefined) qs.set('nights', String(opts.nights));
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  const url = `${API_BASE}/api/hotels/${hotelId}/refresh${suffix}`;
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -170,15 +206,41 @@ export async function fetchDeals(
   return apiFetch<PaginatedDeals>(path, opts);
 }
 
-/**
- * Permalink lookup. There is NO `/api/deals/{id}` endpoint on MVP; we paginate
- * through `/api/deals?limit=200` and filter client-side. This is acceptable
- * for the deal volume we expect (low hundreds/day). Backend follow-up:
- * add `GET /api/deals/{id}` for proper SEO permalinks.
- */
 export async function fetchDealById(id: number, opts: FetchOptions = {}): Promise<Deal | null> {
-  const page = await fetchDeals({ limit: 200 }, { revalidate: 300, ...opts });
-  return page.items.find((d) => d.id === id) ?? null;
+  try {
+    return await apiFetch<Deal>(`/api/deals/${id}`, opts);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Promotions (Sprint 1E) — operator-flagged farvater offers, distinct from
+// algorithmic Deals. Same paginated shape; extra filters for bucket/discount.
+// ---------------------------------------------------------------------------
+
+export interface PromotionsParams {
+  limit?: number;
+  offset?: number;
+  country?: string;
+  bucket?: string;
+  min_discount_pct?: number;
+}
+
+export async function fetchPromotions(
+  params: PromotionsParams = {},
+  opts: FetchOptions = {},
+): Promise<PaginatedPromotions> {
+  const qs = new URLSearchParams();
+  if (params.limit !== undefined) qs.set('limit', String(params.limit));
+  if (params.offset !== undefined) qs.set('offset', String(params.offset));
+  if (params.country) qs.set('country', params.country);
+  if (params.bucket) qs.set('bucket', params.bucket);
+  if (params.min_discount_pct !== undefined)
+    qs.set('min_discount_pct', String(params.min_discount_pct));
+  const path = qs.toString() ? `/api/promotions?${qs.toString()}` : '/api/promotions';
+  return apiFetch<PaginatedPromotions>(path, opts);
 }
 
 // ---------------------------------------------------------------------------
@@ -217,9 +279,7 @@ export async function searchHotels(
  *
  * Content is stable for hours — ISR (1h) by default to keep API load near zero.
  */
-export async function fetchDestinations(
-  opts: FetchOptions = {},
-): Promise<CountryOut[]> {
+export async function fetchDestinations(opts: FetchOptions = {}): Promise<CountryOut[]> {
   return apiFetch<CountryOut[]>('/api/destinations', {
     revalidate: 3600,
     ...opts,
@@ -232,10 +292,10 @@ export async function fetchDestination(
   opts: FetchOptions = {},
 ): Promise<CountryOut | null> {
   try {
-    return await apiFetch<CountryOut>(
-      `/api/destinations/${encodeURIComponent(slug)}`,
-      { revalidate: 3600, ...opts },
-    );
+    return await apiFetch<CountryOut>(`/api/destinations/${encodeURIComponent(slug)}`, {
+      revalidate: 3600,
+      ...opts,
+    });
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) return null;
     throw err;

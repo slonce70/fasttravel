@@ -21,15 +21,33 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
+from typing import Protocol
 
 from sqlalchemy import text
 
+from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2, make_bot
 from src.config import get_settings
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
-from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2, make_bot
 
 log = get_logger(__name__)
+MIN_BROADCAST_DISCOUNT_PCT = 15
+
+
+class _DealRow(Protocol):
+    discount_pct: float
+    hotel_name: str
+    stars: int | None
+    region_name: str | None
+    country_name: str | None
+    check_in: date
+    nights: int
+    meal_plan: str
+    price_uah: int
+    baseline_p50: int
+    operator_display_name: str
+    deep_link: str | None
+
 
 # Pre-escaped MarkdownV2 template. Literal punctuation that MarkdownV2
 # reserves (`-`, `(`, `)`, `|`, `.`, `!`) is already `\`-escaped here.
@@ -80,9 +98,11 @@ _SELECT_UNPOSTED = text(
     LEFT JOIN destinations country ON country.id = region.parent_id
     JOIN operators o            ON o.id = d.operator_id
     WHERE d.posted_at IS NULL
-      -- migration 004 added `source`. NULL = synthetic seed (demo data)
-      -- and must NEVER be broadcast — those would mis-advertise prices
-      -- that don't exist. Real ingest paths set source explicitly:
+      AND d.discount_pct >= :min_discount_pct
+      AND d.detection_method NOT LIKE 'bucket_%'
+      -- migration 004 added `source`. Legacy/imported rows without source
+      -- must NEVER be broadcast because they cannot prove a live price
+      -- origin. Real ingest paths set source explicitly:
       --   'farvater_scrape'  — twice-daily snapshot
       --   'live_refresh'     — on-demand /api/hotels/{id}/refresh
       --   'ittour'           — direct partner API (future)
@@ -155,7 +175,7 @@ def _format_location(region: str | None, country: str | None) -> str:
     return region or country or "—"
 
 
-def _render_deal(row: object) -> str:
+def _render_deal(row: _DealRow) -> str:
     """Render a deal row to a MarkdownV2 message. Pure / testable."""
     # All DB strings get escaped at the boundary. Numbers are safe.
     return _DEAL_TEMPLATE.format(
@@ -210,7 +230,12 @@ async def post_deals() -> None:
 
         # Take the smaller of: this-tick allowance, daily-cap remainder.
         limit = min(settings.deals_per_post_tick, remaining)
-        rows = (await db.execute(_SELECT_UNPOSTED, {"lim": limit})).all()
+        rows = (
+            await db.execute(
+                _SELECT_UNPOSTED,
+                {"lim": limit, "min_discount_pct": MIN_BROADCAST_DISCOUNT_PCT},
+            )
+        ).all()
 
     if not rows:
         log.info("post_deals.no_unposted_deals")

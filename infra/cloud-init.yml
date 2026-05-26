@@ -4,8 +4,8 @@
 # Idempotent: re-running this (or cloud-init clean + reboot) does not break
 # anything; every shell command checks before mutating.
 #
-# Installs: Docker CE, docker compose plugin, nginx, certbot, fail2ban,
-# ufw, base CLI tools. Hardens SSH (key-only, no root). Pre-pulls images.
+# Installs: Docker CE, docker compose plugin, certbot, fail2ban, ufw, base CLI
+# tools. Hardens SSH (key-only, no root). Pre-pulls images.
 # Creates a 4 GB swap file and a non-root `fasttravel` user with sudo.
 # Sets timezone to Europe/Kyiv (so systemd OnCalendar uses local time).
 # ============================================================================
@@ -37,10 +37,8 @@ packages:
   - lsb-release
   - apt-transport-https
   - software-properties-common
-  - nginx
-  - libnginx-mod-http-brotli   # brotli module — without this the nginx conf won't start
   - certbot
-  - python3-certbot-nginx
+  - apache2-utils
   - fail2ban
   - ufw
   - htop
@@ -112,10 +110,14 @@ write_files:
       # If the FastAPI health endpoint is unreachable for 3 retries (5s each),
       # restart the docker-compose stack.
       set -u
-      url="http://127.0.0.1:8000/health"
+      cd /opt/fasttravel || exit 0
+      if [ ! -f docker-compose.yml ] || [ ! -f docker-compose.prod.yml ]; then
+        exit 0
+      fi
       ok=0
       for _ in 1 2 3; do
-        if curl -fsS --max-time 5 "$url" >/dev/null 2>&1; then
+        if docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api \
+          python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()" >/dev/null 2>&1; then
           ok=1
           break
         fi
@@ -176,7 +178,7 @@ runcmd:
   # 6) Pre-pull Docker images we know we'll need (warm cache, faster first deploy).
   - docker pull postgres:16-alpine || true
   - docker pull redis:7-alpine     || true
-  - docker pull nginx:alpine       || true
+  - docker pull nginx:1.27-alpine  || true
 
   # 7) Healthcheck cron — runs every minute as root via system crontab.
   - |
@@ -184,7 +186,7 @@ runcmd:
       echo '* * * * * root /usr/local/bin/fasttravel-healthcheck.sh' >> /etc/crontab
     fi
 
-  # 8) Prepare app directory tree (compose file goes here in the deploy step).
+  # 8) Prepare app directory tree (repo checkout goes here in the deploy step).
   - install -d -m 755 -o fasttravel -g fasttravel /opt/fasttravel
   - install -d -m 755 -o fasttravel -g fasttravel /opt/fasttravel/data
   - install -d -m 755 -o fasttravel -g fasttravel /opt/fasttravel/logs
@@ -195,5 +197,6 @@ runcmd:
 # --- Final message ----------------------------------------------------------
 final_message: |
   FastTravel bootstrap finished at $TIMESTAMP after $UPTIME seconds.
-  Next step: SSH in as fasttravel, copy docker-compose.prod.yml + .env to
-  /opt/fasttravel, then `docker compose up -d`.
+  Next step: SSH in as fasttravel, clone the FastTravel repo into
+  /opt/fasttravel, create .env, then run
+  `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`.

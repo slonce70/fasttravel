@@ -10,6 +10,7 @@ Every secret defaults to empty string so a developer can `docker compose
 up` without touching .env — the clients then raise the typed
 `ClientNotConfigured` exception that pipeline.py knows how to skip.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -54,9 +55,7 @@ class Settings(BaseSettings):
     farvater_daily_request_cap: int = 1000
     # 3 consecutive 429/403 → trip the breaker.
     farvater_breaker_threshold: int = 3
-    farvater_user_agent: str = (
-        "FastTravel-Bootstrap/0.1 (+https://fasttravel.com.ua/about)"
-    )
+    farvater_user_agent: str = "FastTravel-Bootstrap/0.1 (+https://fasttravel.com.ua/about)"
 
     # --- TBO Holidays ---
     tbo_api_base: str = "https://api.tbotechnology.in/TBOHolidays_HotelAPI"

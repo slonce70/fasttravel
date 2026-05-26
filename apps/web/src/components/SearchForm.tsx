@@ -3,13 +3,9 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useMemo, useState, type FormEvent } from 'react';
 import { Button } from './ui/Button';
-import {
-  PaxPicker,
-  paxFromSearchParams,
-  paxToSearchParams,
-  type PaxValue,
-} from './PaxPicker';
-import type { CountryOut } from '@/lib/types';
+import { PaxPicker, paxFromSearchParams, paxToSearchParams, type PaxValue } from './PaxPicker';
+import { DEFAULT_SEARCH_SORT, normalizeSearchSort } from '@/lib/search-sort';
+import { PRECOMPUTED_NIGHTS, type CountryOut } from '@/lib/types';
 
 /**
  * Search form rendered on home, /search, and /destinations/[country].
@@ -41,14 +37,12 @@ const MEAL_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'RO', label: 'Без харчування' },
 ];
 
-const NIGHT_OPTIONS = [3, 5, 7, 10, 12, 14];
+const NIGHT_OPTIONS = PRECOMPUTED_NIGHTS;
 
-export function SearchForm({
-  countries = [],
-  defaultCountry,
-}: SearchFormProps) {
+export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) {
   const router = useRouter();
   const params = useSearchParams();
+  const selectableCountries = useMemo(() => uniqueCountriesByIso(countries), [countries]);
 
   // URL ?country wins over the prop default — keeps state across refresh.
   const initialCountry = (readSearchParam(params, 'country') ?? defaultCountry ?? '').toUpperCase();
@@ -73,21 +67,23 @@ export function SearchForm({
   // Stable lookup so we can show "Знайти тури в {country}" without re-scanning.
   const countryByIso = useMemo(() => {
     const map = new Map<string, CountryOut>();
-    for (const c of countries) map.set(c.country_iso2.toUpperCase(), c);
+    for (const c of selectableCountries) map.set(c.country_iso2.toUpperCase(), c);
     return map;
-  }, [countries]);
+  }, [selectableCountries]);
 
   const selectedCountry = country ? countryByIso.get(country) : undefined;
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const qs = new URLSearchParams();
+    const currentSort = normalizeSearchSort(readSearchParam(params, 'sort'));
     if (country) qs.set('country', country);
     if (checkIn) qs.set('check_in', checkIn);
     if (nights) qs.set('nights', nights);
     if (mealPlan) qs.set('meal_plan', mealPlan);
     if (priceMax) qs.set('price_max', priceMax);
     if (starsMin) qs.set('stars_min', starsMin);
+    if (currentSort !== DEFAULT_SEARCH_SORT) qs.set('sort', currentSort);
     paxToSearchParams(qs, pax);
     const query = qs.toString();
     router.push(query ? `/search?${query}` : '/search');
@@ -98,7 +94,7 @@ export function SearchForm({
   const accusative: Record<string, string> = {
     Туреччина: 'Туреччину',
     Єгипет: 'Єгипет',
-    'ОАЕ': 'ОАЕ',
+    ОАЕ: 'ОАЕ',
     Греція: 'Грецію',
     Іспанія: 'Іспанію',
     Болгарія: 'Болгарію',
@@ -133,8 +129,8 @@ export function SearchForm({
             aria-label="Країна призначення"
           >
             <option value="">Будь-яка країна</option>
-            {countries.map((c) => (
-              <option key={c.country_iso2} value={c.country_iso2}>
+            {selectableCountries.map((c) => (
+              <option key={`${c.country_iso2}-${c.id}`} value={c.country_iso2}>
                 {c.name_uk}
                 {c.hotel_count > 0 ? ` (${c.hotel_count})` : ''}
               </option>
@@ -194,11 +190,7 @@ export function SearchForm({
           />
         </Field>
         <Field label="Зірок, не менше">
-          <select
-            value={starsMin}
-            onChange={(e) => setStarsMin(e.target.value)}
-            className="input"
-          >
+          <select value={starsMin} onChange={(e) => setStarsMin(e.target.value)} className="input">
             <option value="">Будь-яких</option>
             <option value="3">3★+</option>
             <option value="4">4★+</option>
@@ -242,6 +234,18 @@ function readSearchParam(params: ReturnType<typeof useSearchParams>, key: string
   return params.get(key) ?? params.get(`amp;${key}`);
 }
 
+function uniqueCountriesByIso(countries: CountryOut[]): CountryOut[] {
+  const seen = new Set<string>();
+  const result: CountryOut[] = [];
+  for (const country of countries) {
+    const iso = country.country_iso2.toUpperCase();
+    if (seen.has(iso)) continue;
+    seen.add(iso);
+    result.push(country);
+  }
+  return result;
+}
+
 function Field({
   label,
   children,
@@ -252,9 +256,7 @@ function Field({
   className?: string;
 }) {
   return (
-    <label
-      className={`flex flex-col gap-1 text-xs font-medium text-slate-600 ${className ?? ''}`}
-    >
+    <label className={`flex flex-col gap-1 text-xs font-medium text-slate-600 ${className ?? ''}`}>
       <span>{label}</span>
       {children}
     </label>

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 
-
 # Single source of truth for label ↔ command mapping. Used by
 # handlers/commands.py to register text-filter dispatchers.
 SEARCH = "🔍 Знайти тур"

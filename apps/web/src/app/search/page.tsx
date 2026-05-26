@@ -4,8 +4,10 @@ import { Suspense } from 'react';
 import { Container } from '@/components/layout/Container';
 import { HotelCard } from '@/components/HotelCard';
 import { SearchForm } from '@/components/SearchForm';
+import { SearchSortControl } from '@/components/SearchSortControl';
 import { TelegramCta } from '@/components/TelegramCta';
-import { fetchDestinations, searchHotels } from '@/lib/api-client';
+import { fetchDestinations, searchHotels, userMessageForApiError } from '@/lib/api-client';
+import { normalizeSearchSort } from '@/lib/search-sort';
 import type { CountryOut, SearchParams } from '@/lib/types';
 
 export const metadata: Metadata = {
@@ -21,6 +23,7 @@ type RouteSearchParams = {
   // Phase 2 P0-1: backend now takes a single `check_in` (the day the user
   // wants to fly out) + `nights` + `meal_plan` rather than a date range.
   check_in?: string;
+  check_in_min?: string;
   nights?: string;
   meal_plan?: string;
   price_max?: string;
@@ -30,6 +33,7 @@ type RouteSearchParams = {
   // honour pax — gets them for free without another schema change.
   adults?: string;
   kids?: string; // comma-separated ages: "5,7,9"
+  sort?: string;
   limit?: string;
   offset?: string;
   [key: string]: string | undefined;
@@ -53,13 +57,14 @@ function parseKids(raw: string | undefined): number[] | undefined {
 function toApiParams(sp: RouteSearchParams): SearchParams {
   return {
     country: readParam(sp, 'country')?.toUpperCase(),
-    check_in: readParam(sp, 'check_in') || undefined,
+    check_in: readParam(sp, 'check_in') || readParam(sp, 'check_in_min') || undefined,
     nights: toNumber(readParam(sp, 'nights')),
     meal_plan: readParam(sp, 'meal_plan') || undefined,
     price_max: toNumber(readParam(sp, 'price_max')),
     stars_min: toNumber(readParam(sp, 'stars_min')),
     adults: toNumber(readParam(sp, 'adults')),
     kids: parseKids(readParam(sp, 'kids')),
+    sort: normalizeSearchSort(readParam(sp, 'sort')),
     limit: toNumber(readParam(sp, 'limit')) ?? PAGE_SIZE,
     offset: toNumber(readParam(sp, 'offset')) ?? 0,
   };
@@ -77,7 +82,7 @@ function accusativeCountry(name: string): string {
   const map: Record<string, string> = {
     Туреччина: 'Туреччину',
     Єгипет: 'Єгипет',
-    'ОАЕ': 'ОАЕ',
+    ОАЕ: 'ОАЕ',
     Греція: 'Грецію',
     Іспанія: 'Іспанію',
     Болгарія: 'Болгарію',
@@ -118,7 +123,7 @@ export default async function SearchPage({
       } catch (e) {
         return {
           ok: false as const,
-          error: e instanceof Error ? e.message : 'Невідома помилка',
+          error: userMessageForApiError(e),
         };
       }
     })(),
@@ -181,15 +186,15 @@ export default async function SearchPage({
           {results.price_basis_kids.length > 0
             ? ` і дітей ${results.price_basis_kids.join(', ')}`
             : ' без дітей'}
-          . Обраний склад туристів збережено в пошуку, але live-ціна для нього буде
-          уточнюватися на стороні оператора.
+          . Обраний склад туристів збережено в пошуку, але live-ціна для нього буде уточнюватися на
+          стороні оператора.
         </div>
       )}
 
-      {!params.check_in && !readParam(sp, 'check_in') && (
+      {!params.check_in && !readParam(sp, 'check_in') && !readParam(sp, 'check_in_min') && (
         <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-200">
-          Без дати заїзду показуємо найнижчу актуальну ціну, яку вже знайшов парсер.
-          Для точнішого підбору оберіть дату, тривалість і харчування.
+          Без дати заїзду показуємо найнижчу актуальну ціну, яку вже знайшов парсер. Для точнішого
+          підбору оберіть дату, тривалість і харчування.
         </div>
       )}
 
@@ -199,11 +204,15 @@ export default async function SearchPage({
         </div>
       ) : results.items.length === 0 ? (
         <div className="rounded-xl bg-white p-10 text-center text-sm text-slate-500 ring-1 ring-slate-200">
-          Нічого не знайдено серед готелів з актуальними цінами. Спробуйте змінити
-          дату, харчування, зірковість або країну.
+          Нічого не знайдено серед готелів з актуальними цінами. Спробуйте змінити дату, харчування,
+          зірковість або країну.
         </div>
       ) : (
         <>
+          <div className="flex flex-col gap-3 rounded-xl bg-white p-3 ring-1 ring-slate-200 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-sm font-medium text-slate-700">Варіанти</span>
+            <SearchSortControl value={params.sort ?? 'price_asc'} />
+          </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {results.items.map((h) => (
               <HotelCard key={h.hotel_id} hotel={h} />
@@ -244,22 +253,24 @@ function SearchPagination({
       </span>
       <div className="flex items-center gap-2">
         {canPrev ? (
-          <Link className="rounded-lg px-3 py-2 text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50" href={searchHref(params, prevOffset)}>
+          <Link
+            className="rounded-lg px-3 py-2 text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50"
+            href={searchHref(params, prevOffset)}
+          >
             Назад
           </Link>
         ) : (
-          <span className="rounded-lg px-3 py-2 text-slate-300 ring-1 ring-slate-200">
-            Назад
-          </span>
+          <span className="rounded-lg px-3 py-2 text-slate-300 ring-1 ring-slate-200">Назад</span>
         )}
         {canNext ? (
-          <Link className="rounded-lg bg-brand-700 px-3 py-2 font-medium text-white hover:bg-brand-800" href={searchHref(params, nextOffset)}>
+          <Link
+            className="rounded-lg bg-brand-700 px-3 py-2 font-medium text-white hover:bg-brand-800"
+            href={searchHref(params, nextOffset)}
+          >
             Далі
           </Link>
         ) : (
-          <span className="rounded-lg px-3 py-2 text-slate-300 ring-1 ring-slate-200">
-            Далі
-          </span>
+          <span className="rounded-lg px-3 py-2 text-slate-300 ring-1 ring-slate-200">Далі</span>
         )}
       </div>
     </nav>
@@ -276,6 +287,7 @@ function searchHref(params: SearchParams, offset: number): string {
   if (params.stars_min) qs.set('stars_min', String(params.stars_min));
   if (params.adults) qs.set('adults', String(params.adults));
   if (params.kids && params.kids.length > 0) qs.set('kids', params.kids.join(','));
+  if (params.sort && params.sort !== 'price_asc') qs.set('sort', params.sort);
   qs.set('limit', String(params.limit ?? PAGE_SIZE));
   if (offset > 0) qs.set('offset', String(offset));
   return `/search?${qs.toString()}`;

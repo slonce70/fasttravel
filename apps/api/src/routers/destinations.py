@@ -15,6 +15,8 @@ infrequently — no need for a materialized view yet.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -122,7 +124,7 @@ _ALL_COUNTRIES_SQL = text(
 )
 
 
-def _row_to_country(row) -> CountryOut:
+def _row_to_country(row: Any) -> CountryOut:
     iso2 = row.country_iso2
     return CountryOut(
         id=row.country_id,

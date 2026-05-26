@@ -1,5 +1,4 @@
 User-agent: *
 Allow: /
 
-# Sitemap will be generated in Phase 2 (apps/api/src/routers/sitemap.py).
-# Sitemap: https://fasttravel.com.ua/sitemap.xml
+Sitemap: https://fasttravel.com.ua/sitemap.xml

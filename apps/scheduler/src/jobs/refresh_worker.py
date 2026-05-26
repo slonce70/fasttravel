@@ -20,18 +20,18 @@ and `BRPOP` unblocks via `CancelledError` → clean shutdown without
 losing already-fetched jobs (the job is popped first, then run; if
 we crash mid-fetch the user just retries).
 
-Fetch logic mirrors the original `_refresh_one_hotel` in
-`apps/api/src/routers/hotels.py` 1:1 — same offsets, same dedup
-behaviour (none — P0-6 will add 12h dedup at both call sites in
-one pass), same MV refresh scope.
+Fetch logic mirrors the scheduled snapshot's product window: one broad
+calendar request from today, 12h dedup, same MV refresh scope.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import Any, cast
 
 import httpx
 from sqlalchemy import text
@@ -39,22 +39,28 @@ from sqlalchemy import text
 from src.infra.cache import get_redis
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
+from src.jobs._price_validation import parse_check_in, validate_price_row
+from src.jobs.snapshot_farvater import CALENDAR_DATE_SHIFT_DAYS, NIGHTS
 
 log = get_logger(__name__)
 
 
 QUEUE_KEY = "refresh:queue"
 BRPOP_TIMEOUT_S = 5
-CHECK_IN_OFFSETS_DAYS = [3, 14, 30, 45]
-NIGHTS = [7, 10, 14]
+CHECK_IN_OFFSETS_DAYS = [0]
 USER_AGENT = "FastTravel-RefreshWorker/1.0"
 
 
-async def _fetch_hotel_prices(hotel_id: int, farvater_key: str) -> list[dict]:
-    """Pull live price calendar across the standard check-in offsets.
+async def _fetch_hotel_prices(
+    hotel_id: int,
+    farvater_key: str,
+    requested_nights: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Pull live price calendar with one broad Farvater request.
     Returns a list of normalised price rows ready for INSERT."""
-    all_prices: list[dict] = []
+    all_prices: list[dict[str, Any]] = []
     seen: set[str] = set()
+    nights_to_fetch = requested_nights or NIGHTS
     async with httpx.AsyncClient(http2=True, timeout=20) as client:
         for offset in CHECK_IN_OFFSETS_DAYS:
             ci_date = date.today() + timedelta(days=offset)
@@ -66,7 +72,11 @@ async def _fetch_hotel_prices(hotel_id: int, farvater_key: str) -> list[dict]:
             try:
                 r = await client.post(
                     url,
-                    json={"dateShift": 7, "nights": NIGHTS, "townFroms": "all"},
+                    json={
+                        "dateShift": CALENDAR_DATE_SHIFT_DAYS,
+                        "nights": nights_to_fetch,
+                        "townFroms": "all",
+                    },
                     headers={
                         "User-Agent": USER_AGENT,
                         "Accept": "application/json",
@@ -98,13 +108,27 @@ async def _fetch_hotel_prices(hotel_id: int, farvater_key: str) -> list[dict]:
             for w in payload["data"]["items"]:
                 n = int(w["item"]["night"])
                 for d in w["item"]["dates"]:
+                    ok, reason = validate_price_row(d)
+                    if not ok:
+                        log.warning(
+                            "refresh_worker.row_rejected",
+                            hotel_id=hotel_id,
+                            offset=offset,
+                            reason=reason,
+                        )
+                        continue
                     sk = str(d.get("systemKey") or "")
                     if sk in seen:
                         continue
                     seen.add(sk)
-                    try:
-                        ci_d = datetime.strptime(d["date"], "%d.%m.%Y").date()
-                    except Exception:
+                    ci_d = parse_check_in(d["date"])
+                    if ci_d is None:
+                        log.warning(
+                            "refresh_worker.row_bad_date",
+                            hotel_id=hotel_id,
+                            offset=offset,
+                            raw_date=d.get("date"),
+                        )
                         continue
                     all_prices.append(
                         {
@@ -115,6 +139,16 @@ async def _fetch_hotel_prices(hotel_id: int, farvater_key: str) -> list[dict]:
                             "uah": int(d.get("priceUAH") or 0),
                             "usd": int(d.get("price") or 0),
                             "sk": sk,
+                            "raw": {
+                                "systemKey": sk,
+                                "source": "live_refresh",
+                                "hotelKey": str(farvater_key),
+                                "requestedCheckIn": ci_date.isoformat(),
+                                "requestedDateShift": CALENDAR_DATE_SHIFT_DAYS,
+                                "requestedNights": nights_to_fetch,
+                                "calendarNight": n,
+                                "offer": d,
+                            },
                         }
                     )
     return all_prices
@@ -125,8 +159,19 @@ async def _fetch_hotel_prices(hotel_id: int, farvater_key: str) -> list[dict]:
 # 12h window double-write every row and poison the price_baselines percentiles.
 DEDUP_WINDOW_HOURS = 12
 
+_DEEP_LINK_BASE_SQL = text(
+    """SELECT 'https://farvater.travel/uk/hotel/'
+              || lower(COALESCE(parent.country_iso2, d.country_iso2)) || '/'
+              || regexp_replace(h.canonical_slug, '^fv-[a-z]{2}-', '')
+              AS url
+        FROM hotels h
+        JOIN destinations d ON d.id = h.destination_id
+        LEFT JOIN destinations parent ON parent.id = d.parent_id
+        WHERE h.id = :id"""
+)
 
-async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
+
+async def _persist_prices(hotel_id: int, prices: list[dict[str, Any]]) -> int:
     """Write fetched prices + refresh hotel-page MVs. Returns rows inserted.
 
     Applies the same 12h dedup as `snapshot_farvater._insert_prices` — a
@@ -145,21 +190,21 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
             return 0
         op_id = op_row[0]
 
-        # Dedup against everything we wrote for this hotel inside the window.
-        existing = (
-            await db.execute(
-                text("""SELECT check_in, nights, meal_plan, price_uah
-                    FROM price_observations
-                    WHERE hotel_id = :h AND operator_id = :op
-                      AND observed_at >= NOW() - make_interval(hours => :hh)"""),
-                {"h": hotel_id, "op": op_id, "hh": DEDUP_WINDOW_HOURS},
-            )
-        ).all()
-        existing_keys: set[tuple] = {(r[0], r[1], r[2], r[3]) for r in existing}
+        # Sprint 3.3 — shared helper, room_category in tuple.
+        from src.jobs._dedup_window import existing_dedup_keys
+
+        existing_keys = await existing_dedup_keys(db, hotel_id=hotel_id, operator_id=op_id)
         fresh = [
             p
             for p in prices
-            if (p["check_in"], p["nights"], p["meal"], p["uah"]) not in existing_keys
+            if (
+                p["check_in"],
+                p["nights"],
+                p["meal"],
+                p.get("room") or "",
+                p["uah"],
+            )
+            not in existing_keys
         ]
         if not fresh:
             log.info(
@@ -177,17 +222,7 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
         )
 
         deep_link_base = (
-            await db.execute(
-                text("""SELECT 'https://farvater.travel/uk/hotel/'
-                          || lower(d.country_iso2) || '/'
-                          || regexp_replace(h.canonical_slug, '^fv-[a-z]{2}-', '')
-                          AS url
-                    FROM hotels h
-                    JOIN destinations d
-                      ON d.id = h.destination_id AND d.parent_id IS NULL
-                    WHERE h.id = :id"""),
-                {"id": hotel_id},
-            )
+            await db.execute(_DEEP_LINK_BASE_SQL, {"id": hotel_id})
         ).scalar() or "https://farvater.travel"
 
         payload = [
@@ -208,12 +243,7 @@ async def _persist_prices(hotel_id: int, prices: list[dict]) -> int:
                 # `?q=` is the farvater-internal booking-preselect param.
                 # See snapshot_farvater for the discovery trail.
                 "dl": f"{deep_link_base}?q={p['sk']}",
-                "raw": json.dumps(
-                    {
-                        "systemKey": p["sk"],
-                        "source": "live_refresh",
-                    }
-                ),
+                "raw": json.dumps(p["raw"], default=str),
             }
             for p in fresh
         ]
@@ -277,12 +307,23 @@ async def _process_job(raw: str) -> None:
     hotel_id = job.get("hotel_id")
     farvater_key = job.get("farvater_key")
     trigger = job.get("trigger", "user")
+    requested_nights = job.get("requested_nights")
     if not hotel_id or not farvater_key:
         log.warning("refresh_worker.missing_fields", job=job)
         return
+    if requested_nights is not None and (
+        not isinstance(requested_nights, list)
+        or not all(isinstance(n, int) and 1 <= n <= 30 for n in requested_nights)
+    ):
+        log.warning("refresh_worker.invalid_requested_nights", job=job)
+        return
 
     try:
-        prices = await _fetch_hotel_prices(int(hotel_id), str(farvater_key))
+        prices = await _fetch_hotel_prices(
+            int(hotel_id),
+            str(farvater_key),
+            requested_nights=requested_nights,
+        )
         inserted = await _persist_prices(int(hotel_id), prices)
         log.info(
             "refresh_worker.done",
@@ -307,7 +348,10 @@ async def refresh_worker_loop() -> None:
     try:
         while True:
             try:
-                item = await redis.brpop(QUEUE_KEY, timeout=BRPOP_TIMEOUT_S)
+                item = await cast(
+                    Awaitable[list[Any] | None],
+                    redis.brpop([QUEUE_KEY], timeout=BRPOP_TIMEOUT_S),
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — Redis blip shouldn't kill worker

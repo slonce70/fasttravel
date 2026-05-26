@@ -75,6 +75,24 @@ export function PaxPicker({ value, onChange, className }: PaxPickerProps) {
       if (e.key === 'Escape') {
         e.preventDefault();
         close();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const focusable = getFocusableElements(popoverRef.current);
+        if (focusable.length === 0) {
+          e.preventDefault();
+          return;
+        }
+        const first = focusable[0]!;
+        const last = focusable[focusable.length - 1]!;
+        const active = document.activeElement;
+        if (e.shiftKey && active === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     }
     function onDown(e: MouseEvent) {
@@ -107,10 +125,7 @@ export function PaxPicker({ value, onChange, className }: PaxPickerProps) {
     let kids: number[];
     if (clamped > current.length) {
       // Append default ages — keeps existing user-set ages intact.
-      kids = [
-        ...current,
-        ...Array(clamped - current.length).fill(DEFAULT_KID_AGE),
-      ];
+      kids = [...current, ...Array(clamped - current.length).fill(DEFAULT_KID_AGE)];
     } else {
       // Trim the tail — preserves the head ages on +/- ping-pong.
       kids = current.slice(0, clamped);
@@ -162,7 +177,7 @@ export function PaxPicker({ value, onChange, className }: PaxPickerProps) {
           <div
             aria-hidden="true"
             className="fixed inset-0 z-40 bg-slate-900/30 md:hidden"
-            onClick={() => setOpen(false)}
+            onClick={close}
           />
           <div
             ref={popoverRef}
@@ -179,12 +194,10 @@ export function PaxPicker({ value, onChange, className }: PaxPickerProps) {
             ].join(' ')}
           >
             <div className="flex items-center justify-between md:hidden">
-              <span className="text-base font-semibold text-slate-900">
-                Туристи
-              </span>
+              <span className="text-base font-semibold text-slate-900">Туристи</span>
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={close}
                 aria-label="Закрити"
                 className="-mr-2 rounded-md p-2 text-slate-500 hover:text-slate-700"
               >
@@ -226,16 +239,11 @@ export function PaxPicker({ value, onChange, className }: PaxPickerProps) {
                   </span>
                   <div className="grid grid-cols-2 gap-2">
                     {value.kids.map((age, i) => (
-                      <label
-                        key={i}
-                        className="flex flex-col gap-1 text-xs text-slate-600"
-                      >
+                      <label key={i} className="flex flex-col gap-1 text-xs text-slate-600">
                         <span>Дитина {i + 1}</span>
                         <select
                           value={age}
-                          onChange={(e) =>
-                            setKidAge(i, Number(e.target.value))
-                          }
+                          onChange={(e) => setKidAge(i, Number(e.target.value))}
                           aria-label={`Вік дитини ${i + 1}`}
                           className="input"
                         >
@@ -284,16 +292,7 @@ interface CounterRowProps {
   decRef?: React.Ref<HTMLButtonElement>;
 }
 
-function CounterRow({
-  label,
-  sublabel,
-  value,
-  min,
-  max,
-  onDec,
-  onInc,
-  decRef,
-}: CounterRowProps) {
+function CounterRow({ label, sublabel, value, min, max, onDec, onInc, decRef }: CounterRowProps) {
   // Block + and - keypresses from submitting the parent form.
   function noSubmit(e: ReactKeyboardEvent<HTMLButtonElement>) {
     if (e.key === 'Enter') e.preventDefault();
@@ -302,9 +301,7 @@ function CounterRow({
     <div className="flex items-center justify-between">
       <div className="flex flex-col">
         <span className="text-sm font-medium text-slate-900">{label}</span>
-        {sublabel && (
-          <span className="text-xs text-slate-500">{sublabel}</span>
-        )}
+        {sublabel && <span className="text-xs text-slate-500">{sublabel}</span>}
       </div>
       <div className="flex items-center gap-3">
         <button
@@ -314,14 +311,11 @@ function CounterRow({
           onKeyDown={noSubmit}
           disabled={value <= min}
           aria-label={`Зменшити ${label.toLowerCase()}`}
-          className="flex h-8 w-8 items-center justify-center rounded-full ring-1 ring-slate-300 text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-slate-700 ring-1 ring-slate-300 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
         >
           −
         </button>
-        <span
-          className="w-5 text-center text-sm font-semibold tabular-nums"
-          aria-live="polite"
-        >
+        <span className="w-5 text-center text-sm font-semibold tabular-nums" aria-live="polite">
           {value}
         </span>
         <button
@@ -330,13 +324,22 @@ function CounterRow({
           onKeyDown={noSubmit}
           disabled={value >= max}
           aria-label={`Збільшити ${label.toLowerCase()}`}
-          className="flex h-8 w-8 items-center justify-center rounded-full ring-1 ring-slate-300 text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-slate-700 ring-1 ring-slate-300 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
         >
           +
         </button>
       </div>
     </div>
   );
+}
+
+function getFocusableElements(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return [];
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), select:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true');
 }
 
 /** Ukrainian plural for "adults" + "kids". */
@@ -363,9 +366,7 @@ function pluralUk(n: number, forms: [string, string, string]): string {
 // ---------------------------------------------------------------------------
 
 /** Reads adults + kids from a URLSearchParams-like getter. */
-export function paxFromSearchParams(
-  get: (key: string) => string | null,
-): PaxValue {
+export function paxFromSearchParams(get: (key: string) => string | null): PaxValue {
   const adultsRaw = get('adults');
   const kidsRaw = get('kids');
   const adults = adultsRaw ? Number(adultsRaw) : DEFAULT_PAX.adults;
@@ -384,10 +385,7 @@ export function paxFromSearchParams(
 }
 
 /** Writes adults + kids into URLSearchParams (only if non-default). */
-export function paxToSearchParams(
-  qs: URLSearchParams,
-  value: PaxValue,
-): void {
+export function paxToSearchParams(qs: URLSearchParams, value: PaxValue): void {
   // Always include adults so the backend knows the explicit pax — most
   // operator APIs need it. Kids only when non-empty to keep URLs clean.
   qs.set('adults', String(value.adults));

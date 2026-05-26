@@ -13,6 +13,7 @@ Throttled to the same `PER_REQUEST_DELAY_S` the regular scraper uses.
 Safe to re-run — the upsert is idempotent and the photo column never
 shrinks (see `_upsert_hotel`).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -82,7 +83,7 @@ async def main(limit: int) -> None:
                 continue
             async with async_session_factory() as db:
                 dest_id = await _country_dest_id(db, meta.country_iso2)
-                await _upsert_hotel(db, meta, dest_id)
+                await _upsert_hotel(db, meta, dest_id, operator_id)
                 await _upsert_mapping(db, row.id, operator_id, meta)
                 await db.commit()
             updated += 1

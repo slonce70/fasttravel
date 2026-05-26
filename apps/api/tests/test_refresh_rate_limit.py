@@ -7,12 +7,51 @@ client can fill at most 10 queue slots per hour.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infra.limiter import limiter
+from src.routers import hotels as hotels_router
+
+
+class _FakeRedis:
+    def __init__(self) -> None:
+        self.lists: dict[str, list[str]] = {}
+        self.keys: dict[str, str] = {}
+        self.set_calls: list[str] = []
+
+    async def llen(self, key: str) -> int:
+        return len(self.lists.get(key, []))
+
+    async def set(self, key: str, value: str, *, nx: bool = False, ex: int | None = None) -> bool:
+        self.set_calls.append(key)
+        if nx and key in self.keys:
+            return False
+        self.keys[key] = value
+        return True
+
+    async def lpush(self, key: str, value: str) -> int:
+        self.lists.setdefault(key, []).insert(0, value)
+        return len(self.lists[key])
+
+    async def delete(self, key: str) -> int:
+        existed = key in self.keys
+        self.keys.pop(key, None)
+        return int(existed)
+
+
+class _FakeRefreshResult:
+    def first(self) -> tuple[int, str]:
+        return (42, "888888")
+
+
+class _FakeRefreshSession:
+    async def execute(self, *_args, **_kwargs) -> _FakeRefreshResult:
+        return _FakeRefreshResult()
 
 
 @pytest.fixture(autouse=True)
@@ -88,3 +127,33 @@ async def test_refresh_rate_limit_caps_at_ten_per_hour(
 
     assert successes == 10, f"expected 10 OK responses, got {successes}"
     assert too_many == 1, f"expected exactly one 429, got {too_many}"
+
+
+@pytest.mark.asyncio
+async def test_refresh_custom_nights_queues_exact_duration_with_separate_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis = _FakeRedis()
+    monkeypatch.setattr(hotels_router, "get_redis", lambda: redis)
+
+    hotel_id = 42
+    first = await hotels_router.trigger_refresh.__wrapped__(
+        request=object(),
+        hotel_id=hotel_id,
+        nights=None,
+        session=_FakeRefreshSession(),
+    )
+    second = await hotels_router.trigger_refresh.__wrapped__(
+        request=object(),
+        hotel_id=hotel_id,
+        nights=15,
+        session=_FakeRefreshSession(),
+    )
+
+    assert first.queued is True
+    assert second.queued is True
+    assert redis.set_calls == [f"refresh:hotel:{hotel_id}", f"refresh:hotel:{hotel_id}:nights:15"]
+
+    payloads = [json.loads(item) for item in redis.lists[hotels_router.REFRESH_QUEUE_KEY]]
+    assert payloads[0]["requested_nights"] == [15]
+    assert "requested_nights" not in payloads[1]

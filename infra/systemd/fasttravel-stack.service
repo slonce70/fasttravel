@@ -5,7 +5,9 @@
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now fasttravel-stack.service
 #
-# Expects: /opt/fasttravel/docker-compose.prod.yml and /opt/fasttravel/.env
+# Expects: /opt/fasttravel/docker-compose.yml,
+# /opt/fasttravel/docker-compose.prod.yml, and /opt/fasttravel/.env.
+# The prod file is an overlay; it is not a standalone compose project.
 # ============================================================================
 [Unit]
 Description=FastTravel docker-compose stack
@@ -18,9 +20,9 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/fasttravel
 EnvironmentFile=-/opt/fasttravel/.env
-ExecStartPre=/usr/bin/docker compose -f docker-compose.prod.yml pull
-ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml up -d --remove-orphans
-ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml down
+ExecStartPre=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 TimeoutStartSec=300
 Restart=on-failure
 RestartSec=30s

@@ -22,19 +22,19 @@
 
 ---
 
-## ADR-002: Frontend = Cloudflare Pages (НЕ Vercel)
+## ADR-002: Frontend = Cloudflare Workers + OpenNext (НЕ Vercel)
 
 **Context.** Хостинг для Next.js фронтенду. Стандартний вибір — Vercel.
 
-**Decision.** Cloudflare Pages з `@cloudflare/next-on-pages` adapter.
+**Decision.** Cloudflare Workers з `@opennextjs/cloudflare` adapter.
 
 **Consequences.**
 - ✅ Vercel Hobby plan TOS забороняє commercial use. FastTravel — affiliate-агрегатор, це commercial. Pro = $20/міс.
-- ✅ Cloudflare Pages — без commercial-обмеження
+- ✅ Cloudflare Workers — без commercial-обмеження
 - ✅ Unlimited bandwidth (Vercel Hobby обмежує 100GB/міс)
-- ✅ Один vendor (DNS + CDN + WAF + Storage + Pages) — простіше керувати
-- ⚠️ 500 builds/міс ліміт — у MVP не наближаємось; якщо вибили — Pro $25/міс
-- ⚠️ Деякі Next.js features не повністю підтримані (Image Optimization, Middleware edge limits) — приймаємо як trade-off
+- ✅ Один vendor (DNS + CDN + WAF + Workers + R2) — простіше керувати
+- ✅ OpenNext підтримує Next.js Node runtime на Cloudflare краще, ніж deprecated `@cloudflare/next-on-pages`
+- ⚠️ Деякі Next.js features потребують Cloudflare-specific bindings (Image Optimization, cache persistence) — приймаємо як trade-off
 
 **Альтернативи відкинуто:** Vercel Hobby (commercial заборона), Netlify (limited free build minutes), self-hosted (Oracle VM має зайнятись бекендом).
 
@@ -156,7 +156,7 @@
 **Consequences.**
 - ✅ 0 egress — restore не коштуватиме нічого
 - ✅ S3-compatible API
-- ✅ Один vendor з Cloudflare DNS+Pages
+- ✅ Один vendor з Cloudflare DNS+Workers/R2
 - ⚠️ 10GB free — наші щоденні pg_dump ~50MB × 30 днів rotation = 1.5 GB, влазимо
 - ⚠️ Class B operations (PUT) платні з 1M req/міс — для щоденних upload не наближаємось
 
@@ -265,17 +265,16 @@
 
 ---
 
-## ADR-017: ISR на Cloudflare Pages потребує KV binding
+## ADR-017: OpenNext cache persistence через Cloudflare R2
 
-**Context.** Next.js `revalidate` для ISR не працює "з коробки" на Cloudflare Pages — фолбек у non-persistent кеш per-instance, тобто ISR фактично не працює на edge.
+**Context.** Next.js `revalidate` / ISR у Cloudflare Workers потребує persistent cache binding, якщо хочемо стабільну поведінку між Worker instances.
 
-**Decision.** При deploy на Cloudflare Pages обов'язково створити KV namespace `NEXT_CACHE_WORKERS_KV` і прив'язати його у Pages settings (Environment → KV bindings). Документується в `apps/web/README.md` як deploy step.
+**Decision.** MVP deploy іде через `@opennextjs/cloudflare` без примусового R2 cache binding. Коли production account готовий, додаємо R2 binding для OpenNext incremental cache і перевіряємо `pnpm cf:build && pnpm cf:preview`.
 
 **Consequences.**
-- ✅ ISR справді працює на edge (revalidate respect, cached responses persisted)
-- ✅ KV free tier — 1k writes/день, 100k reads/день — достатньо для MVP
-- ⚠️ Без binding фронт буде працювати, але кеш не персистне → SSR на кожен запит → повільніше + більше нагрузки на бекенд
-- ⚠️ Phase 2 escalation — якщо KV writes > 1k/день, мігруємо на Cloudflare R2 cache adapter
+- ✅ Немає фейкового "cache configured" без реального Cloudflare account/bucket.
+- ✅ OpenNext має documented R2 path для cache persistence.
+- ⚠️ До R2 binding частина revalidate/ISR виграшу може бути слабшою; це прийнятно для MVP і має бути перевірено після cutover.
 
 ---
 

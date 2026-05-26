@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fasttravel-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-05-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS",
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "fasttravel-web",
+    },
+  ],
+  "vars": {
+    "NEXT_PUBLIC_API_URL": "https://api.fasttravel.com.ua",
+    "NEXT_PUBLIC_TELEGRAM_CHANNEL_URL": "https://t.me/testtyhhh",
+  },
+  "env": {
+    "preview": {
+      "name": "fasttravel-web-preview",
+      "vars": {
+        "NEXT_PUBLIC_API_URL": "https://staging-api.fasttravel.com.ua",
+        "NEXT_PUBLIC_TELEGRAM_CHANNEL_URL": "https://t.me/testtyhhh",
+      },
+      "services": [
+        {
+          "binding": "WORKER_SELF_REFERENCE",
+          "service": "fasttravel-web-preview",
+        },
+      ],
+    },
+  },
+}

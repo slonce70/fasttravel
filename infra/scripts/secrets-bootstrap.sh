@@ -16,12 +16,14 @@
 #   GRAFANA_ADMIN_PASSWORD — Grafana admin
 #
 # Variables we keep as placeholders for the operator to fill in:
-#   TELEGRAM_BOT_TOKEN, ITTOUR_API_TOKEN, TBO_USERNAME / TBO_PASSWORD,
-#   SENTRY_DSN — these come from third parties, not from openssl.
+#   API_IMAGE / BOT_IMAGE / SCHEDULER_IMAGE, TELEGRAM_BOT_TOKEN,
+#   ITTOUR_API_TOKEN, TBO_USERNAME / TBO_PASSWORD, SENTRY_DSN — these come
+#   from CI, registries, or third parties, not from openssl.
 
 set -euo pipefail
 
 OUTPUT="${1:-.env.prod}"
+WEBHOOK_SECRET_PATH="${WEBHOOK_SECRET_PATH:-infra/prometheus/.webhook_secret}"
 FORCE=false
 for arg in "$@"; do
     [[ "$arg" == "--force" ]] && FORCE=true
@@ -39,6 +41,7 @@ gen_secret() {
 
 POSTGRES_PASSWORD="$(gen_secret)"
 GRAFANA_ADMIN_PASSWORD="$(gen_secret)"
+ALERTMANAGER_WEBHOOK_SECRET="$(gen_secret)"
 
 cat > "$OUTPUT" <<EOF
 # =============================================================================
@@ -67,6 +70,11 @@ API_HOST=0.0.0.0
 API_PORT=8000
 CORS_ORIGINS=https://fasttravel.com.ua,https://www.fasttravel.com.ua
 
+# --- Images (FILL IN from deploy workflow / GHCR tags) ---
+API_IMAGE=
+BOT_IMAGE=
+SCHEDULER_IMAGE=
+
 # --- Telegram (FILL IN before launch) ---
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHANNEL_ID=
@@ -84,17 +92,25 @@ TBO_PASSWORD=
 SENTRY_DSN=
 SENTRY_TRACES_SAMPLE_RATE=0.05
 
+# --- AlertManager -> bot webhook ---
+ALERTMANAGER_WEBHOOK_SECRET=${ALERTMANAGER_WEBHOOK_SECRET}
+
 # --- Grafana ---
 GRAFANA_ADMIN_USER=admin
 GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
 EOF
 
 chmod 600 "$OUTPUT"
+mkdir -p "$(dirname "$WEBHOOK_SECRET_PATH")"
+printf '%s\n' "$ALERTMANAGER_WEBHOOK_SECRET" > "$WEBHOOK_SECRET_PATH"
+chmod 600 "$WEBHOOK_SECRET_PATH"
 
 echo "Wrote $OUTPUT (0600)."
+echo "Wrote $WEBHOOK_SECRET_PATH (0600)."
 echo
 echo "Next steps:"
-echo "  1. Fill in TELEGRAM_BOT_TOKEN / ITTOUR_API_TOKEN / TBO_* / SENTRY_DSN."
-echo "  2. Copy $OUTPUT to the prod host as .env: scp $OUTPUT user@host:~/fasttravel/.env"
-echo "  3. Run: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d"
-echo "  4. Verify the precondition guard didn't 503 anything: docker compose logs api | grep startup"
+echo "  1. Fill in API_IMAGE / BOT_IMAGE / SCHEDULER_IMAGE and external secrets."
+echo "  2. Run: ENV_FILE=$OUTPUT STRICT_ENV=1 ./infra/scripts/production-preflight.sh"
+echo "  3. Copy $OUTPUT to the prod host as .env: scp $OUTPUT user@host:/opt/fasttravel/.env"
+echo "  4. Run: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d"
+echo "  5. Verify /health and Prometheus/Grafana after cutover."

@@ -10,36 +10,36 @@
 
 services:
   postgres:
-    ports: []     # remove host-port publishing
+    ports: !reset []     # remove host-port publishing
     # In prod, mount a custom postgresql.conf overlay if needed:
     # volumes:
     #   - ./infra/postgres/postgresql.prod.conf:/etc/postgresql/postgresql.conf:ro
 
   redis:
-    ports: []
+    ports: !reset []
 
   api:
     # Use registry image built by CI in prod.
-    # image: ghcr.io/your-org/fasttravel-api:latest
-    ports: []     # only nginx fronts the API
+    image: ${API_IMAGE:?API_IMAGE is required in production}
+    ports: !reset []     # only nginx fronts the API
     environment:
       ENVIRONMENT: prod
 
   bot:
-    # image: ghcr.io/your-org/fasttravel-bot:latest
+    image: ${BOT_IMAGE:?BOT_IMAGE is required in production}
     environment:
       ENVIRONMENT: prod
 
   scheduler:
-    # image: ghcr.io/your-org/fasttravel-scheduler:latest
+    image: ${SCHEDULER_IMAGE:?SCHEDULER_IMAGE is required in production}
     environment:
       ENVIRONMENT: prod
 
   prometheus:
-    ports: []
+    ports: !reset []
 
   grafana:
-    ports: []
+    ports: !reset []
 
   nginx:
     image: nginx:1.27-alpine
@@ -48,6 +48,7 @@ services:
     volumes:
       - ./infra/nginx:/etc/nginx/conf.d:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /etc/nginx/.htpasswd-grafana:/etc/nginx/.htpasswd-grafana:ro
     ports:
       - "80:80"
       - "443:443"

@@ -5,9 +5,11 @@ NormalizedOffer ↔ `price_observations` table:
   operator_code      → resolved to operator_id at insert time
   the rest map column-for-column.
 
-NormalizedHotelContent → `hotels` table (UPSERT path, not implemented
-here — that lives in pipeline.py / a separate content-refresh job).
+NormalizedHotelContent → `hotels` table. This module only defines the
+portable payload shape; persistence lives in pipeline.py or in source-
+specific content-refresh jobs.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

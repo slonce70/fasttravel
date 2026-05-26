@@ -34,8 +34,9 @@ and gets last_priced_at = the most-recent observed_at. last_seen_at
 gets bootstrapped to last_priced_at OR last_updated OR NOW() so search
 doesn't grade everything as "stale".
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 
 revision = "003"
 down_revision = "002"

@@ -1,9 +1,10 @@
 """Business logic for hotel calendar heatmap.
 
-Reads from `hotel_calendar_prices` MV. The MV stores raw operator
-meal codes (``AI``/``UAI``/``HB``/``BB``/``RO``/``FB``); the API exposes
-canonical product keys (``all_inclusive``/``half_board``/…). Translation
-happens here via :mod:`src.services.meal_normalizer`.
+Reads from `hotel_calendar_prices` MV (migration 016 onwards: stores
+``prices_by_night JSONB`` keyed by stringified night count). The MV
+stores raw operator meal codes (``AI``/``UAI``/``HB``/``BB``/``RO``/``FB``);
+the API exposes canonical product keys (``all_inclusive``/``half_board``/…).
+Translation happens here via :mod:`src.services.meal_normalizer`.
 """
 
 from __future__ import annotations
@@ -23,12 +24,15 @@ async def get_calendar(
     from_date: date,
     to_date: date,
     meal_plan: str | None = None,
+    nights: int | None = None,
 ) -> list[CalendarDay]:
     """Return the daily min-price grid for a hotel within a window.
 
-    The underlying MV (``hotel_calendar_prices``, post migration 002) is
-    keyed on (hotel_id, check_in, meal_plan) and stores **raw** meal
-    codes (``AI``/``UAI``/…).
+    When ``nights`` is supplied, read from ``current_prices`` and aggregate
+    exact offers for that duration; ``prices_by_night`` is then a single-entry
+    map ``{str(nights): MIN}`` so the shape stays consistent across callers.
+    Without ``nights``, fall back to the ``hotel_calendar_prices`` MV which
+    already stores the full ``prices_by_night`` JSONB across nights 7..14.
 
     * ``meal_plan`` given — accepted as either:
 
@@ -47,27 +51,104 @@ async def get_calendar(
 
     MIN over per-meal-plan MIN is still a MIN — no double-counting.
     """
+    if nights is not None:
+        if meal_plan is not None:
+            codes = raw_codes_for(meal_plan)
+            sql = text(
+                """
+                SELECT
+                    cp.check_in,
+                    CAST(:requested_meal_plan AS VARCHAR)                AS meal_plan,
+                    MIN(cp.price_uah)                                    AS min_price_uah,
+                    jsonb_build_object(CAST(:nights_key AS text), MIN(cp.price_uah))   AS prices_by_night,
+                    MAX(cp.observed_at)                                  AS observed_at
+                FROM current_prices cp
+                WHERE cp.hotel_id = :hotel_id
+                  AND cp.check_in BETWEEN :from_date AND :to_date
+                  AND cp.nights = :nights
+                  AND cp.meal_plan IN :meal_codes
+                GROUP BY cp.check_in
+                ORDER BY cp.check_in
+                """
+            ).bindparams(bindparam("meal_codes", expanding=True))
+            params = {
+                "hotel_id": hotel_id,
+                "from_date": from_date,
+                "to_date": to_date,
+                "nights": nights,
+                "nights_key": str(nights),
+                "meal_codes": codes,
+                "requested_meal_plan": meal_plan,
+            }
+        else:
+            sql = text(
+                """
+                SELECT
+                    cp.check_in,
+                    NULL::VARCHAR                                        AS meal_plan,
+                    MIN(cp.price_uah)                                    AS min_price_uah,
+                    jsonb_build_object(CAST(:nights_key AS text), MIN(cp.price_uah))   AS prices_by_night,
+                    MAX(cp.observed_at)                                  AS observed_at
+                FROM current_prices cp
+                WHERE cp.hotel_id = :hotel_id
+                  AND cp.check_in BETWEEN :from_date AND :to_date
+                  AND cp.nights = :nights
+                GROUP BY cp.check_in
+                ORDER BY cp.check_in
+                """
+            )
+            params = {
+                "hotel_id": hotel_id,
+                "from_date": from_date,
+                "to_date": to_date,
+                "nights": nights,
+                "nights_key": str(nights),
+            }
+        rows = (await session.execute(sql, params)).mappings().all()
+        return [CalendarDay(**dict(row)) for row in rows]
+
     if meal_plan is not None:
         codes = raw_codes_for(meal_plan)
         # Re-aggregate with MIN across codes (matters for canonical keys
         # that expand to >1 raw code, e.g. all_inclusive → AI+UAI). The
         # response ``meal_plan`` is NULL because we MIN'd over a set.
+        # `prices_by_night` is merged across meals by taking the per-key
+        # MIN — pure SQL via jsonb_object_agg over a per-night MIN CTE.
         sql = text(
             """
+            WITH per_night AS (
+                SELECT
+                    hcp.check_in,
+                    night_key,
+                    MIN((entry.value)::int) AS min_price
+                FROM hotel_calendar_prices hcp,
+                     LATERAL jsonb_each_text(hcp.prices_by_night) AS entry(night_key, value)
+                WHERE hcp.hotel_id = :hotel_id
+                  AND hcp.check_in BETWEEN :from_date AND :to_date
+                  AND hcp.meal_plan IN :meal_codes
+                GROUP BY hcp.check_in, night_key
+            ),
+            day_min AS (
+                SELECT
+                    check_in,
+                    MIN(min_price) AS min_price_uah,
+                    jsonb_object_agg(night_key, min_price) AS prices_by_night
+                FROM per_night
+                GROUP BY check_in
+            )
             SELECT
-                check_in,
-                NULL::VARCHAR             AS meal_plan,
-                MIN(min_price_uah)        AS min_price_uah,
-                MIN(min_7n)               AS min_7n,
-                MIN(min_10n)              AS min_10n,
-                MIN(min_14n)              AS min_14n,
-                MAX(last_observed_at)     AS observed_at
-            FROM hotel_calendar_prices
-            WHERE hotel_id = :hotel_id
-              AND check_in BETWEEN :from_date AND :to_date
-              AND meal_plan IN :meal_codes
-            GROUP BY check_in
-            ORDER BY check_in
+                dm.check_in,
+                CAST(:requested_meal_plan AS VARCHAR) AS meal_plan,
+                dm.min_price_uah,
+                dm.prices_by_night,
+                MAX(hcp.last_observed_at)  AS observed_at
+            FROM day_min dm
+            JOIN hotel_calendar_prices hcp
+              ON hcp.hotel_id = :hotel_id
+             AND hcp.check_in = dm.check_in
+             AND hcp.meal_plan IN :meal_codes
+            GROUP BY dm.check_in, dm.min_price_uah, dm.prices_by_night
+            ORDER BY dm.check_in
             """
         ).bindparams(bindparam("meal_codes", expanding=True))
         params = {
@@ -75,24 +156,45 @@ async def get_calendar(
             "from_date": from_date,
             "to_date": to_date,
             "meal_codes": codes,
+            "requested_meal_plan": meal_plan,
         }
     else:
         # Re-aggregate MIN over meal-plan rows; MAX over observed_at.
+        # Same per-night merge pattern as the meal_plan branch above —
+        # just without the meal_plan filter.
         sql = text(
             """
+            WITH per_night AS (
+                SELECT
+                    hcp.check_in,
+                    night_key,
+                    MIN((entry.value)::int) AS min_price
+                FROM hotel_calendar_prices hcp,
+                     LATERAL jsonb_each_text(hcp.prices_by_night) AS entry(night_key, value)
+                WHERE hcp.hotel_id = :hotel_id
+                  AND hcp.check_in BETWEEN :from_date AND :to_date
+                GROUP BY hcp.check_in, night_key
+            ),
+            day_min AS (
+                SELECT
+                    check_in,
+                    MIN(min_price) AS min_price_uah,
+                    jsonb_object_agg(night_key, min_price) AS prices_by_night
+                FROM per_night
+                GROUP BY check_in
+            )
             SELECT
-                check_in,
-                NULL::VARCHAR AS meal_plan,
-                MIN(min_price_uah)        AS min_price_uah,
-                MIN(min_7n)               AS min_7n,
-                MIN(min_10n)              AS min_10n,
-                MIN(min_14n)              AS min_14n,
-                MAX(last_observed_at)     AS observed_at
-            FROM hotel_calendar_prices
-            WHERE hotel_id = :hotel_id
-              AND check_in BETWEEN :from_date AND :to_date
-            GROUP BY check_in
-            ORDER BY check_in
+                dm.check_in,
+                NULL::VARCHAR              AS meal_plan,
+                dm.min_price_uah,
+                dm.prices_by_night,
+                MAX(hcp.last_observed_at)  AS observed_at
+            FROM day_min dm
+            JOIN hotel_calendar_prices hcp
+              ON hcp.hotel_id = :hotel_id
+             AND hcp.check_in = dm.check_in
+            GROUP BY dm.check_in, dm.min_price_uah, dm.prices_by_night
+            ORDER BY dm.check_in
             """
         )
         params = {

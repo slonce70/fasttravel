@@ -4,7 +4,7 @@ Each step exposes a small set of preset buttons + a «Назад» back-button.
 Callback data uses a short `step:value` shape so handlers can route
 without parsing free text.
 
-  nights:  n:7, n:10, n:14, n:any, n:back
+  nights:  n:7..n:14, n:any, n:back
   when:    w:soon, w:month, w:season, w:back
   budget:  b:30000, b:50000, b:80000, b:120000, b:any, b:back
   meal:    m:AI, m:HB, m:BB, m:RO, m:any, m:back
@@ -24,14 +24,16 @@ def nights_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="3-4 ноч", callback_data="n:3"),
-                InlineKeyboardButton(text="5-6 ноч", callback_data="n:5"),
                 InlineKeyboardButton(text="7 ноч ⭐", callback_data="n:7"),
+                InlineKeyboardButton(text="8 ноч", callback_data="n:8"),
+                InlineKeyboardButton(text="9 ноч", callback_data="n:9"),
+                InlineKeyboardButton(text="10 ноч", callback_data="n:10"),
             ],
             [
-                InlineKeyboardButton(text="10 ноч", callback_data="n:10"),
+                InlineKeyboardButton(text="11 ноч", callback_data="n:11"),
+                InlineKeyboardButton(text="12 ноч", callback_data="n:12"),
+                InlineKeyboardButton(text="13 ноч", callback_data="n:13"),
                 InlineKeyboardButton(text="14 ноч", callback_data="n:14"),
-                InlineKeyboardButton(text="21+ ноч", callback_data="n:21"),
             ],
             [InlineKeyboardButton(text="🤷 Будь-яка", callback_data="n:any")],
             _back_row("n"),
@@ -44,7 +46,11 @@ def when_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Найближчі тижні", callback_data="w:soon")],
             [InlineKeyboardButton(text="📅 Через місяць", callback_data="w:month")],
-            [InlineKeyboardButton(text="🌴 Через 2-3 місяці", callback_data="w:season")],
+            [
+                InlineKeyboardButton(
+                    text="🌴 Через 2-3 місяці", callback_data="w:season"
+                )
+            ],
             [InlineKeyboardButton(text="🤷 Без різниці", callback_data="w:any")],
             _back_row("w"),
         ]

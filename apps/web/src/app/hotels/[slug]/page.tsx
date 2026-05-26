@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { notFound } from 'next/navigation';
+import { notFound, permanentRedirect } from 'next/navigation';
 import { Container } from '@/components/layout/Container';
 import { HotelPhotoCarousel } from '@/components/HotelPhotoCarousel';
 import { TelegramCta } from '@/components/TelegramCta';
@@ -18,7 +18,7 @@ export async function generateMetadata({
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const hotel = await fetchHotel(slug);
+  const hotel = await fetchHotel(slug, { cache: 'no-store' });
   if (!hotel) return { title: 'Готель не знайдено' };
   return {
     title: `${hotel.name_uk} — календар цін на тур`,
@@ -31,27 +31,19 @@ export async function generateMetadata({
   };
 }
 
-export default async function HotelPage({
-  params,
-}: {
-  params: Promise<{ slug: string }>;
-}) {
+export default async function HotelPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const hotel = await fetchHotel(slug);
+  const hotel = await fetchHotel(slug, { cache: 'no-store' });
   if (!hotel) notFound();
+  if (slug !== hotel.canonical_slug) permanentRedirect(`/hotels/${hotel.canonical_slug}`);
 
   return (
     <Container className="space-y-6 py-6">
-      <HotelPhotoCarousel
-        photos={hotel.photos_jsonb}
-        alt={`Фото готелю ${hotel.name_uk}`}
-      />
+      <HotelPhotoCarousel photos={hotel.photos_jsonb} alt={`Фото готелю ${hotel.name_uk}`} />
 
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
-            {hotel.name_uk}
-          </h1>
+          <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">{hotel.name_uk}</h1>
           <Stars count={hotel.stars} />
         </div>
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
@@ -59,22 +51,16 @@ export default async function HotelPage({
             <Badge variant="success" size="md">
               {hotel.review_score.toFixed(1)} / 10
               {hotel.review_count > 0 && (
-                <span className="ml-1 font-normal opacity-75">
-                  · {hotel.review_count} відгуків
-                </span>
+                <span className="ml-1 font-normal opacity-75">· {hotel.review_count} відгуків</span>
               )}
             </Badge>
           )}
-          {hotel.name_en && (
-            <span className="text-xs text-slate-400">{hotel.name_en}</span>
-          )}
+          {hotel.name_en && <span className="text-xs text-slate-400">{hotel.name_en}</span>}
         </div>
       </header>
 
       {hotel.description_uk && (
-        <p className="max-w-3xl text-sm leading-relaxed text-slate-600">
-          {hotel.description_uk}
-        </p>
+        <p className="max-w-3xl text-sm leading-relaxed text-slate-600">{hotel.description_uk}</p>
       )}
 
       <HotelView hotel={hotel} />

@@ -111,7 +111,8 @@ def _render(row: Any, public_site_url: str) -> str:
     return (
         f"🔥 *Нова знижка за вашою підпискою*\n"
         f"\\({escape_markdown_v2(row.country_iso2)} · до {escape_markdown_v2(_format_uah(int(row.price_uah)))}\\)\n\n"
-        f"🏨 *{name}* {stars}".rstrip() + "\n"
+        f"🏨 *{name}* {stars}".rstrip()
+        + "\n"
         + (f"📍 {dest}\n" if dest else "")
         + f"📅 {check_in} · {nights} ноч\\. · {meal}\n"
         + f"💰 *{price}* · \\-{discount}% від звичайної {baseline}"
@@ -144,21 +145,22 @@ async def notify_subscribers() -> int:
         for row in rows:
             text_body = _render(row, settings.public_site_url)
             kb_rows: list[list[InlineKeyboardButton]] = []
-            primary_row: list[InlineKeyboardButton] = []
-            if row.hotel_slug:
-                primary_row.append(
-                    InlineKeyboardButton(
-                        text="📖 Готель",
-                        url=f"{settings.public_site_url}/hotels/{row.hotel_slug}"
-                        f"?utm_source=tg_bot&utm_medium=alert",
-                    )
+
+            primary_url = row.deep_link
+            if not primary_url and row.hotel_slug and settings.public_site_url:
+                primary_url = (
+                    f"{settings.public_site_url.rstrip('/')}/hotels/{row.hotel_slug}"
+                    "?utm_source=tg_bot&utm_medium=alert"
                 )
-            if row.deep_link:
-                primary_row.append(
-                    InlineKeyboardButton(text="🛒 Купити", url=row.deep_link)
+            if primary_url:
+                kb_rows.append(
+                    [
+                        InlineKeyboardButton(
+                            text="📖 Готель",
+                            url=primary_url,
+                        )
+                    ]
                 )
-            if primary_row:
-                kb_rows.append(primary_row)
             kb_rows.append(
                 [
                     InlineKeyboardButton(

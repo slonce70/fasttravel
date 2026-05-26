@@ -7,11 +7,17 @@ from __future__ import annotations
 
 import pytest
 
-from src.infra.metrics import JOB_DURATION, JOB_RUNS, track_job_metrics
+from src.infra.metrics import (
+    JOB_DURATION,
+    JOB_RUNS,
+    SCHEDULER_STARTED_AT,
+    start_metrics_server,
+    track_job_metrics,
+)
 
 
 def _counter_value(job: str, outcome: str) -> float:
-    return JOB_RUNS.labels(job=job, outcome=outcome)._value.get()  # noqa: SLF001
+    return JOB_RUNS.labels(scheduled_job=job, outcome=outcome)._value.get()  # noqa: SLF001
 
 
 def _hist_sum(job: str) -> float:
@@ -19,9 +25,29 @@ def _hist_sum(job: str) -> float:
     samples = JOB_DURATION.collect()
     for metric in samples:
         for s in metric.samples:
-            if s.name.endswith("_sum") and s.labels.get("job") == job:
+            if s.name.endswith("_sum") and s.labels.get("scheduled_job") == job:
                 return float(s.value)
     return 0.0
+
+
+def _gauge_value() -> float:
+    samples = SCHEDULER_STARTED_AT.collect()
+    for metric in samples:
+        for sample in metric.samples:
+            if sample.name == "fasttravel_scheduler_started_unixtime":
+                return float(sample.value)
+    return 0.0
+
+
+def test_start_metrics_server_sets_startup_timestamp(monkeypatch):
+    monkeypatch.setattr("src.infra.metrics.start_http_server", lambda *args, **kwargs: None)
+
+    before = _gauge_value()
+
+    start_metrics_server(0)
+
+    assert _gauge_value() >= before
+    assert _gauge_value() > 0
 
 
 @pytest.mark.asyncio

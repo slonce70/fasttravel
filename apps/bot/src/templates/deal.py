@@ -13,7 +13,6 @@ from typing import Any
 
 from shared.publishers.broadcast import escape_markdown_v2
 
-
 _MEAL_LABELS = {
     "AI": "Все включено",
     "UAI": "Ультра все включено",
@@ -53,8 +52,18 @@ def _format_date(value: str | date | datetime) -> str:
     else:
         d = value
     months = (
-        "січ.", "лют.", "бер.", "квіт.", "трав.", "черв.",
-        "лип.", "серп.", "вер.", "жовт.", "лист.", "груд.",
+        "січ.",
+        "лют.",
+        "бер.",
+        "квіт.",
+        "трав.",
+        "черв.",
+        "лип.",
+        "серп.",
+        "вер.",
+        "жовт.",
+        "лист.",
+        "груд.",
     )
     return f"{d.day} {months[d.month - 1]}"
 
@@ -76,6 +85,14 @@ def render_search_hit(hit: dict[str, Any]) -> str:
     if destination:
         lines.append(f"📍 {destination}")
     lines.append(f"💰 від *{escape_markdown_v2(min_price)}*")
+    if (
+        hit.get("nights_fallback")
+        and hit.get("requested_nights")
+        and hit.get("effective_nights")
+    ):
+        effective = escape_markdown_v2(str(hit["effective_nights"]))
+        requested = escape_markdown_v2(str(hit["requested_nights"]))
+        lines.append(f"⚠️ ціна за {effective} ноч\\.\\, не за {requested}")
     if review_score is not None and review_count > 0:
         score_txt = escape_markdown_v2(f"{float(review_score):.1f}")
         lines.append(f"⭐ {score_txt}/10 · {review_count} відгуків")
@@ -91,12 +108,15 @@ def render_deal(row: dict[str, Any]) -> str:
     destination = escape_markdown_v2(row.get("destination_name") or "")
     check_in = escape_markdown_v2(_format_date(row.get("check_in")))
     nights = row.get("nights") or 7
-    meal = escape_markdown_v2(_MEAL_LABELS.get(row.get("meal_plan") or "", row.get("meal_plan") or ""))
+    meal = escape_markdown_v2(
+        _MEAL_LABELS.get(row.get("meal_plan") or "", row.get("meal_plan") or "")
+    )
     price = escape_markdown_v2(_format_uah(row.get("price_uah")))
     baseline = escape_markdown_v2(_format_uah(row.get("baseline_p50")))
 
     return (
-        f"🔥 *\\-{discount}%*  *{name}* {stars}".rstrip() + "\n"
+        f"🔥 *\\-{discount}%*  *{name}* {stars}".rstrip()
+        + "\n"
         + (f"📍 {destination}\n" if destination else "")
         + f"📅 {check_in} · {nights} ноч\\. · {meal}\n"
         + f"💰 *{price}* \\(зазвичай {baseline}\\)"

@@ -1,11 +1,11 @@
 // @ts-check
+import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  // Cloudflare Pages doesn't run Next.js' built-in image optimization loop
-  // (Sharp). Set `unoptimized: true` and serve images directly; later we'll
-  // route through Cloudflare Image Resizing (Phase 2).
+  // The Cloudflare Workers runtime doesn't ship Sharp. Serve source images
+  // directly for now; route through Cloudflare Images in a later phase.
   images: {
     unoptimized: true,
     remotePatterns: [
@@ -14,9 +14,8 @@ const nextConfig = {
       { protocol: 'https', hostname: 'images.unsplash.com' },
     ],
   },
-  // We rely on the Cloudflare adapter to translate the build output. The
-  // adapter runs `npx @cloudflare/next-on-pages` post-build (see scripts).
-  // Edge-runtime is opted-in per route where needed.
 };
 
 export default nextConfig;
+
+initOpenNextCloudflareForDev();

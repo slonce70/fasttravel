@@ -10,9 +10,11 @@ Telegram broadcasts) can't block API requests.
 | -------------------- | ------------------------ | ---------------------------------------------------- |
 | `refresh_views`      | hourly at :05            | `REFRESH MATERIALIZED VIEW CONCURRENTLY` × 3         |
 | `detect_deals`       | hourly at :10            | Percentile-rule SQL insert into `deals` (ADR-006)   |
+| `notify_subscribers` | hourly at :15            | Personal Telegram alerts for matching filters        |
+| `snapshot_hot`       | hourly at :30            | Queue high-interest hotels for live refresh          |
 | `post_deals`         | every 15 min             | Send unposted deals to Telegram channel              |
-| `snapshot_stub`      | 06:00, 18:00             | Placeholder until `apps/ingest` lands (Week 3)       |
-| `cleanup_partitions` | 03:00                    | `partman.run_maintenance_proc()` + fallback DROP    |
+| `snapshot_farvater`  | 06:00, 18:00             | Real Farvater catalog/price snapshot                 |
+| `cleanup_partitions` | 04:30                    | `partman.run_maintenance_proc()` + fallback DROP    |
 
 ## Running
 
@@ -26,11 +28,8 @@ docker compose run --rm scheduler pytest   # tests
 ## Cross-package dependency
 
 `apps/scheduler/src/jobs/post_deals.py` imports the shared Telegram
-publisher from `apps/bot/src/publishers/broadcast.py`. The image
-vendors that file at build time — the Dockerfile uses build
-context `./apps` so a single `COPY bot/src/publishers/` pulls it in
-as `src.publishers` inside the container. The bot service is expected
-to import the same file in-tree once its `main.py` is fleshed out.
+publisher from `apps/shared/publishers/broadcast.py`. The image uses
+build context `./apps`, matching CI and security scanning.
 
 ## Cold-start mode
 
@@ -45,3 +44,6 @@ history.
 
 If `TELEGRAM_BOT_TOKEN` is empty (typical in dev), `post_deals` logs a
 skipped event and returns. The rest of the scheduler keeps running.
+In `ENVIRONMENT=prod`, `Settings.assert_prod_secrets()` refuses to boot
+with the default dev database password, and also requires Telegram token
+plus channel id while `DEALS_DAILY_CAP > 0`.

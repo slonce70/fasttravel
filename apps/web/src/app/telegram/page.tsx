@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Container } from '@/components/layout/Container';
 import { Card, CardBody } from '@/components/ui/Card';
+import { TELEGRAM_CHANNEL_URL } from '@/lib/site-config';
 
 export const metadata: Metadata = {
   title: 'Telegram-канал з гарячими знижками',
@@ -8,21 +9,17 @@ export const metadata: Metadata = {
     'Підпишіться на Telegram-канал FastTravel — до 30 знайдених аномально низьких цін на тури в Туреччину щодня.',
 };
 
-// TODO: винести у env-config; зараз заглушка.
-const TG_CHANNEL = 'https://t.me/fasttravel_ua';
+const TG_CHANNEL = TELEGRAM_CHANNEL_URL;
 const TG_QR_URL = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(TG_CHANNEL)}`;
 
 export default function TelegramPage() {
   return (
     <Container className="max-w-3xl space-y-8 py-10">
       <header className="text-center">
-        <h1 className="text-3xl font-bold text-slate-900">
-          Гарячі знижки в Telegram
-        </h1>
+        <h1 className="text-3xl font-bold text-slate-900">Гарячі знижки в Telegram</h1>
         <p className="mt-3 text-slate-600">
-          Бот FastTravel постить новини тільки тоді, коли алгоритм знайшов знижку
-          більше ніж -15% від середньої історичної ціни готелю. Без спаму, до 30
-          постів на добу.
+          Бот FastTravel постить новини тільки тоді, коли алгоритм знайшов знижку більше ніж -15%
+          від середньої історичної ціни готелю. Без спаму, до 30 постів на добу.
         </p>
       </header>
 
@@ -37,9 +34,7 @@ export default function TelegramPage() {
             className="rounded-lg border border-slate-200"
           />
           <div className="flex-1 space-y-4 text-center sm:text-left">
-            <p className="text-slate-700">
-              Скануйте QR-код або натисніть кнопку нижче.
-            </p>
+            <p className="text-slate-700">Скануйте QR-код або натисніть кнопку нижче.</p>
             <a
               href={TG_CHANNEL}
               target="_blank"

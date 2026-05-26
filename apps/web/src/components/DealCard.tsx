@@ -6,22 +6,16 @@ import { formatPrice, formatDateMedium, formatNights, formatMealPlan } from '@/l
 
 export interface DealCardProps {
   deal: Deal;
-  /**
-   * Legacy override (pre backend-fixes) — kept so existing callers compile.
-   * When the deal carries hotel_slug from DealOut we link to that directly.
-   */
-  hotelHref?: string;
-  hotelName?: string;
 }
 
-export function DealCard({ deal, hotelHref, hotelName }: DealCardProps) {
-  const heading = hotelName ?? deal.hotel_name_uk ?? `Готель #${deal.hotel_id}`;
-  const href = hotelHref ?? (deal.hotel_slug ? `/hotels/${deal.hotel_slug}` : undefined);
+export function DealCard({ deal }: DealCardProps) {
+  const heading = deal.hotel_name_uk;
+  const href = `/hotels/${deal.hotel_slug}`;
   const starsStr = deal.hotel_stars ? '★'.repeat(deal.hotel_stars) : '';
   return (
     <Card className="flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
       {deal.hotel_photo_url && (
-        <Link href={href ?? `/deals/${deal.id}`} aria-label={heading}>
+        <Link href={href} aria-label={heading}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={deal.hotel_photo_url}
@@ -36,18 +30,12 @@ export function DealCard({ deal, hotelHref, hotelName }: DealCardProps) {
           <Badge variant="accent" size="md">
             🔥 -{Math.round(deal.discount_pct)}%
           </Badge>
-          <span className="text-xs text-slate-400">
-            {formatDateMedium(deal.detected_at)}
-          </span>
+          <span className="text-xs text-slate-400">{formatDateMedium(deal.detected_at)}</span>
         </div>
         <div className="space-y-0.5">
-          {href ? (
-            <Link href={href} className="text-base font-semibold leading-tight hover:underline">
-              {heading}
-            </Link>
-          ) : (
-            <span className="text-base font-semibold leading-tight">{heading}</span>
-          )}
+          <Link href={href} className="text-base font-semibold leading-tight hover:underline">
+            {heading}
+          </Link>
           {(starsStr || deal.destination_name) && (
             <p className="text-xs text-slate-500">
               {starsStr && <span className="text-accent-500">{starsStr}</span>}
@@ -57,16 +45,16 @@ export function DealCard({ deal, hotelHref, hotelName }: DealCardProps) {
           )}
         </div>
         <ul className="space-y-1 text-sm text-slate-600">
-          <li>📅 заїзд {formatDateMedium(deal.check_in)} · {formatNights(deal.nights)}</li>
+          <li>
+            📅 заїзд {formatDateMedium(deal.check_in)} · {formatNights(deal.nights)}
+          </li>
           <li>🍽 {formatMealPlan(deal.meal_plan)}</li>
         </ul>
         <div className="mt-auto">
           <p className="text-xs text-slate-400 line-through">
             зазвичай {formatPrice(deal.baseline_p50)}
           </p>
-          <p className="text-2xl font-bold text-brand-800">
-            {formatPrice(deal.price_uah)}
-          </p>
+          <p className="text-2xl font-bold text-brand-800">{formatPrice(deal.price_uah)}</p>
         </div>
       </CardBody>
       <CardFooter className="flex items-center justify-between">

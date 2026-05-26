@@ -6,9 +6,8 @@
 #   3. Be cheap enough to run on every push (~5 min total wall clock).
 #
 # Notes for maintainers:
-#   - We do NOT depend on poetry.lock / pnpm-lock.yaml being committed yet.
-#     Once they exist, swap the cache strategy back to actions/setup-python
-#     `cache: poetry` and `pnpm install --frozen-lockfile`.
+#   - Python services use committed Poetry locks; the frontend uses the
+#     committed pnpm lockfile with a frozen install.
 #   - mypy runs with continue-on-error because pyproject has strict=true but
 #     the codebase isn't fully typed yet. Tighten this gate when ready.
 
@@ -67,7 +66,7 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
       DATABASE_URL_SYNC: postgresql+psycopg://test:test@localhost:5432/test
       REDIS_URL: redis://localhost:6379/0
-      ENVIRONMENT: test
+      ENVIRONMENT: dev
       LOG_LEVEL: WARNING
 
     defaults:
@@ -82,8 +81,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          # No `cache: poetry` here — poetry.lock isn't committed yet.
-          # We rely on the pip cache below instead.
 
       - name: Cache pip + poetry virtualenv
         uses: actions/cache@v4
@@ -92,7 +89,7 @@ jobs:
             ~/.cache/pip
             ~/.cache/pypoetry
             ~/.local/share/pypoetry
-          key: poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('apps/api/pyproject.toml') }}
+          key: poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('apps/api/pyproject.toml', 'apps/api/poetry.lock') }}
           restore-keys: |
             poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
 
@@ -155,7 +152,7 @@ jobs:
             ~/.cache/pip
             ~/.cache/pypoetry
             ~/.local/share/pypoetry
-          key: poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('apps/scheduler/pyproject.toml') }}
+          key: poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('apps/scheduler/pyproject.toml', 'apps/scheduler/poetry.lock') }}
           restore-keys: |
             poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
 
@@ -166,10 +163,10 @@ jobs:
         run: poetry install --no-root --with dev
 
       - name: Lint (ruff check)
-        run: poetry run ruff check src/
+        run: poetry run ruff check src/ tests/
 
       - name: Format check (ruff format)
-        run: poetry run ruff format --check src/
+        run: poetry run ruff format --check src/ tests/
 
       - name: Type check (mypy)
         continue-on-error: true
@@ -182,6 +179,54 @@ jobs:
           else
             echo "No tests/ directory yet — skipping pytest. Remove this guard once tests are added."
           fi
+
+  # ---------------------------------------------------------------------------
+  # Ingest library: lint + test normalizers/dedup/pipeline contracts
+  # ---------------------------------------------------------------------------
+  ingest-lint-test:
+    name: ingest lint + test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/ingest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip + poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/pypoetry
+            ~/.local/share/pypoetry
+          key: poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('apps/ingest/pyproject.toml', 'apps/ingest/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
+
+      - name: Install Poetry
+        run: pip install "poetry==${{ env.POETRY_VERSION }}"
+
+      - name: Install dependencies
+        run: poetry install --no-root --with dev
+
+      - name: Lint (ruff check)
+        run: poetry run ruff check src/ tests/
+
+      - name: Format check (ruff format)
+        run: poetry run ruff format --check src/ tests/
+
+      - name: Type check (mypy)
+        continue-on-error: true
+        run: poetry run mypy src/ || true
+
+      - name: Run tests
+        run: poetry run pytest
 
   # ---------------------------------------------------------------------------
   # Bot: lint only (no pyproject.toml / no tests yet)
@@ -210,10 +255,10 @@ jobs:
                        "sqlalchemy[asyncio]==2.0.36" asyncpg==0.30.0
 
       - name: Lint (ruff check)
-        run: ruff check apps/bot/src
+        run: ruff check apps/bot/src apps/bot/tests
 
       - name: Format check (ruff format)
-        run: ruff format --check apps/bot/src
+        run: ruff format --check apps/bot/src apps/bot/tests
 
       - name: Run tests
         env:
@@ -246,20 +291,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          # No `cache: pnpm` here — pnpm-lock.yaml isn't committed yet.
-          # Switch to it once the lockfile is in place.
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.local/share/pnpm/store
-          key: pnpm-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('apps/web/package.json') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-node${{ env.NODE_VERSION }}-
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
 
       - name: Install dependencies
-        # Once pnpm-lock.yaml is committed, switch to --frozen-lockfile.
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Security audit (production dependencies)
+        run: pnpm audit --prod --audit-level moderate
 
       - name: Lint (eslint via next lint)
         run: pnpm lint
@@ -267,8 +306,14 @@ jobs:
       - name: Typecheck (tsc --noEmit)
         run: pnpm typecheck
 
+      - name: Unit tests (vitest)
+        run: pnpm test
+
       - name: Build (next build)
         run: pnpm build
+
+      - name: Build Cloudflare Workers output
+        run: pnpm cf:build
 
       - name: Upload .next build artifacts
         if: success()
@@ -280,6 +325,108 @@ jobs:
             !apps/web/.next/cache
           retention-days: 3
           if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Browser smoke: real API + Postgres + Next.js flow, seeded in an ephemeral DB.
+  # ---------------------------------------------------------------------------
+  browser-smoke-local:
+    name: browser smoke (local API)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: apps/web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm test:e2e:install
+
+      - name: Prepare compose env
+        working-directory: .
+        run: cp .env.example .env
+
+      - name: Start database services
+        working-directory: .
+        run: docker compose up -d postgres redis
+
+      - name: Build API image with current scripts
+        working-directory: .
+        run: docker compose build api
+
+      - name: Run migrations
+        working-directory: .
+        run: docker compose run --rm api alembic upgrade head
+
+      - name: Seed browser-smoke data
+        working-directory: .
+        env:
+          FASTTRAVEL_ALLOW_E2E_SEED: "1"
+        run: docker compose run --rm api python -m scripts.seed_e2e
+
+      - name: Start API
+        working-directory: .
+        run: docker compose up -d api
+
+      - name: Wait for API health
+        working-directory: .
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health; then
+              exit 0
+            fi
+            echo "API not healthy yet, retry $i/30"
+            sleep 2
+          done
+          docker compose logs --no-color --tail=160 api
+          exit 1
+
+      - name: Run browser smoke
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: https://t.me/testtyhhh
+        run: pnpm test:e2e
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-browser-smoke-artifacts
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Dump compose logs
+        if: failure()
+        working-directory: .
+        run: docker compose logs --no-color --tail=200
+
+      - name: Stop compose services
+        if: always()
+        working-directory: .
+        run: docker compose down -v --remove-orphans
 
   # ---------------------------------------------------------------------------
   # Docker smoke build: validate compose + build every image (no push).
@@ -301,6 +448,16 @@ jobs:
 
       - name: Validate docker-compose config
         run: docker compose config --quiet
+
+      - name: Validate docker-compose.test.yml overlay
+        # The test overlay flips INSTALL_DEV=true; we just validate the
+        # overlay merges cleanly with the base. Running `pytest` against
+        # this overlay happens via the language-specific jobs above, which
+        # are faster than building images.
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet
+
+      - name: Production preflight
+        run: infra/scripts/production-preflight.sh
 
       - name: Build images
         # We deliberately do NOT push. Just confirms every Dockerfile builds.

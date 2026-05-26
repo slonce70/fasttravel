@@ -4,8 +4,10 @@
 #   1. SSH into the production VPS.
 #   2. Dump the fasttravel database via the running postgres container.
 #   3. gzip the dump locally on the VPS.
-#   4. Copy it down to the runner, upload to R2 (S3-compatible).
-#   5. Retain the most recent 30 dumps; delete older.
+#   4. Copy it down to the runner.
+#   5. Restore it into a clean temporary Postgres container.
+#   6. Upload to R2 (S3-compatible).
+#   7. Retain the most recent 30 dumps; delete older.
 #
 # Required GitHub secrets (Settings → Secrets and variables → Actions):
 #   BACKUP_SSH_HOST          — IP or hostname of the VPS (e.g. 1.2.3.4)
@@ -17,9 +19,9 @@
 #   R2_SECRET_ACCESS_KEY     — R2 API token (S3 secret)
 #   R2_BUCKET                — Bucket name (e.g. fasttravel-backups)
 #
-# Graceful skip: while we're in local-first phase (no VPS yet), the workflow
-# checks for BACKUP_SSH_HOST and no-ops if it's empty. This keeps scheduled
-# runs from spamming red Xs in the Actions tab.
+# Graceful skip: while we're in local-first phase (no VPS/R2 yet), the workflow
+# checks the full backup secret contract and no-ops if any required value is
+# empty. This keeps scheduled runs from spamming red Xs in the Actions tab.
 
 name: Daily Backup
 
@@ -42,6 +44,7 @@ jobs:
     env:
       BACKUP_SSH_HOST: ${{ secrets.BACKUP_SSH_HOST }}
       BACKUP_SSH_USER: ${{ secrets.BACKUP_SSH_USER }}
+      BACKUP_SSH_KEY: ${{ secrets.BACKUP_SSH_KEY }}
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -51,19 +54,33 @@ jobs:
       - name: Gate — skip when VPS / R2 secrets missing (local-first phase)
         id: gate
         run: |
-          if [ -z "${BACKUP_SSH_HOST}" ] || [ -z "${R2_ACCOUNT_ID}" ] || [ -z "${R2_BUCKET}" ]; then
-            echo "Skipping: backup secrets not configured (likely local-first phase)."
+          missing=()
+          for name in \
+            BACKUP_SSH_HOST BACKUP_SSH_USER BACKUP_SSH_KEY R2_ACCOUNT_ID \
+            R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET
+          do
+            if [ -z "${!name}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "Skipping: backup secret(s) not configured: ${missing[*]}."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Checkout
+        if: steps.gate.outputs.skip != 'true'
+        uses: actions/checkout@v4
 
       - name: Configure SSH
         if: steps.gate.outputs.skip != 'true'
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "${{ secrets.BACKUP_SSH_KEY }}" > ~/.ssh/id_backup
+          printf '%s\n' "${BACKUP_SSH_KEY}" > ~/.ssh/id_backup
           chmod 600 ~/.ssh/id_backup
           if [ -n "${{ secrets.BACKUP_SSH_KNOWN_HOSTS }}" ]; then
             echo "${{ secrets.BACKUP_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
@@ -104,8 +121,8 @@ jobs:
           echo "remote_path=${REMOTE_PATH}" >> "$GITHUB_OUTPUT"
 
           ssh -i ~/.ssh/id_backup -o BatchMode=yes "${BACKUP_SSH_USER}@${BACKUP_SSH_HOST}" \
-            "cd /opt/fasttravel && docker compose exec -T postgres \
-              pg_dump -U fasttravel -d fasttravel --no-owner --clean --if-exists \
+            "cd /opt/fasttravel && docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T postgres \
+              sh -c 'pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" --no-owner --clean --if-exists' \
               | gzip -9 > ${REMOTE_PATH} && ls -lh ${REMOTE_PATH}"
 
       - name: Pull dump to runner
@@ -115,6 +132,20 @@ jobs:
           scp -i ~/.ssh/id_backup -o BatchMode=yes \
             "${BACKUP_SSH_USER}@${BACKUP_SSH_HOST}:${{ steps.dump.outputs.remote_path }}" \
             ./backups/
+
+      - name: Validate dump archive
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          test -s "./backups/$(basename '${{ steps.dump.outputs.remote_path }}')"
+          gzip -t "./backups/$(basename '${{ steps.dump.outputs.remote_path }}')"
+
+      - name: Restore drill
+        if: steps.gate.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          ./infra/scripts/backup-restore-drill.sh \
+            "./backups/$(basename '${{ steps.dump.outputs.remote_path }}')"
 
       - name: Upload to R2
         if: steps.gate.outputs.skip != 'true'

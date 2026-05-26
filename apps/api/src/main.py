@@ -14,8 +14,9 @@ Middleware:
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import cast
 
 import structlog
 from fastapi import FastAPI, Request
@@ -37,6 +38,7 @@ from src.routers import deals as deals_router
 from src.routers import destinations as destinations_router
 from src.routers import health as health_router
 from src.routers import hotels as hotels_router
+from src.routers import promotions as promotions_router
 from src.routers import search as search_router
 from src.routers import seo as seo_router
 
@@ -48,7 +50,11 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
 
     HEADER = "x-request-id"
 
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         rid = request.headers.get(self.HEADER) or uuid.uuid4().hex
         # Clear ANY contextvars left over from a previous request on this
         # thread, then bind the new ones.
@@ -104,7 +110,10 @@ def create_app() -> FastAPI:
     # and install the middleware that decrements the rate-limit bucket before
     # route handlers run. Routers can then use `@limiter.limit(...)`.
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_exception_handler(
+        RateLimitExceeded,
+        cast(Callable[[Request, Exception], Response], _rate_limit_exceeded_handler),
+    )
     app.add_middleware(SlowAPIMiddleware)
 
     # Order matters: CORS first so it sees the original request, then
@@ -124,6 +133,7 @@ def create_app() -> FastAPI:
     app.include_router(hotels_router.router)
     app.include_router(search_router.router)
     app.include_router(deals_router.router)
+    app.include_router(promotions_router.router)
     app.include_router(destinations_router.router)
     app.include_router(seo_router.router)
 

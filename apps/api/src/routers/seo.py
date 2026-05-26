@@ -1,6 +1,6 @@
 """SEO endpoints served by the API.
 
-The frontend lives on Cloudflare Pages, but nginx routes `/robots.txt` and
+The frontend lives on Cloudflare Workers, but nginx routes `/robots.txt` and
 `/sitemap.xml` to the API so these files can reflect the live hotel catalog.
 """
 

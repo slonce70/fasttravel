@@ -8,12 +8,12 @@ import { Button } from '@/components/ui/Button';
 
 const PAGE_SIZE = 50;
 
-export function DealsFeed({ initial }: { initial: PaginatedDeals }) {
+export function DealsFeed({ initial, country }: { initial: PaginatedDeals; country?: string }) {
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
-    queryKey: ['deals', 'feed'],
+    queryKey: ['deals', 'feed', country ?? null],
     initialPageParam: 0,
     queryFn: ({ pageParam, signal }) =>
-      fetchDeals({ limit: PAGE_SIZE, offset: pageParam }, { signal }),
+      fetchDeals({ limit: PAGE_SIZE, offset: pageParam, country }, { signal }),
     getNextPageParam: (last, all) => {
       const loaded = all.reduce((sum, p) => sum + p.items.length, 0);
       return loaded < last.total ? loaded : undefined;

@@ -13,7 +13,13 @@
 
   body {
     @apply bg-slate-50 text-slate-900 antialiased;
-    font-family: var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family:
+      var(--font-inter),
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      sans-serif;
   }
 
   /* Tighter focus ring for keyboard nav across the app. */
@@ -37,13 +43,13 @@
 /* react-day-picker base reset — we override most styles via DayButton and
    classNames overrides, but keep the layout primitives. */
 .rdp-root {
-  --rdp-cell-size: 56px;
+  --rdp-cell-size: 44px;
   --rdp-accent-color: theme('colors.brand.600');
   --rdp-background-color: theme('colors.brand.50');
 }
 
 .rdp-month {
-  @apply rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200;
+  @apply rounded-xl bg-white p-2 shadow-sm ring-1 ring-slate-200 sm:p-3;
 }
 
 .rdp-month_caption {
@@ -52,4 +58,10 @@
 
 .rdp-weekdays {
   @apply mb-2 text-xs font-medium uppercase tracking-wide text-slate-400;
+}
+
+@screen sm {
+  .rdp-root {
+    --rdp-cell-size: 56px;
+  }
 }

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { Container } from '@/components/layout/Container';
 import { DealsFeed } from './DealsFeed';
-import { fetchDeals } from '@/lib/api-client';
+import { fetchDeals, userMessageForApiError } from '@/lib/api-client';
 
 export const metadata: Metadata = {
   title: 'Гарячі знижки на тури',
@@ -11,13 +11,24 @@ export const metadata: Metadata = {
 // SSR з 5-хв ревалідацією — баланс свіжість/CDN-кеш.
 export const revalidate = 300;
 
-export default async function DealsPage() {
+type DealsSearchParams = {
+  country?: string;
+  [key: string]: string | undefined;
+};
+
+export default async function DealsPage({
+  searchParams,
+}: {
+  searchParams: Promise<DealsSearchParams>;
+}) {
+  const sp = await searchParams;
+  const country = sp.country?.toUpperCase();
   let initial;
   let error: string | null = null;
   try {
-    initial = await fetchDeals({ limit: 50 }, { revalidate: 300 });
+    initial = await fetchDeals({ limit: 50, country }, { revalidate: 300 });
   } catch (e) {
-    error = e instanceof Error ? e.message : 'Невідома помилка';
+    error = userMessageForApiError(e);
     initial = { items: [], total: 0, limit: 50, offset: 0 };
   }
 
@@ -36,7 +47,7 @@ export default async function DealsPage() {
           Не вдалося завантажити дані: {error}
         </div>
       ) : (
-        <DealsFeed initial={initial} />
+        <DealsFeed initial={initial} country={country} />
       )}
     </Container>
   );

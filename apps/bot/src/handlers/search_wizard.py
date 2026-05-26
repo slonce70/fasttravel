@@ -49,6 +49,43 @@ _PAGE_KEY = "page"
 _PAGE_SIZE = 5
 
 
+def _hotel_site_url(slug: str | None, medium: str = "wizard") -> str | None:
+    if not slug:
+        return None
+    settings = get_settings()
+    if not settings.public_site_url:
+        return None
+    return (
+        f"{settings.public_site_url.rstrip('/')}/hotels/{slug}"
+        f"?utm_source=tg_bot&utm_medium={medium}"
+    )
+
+
+def _result_link_rows(items: list[dict[str, Any]]) -> list[list[InlineKeyboardButton]]:
+    rows: list[list[InlineKeyboardButton]] = []
+    for h in items:
+        buttons: list[InlineKeyboardButton] = []
+        site_url = _hotel_site_url(h.get("canonical_slug"))
+        if site_url:
+            buttons.append(
+                InlineKeyboardButton(
+                    text=f"📖 {h.get('name_uk', 'Готель')[:24]}",
+                    url=site_url,
+                )
+            )
+        deep_link = h.get("deep_link")
+        if deep_link:
+            buttons.append(
+                InlineKeyboardButton(
+                    text=f"🛒 {h.get('name_uk', 'Тур')[:24]}",
+                    url=deep_link,
+                )
+            )
+        if buttons:
+            rows.append(buttons)
+    return rows
+
+
 async def start_wizard(message: Message, state: FSMContext) -> None:
     await state.clear()
     try:
@@ -267,7 +304,10 @@ async def _show_results(
             "Нічого не знайдено за цими фільтрами\\. Спробуйте інші параметри\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=results_actions_kb(
-                has_prev=False, has_next=False, page=1, total_pages=1,
+                has_prev=False,
+                has_next=False,
+                page=1,
+                total_pages=1,
                 subscription_set=False,
             ),
         )
@@ -286,19 +326,7 @@ async def _show_results(
     body = "\n\n— · — · —\n\n".join(render_search_hit(h) for h in chunk)
     text = f"{header}\n\n{body}"
 
-    settings = get_settings()
-    detail_rows: list[list[InlineKeyboardButton]] = []
-    for h in chunk:
-        slug = h.get("canonical_slug")
-        if slug:
-            detail_rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"📖 {h.get('name_uk', 'Готель')[:30]}",
-                        url=f"{settings.public_site_url}/hotels/{slug}?utm_source=tg_bot&utm_medium=wizard",
-                    )
-                ]
-            )
+    detail_rows = _result_link_rows(chunk)
 
     nav_kb = results_actions_kb(
         has_prev=page > 1,
@@ -334,13 +362,17 @@ async def _show_results(
 @router.callback_query(F.data == "res:prev", SearchState.viewing_results)
 async def cb_prev(query: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
-    await _show_results(query, state, edit=True, page_override=data.get(_PAGE_KEY, 1) - 1)
+    await _show_results(
+        query, state, edit=True, page_override=data.get(_PAGE_KEY, 1) - 1
+    )
 
 
 @router.callback_query(F.data == "res:next", SearchState.viewing_results)
 async def cb_next(query: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
-    await _show_results(query, state, edit=True, page_override=data.get(_PAGE_KEY, 1) + 1)
+    await _show_results(
+        query, state, edit=True, page_override=data.get(_PAGE_KEY, 1) + 1
+    )
 
 
 @router.callback_query(F.data == "res:restart", SearchState.viewing_results)
@@ -384,7 +416,14 @@ async def _go_back_to_country(query: CallbackQuery, state: FSMContext) -> None:
 @router.message(SearchState.choosing_meal)
 @router.message(SearchState.choosing_stars)
 async def text_during_wizard(message: Message, state: FSMContext) -> None:
-    from src.keyboards.main_menu import DEALS, DESTINATIONS, HELP, PROFILE, SEARCH, SUBSCRIBE
+    from src.keyboards.main_menu import (
+        DEALS,
+        DESTINATIONS,
+        HELP,
+        PROFILE,
+        SEARCH,
+        SUBSCRIBE,
+    )
 
     if message.text in {SEARCH, DEALS, DESTINATIONS, SUBSCRIBE, PROFILE, HELP}:
         await state.clear()

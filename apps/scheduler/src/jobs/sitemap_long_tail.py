@@ -27,15 +27,20 @@ see 429s or 503s drop CONCURRENCY first, DELAY second.
 from __future__ import annotations
 
 import asyncio
+import os
+import socket
 import sys
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
+import httpx
 from sqlalchemy import text
 
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
 from src.jobs.snapshot_farvater import (
     CATALOG_COUNTRIES,
+    CHECK_IN_OFFSETS_DAYS,
     _country_dest_id,
     _ensure_operator,
     _fetch_calendar,
@@ -49,33 +54,61 @@ from src.jobs.snapshot_farvater import (
     _upsert_mapping,
 )
 
+# Transient errors worth retrying. Captures DNS failures (the observed live
+# incident — gaierror inside httpx.ConnectError), connection resets, and
+# upstream timeouts. Excludes HTTP 4xx/5xx — those are application-level
+# and a retry won't help.
+_TRANSIENT_ERRORS: tuple[type[BaseException], ...] = (
+    httpx.ConnectError,
+    httpx.ConnectTimeout,
+    httpx.ReadTimeout,
+    httpx.NetworkError,
+    socket.gaierror,
+    OSError,
+)
+
 log = get_logger(__name__)
 
 # Aggressive operator-driven tuning. See module docstring.
-CONCURRENCY = 12
-PER_REQUEST_DELAY_S = 0.05
-# We probe a *subset* of CHECK_IN_OFFSETS_DAYS during the long-tail pass
-# to keep the per-hotel cost down. Hotels we want full coverage on get
-# revisited by the regular snapshot_farvater the next morning.
-PROBE_OFFSETS = [14, 30, 60]
+CONCURRENCY = int(os.environ.get("FT_SITEMAP_INGEST_CONCURRENCY", "12"))
+PER_REQUEST_DELAY_S = float(os.environ.get("FT_SITEMAP_INGEST_DELAY_S", "0.05"))
+# One broad price-calendar request per long-tail hotel. This mirrors
+# snapshot_farvater's current one-request product window.
+PROBE_OFFSETS = CHECK_IN_OFFSETS_DAYS
 SCRAPE_SOURCE = "catalog_sitemap"
+
+_ALREADY_INGESTED_SQL = text(
+    """SELECT canonical_slug
+       FROM hotels
+       WHERE canonical_slug = ANY(:s)
+         AND last_priced_at IS NOT NULL"""
+)
 
 
 async def _already_ingested(slugs: list[str]) -> set[str]:
     if not slugs:
         return set()
     async with async_session_factory() as db:
-        rows = (
-            await db.execute(
-                text("SELECT canonical_slug FROM hotels WHERE canonical_slug = ANY(:s)"),
-                {"s": slugs},
-            )
-        ).all()
+        rows = (await db.execute(_ALREADY_INGESTED_SQL, {"s": slugs})).all()
     return {r.canonical_slug for r in rows}
 
 
+async def _mark_price_probe_complete(hotel_db_id: int, has_active_prices: bool) -> None:
+    async with async_session_factory() as db:
+        await db.execute(
+            text(
+                """UPDATE hotels
+                   SET last_priced_at = NOW(),
+                       has_active_prices = :has_active_prices
+                   WHERE id = :hotel_id"""
+            ),
+            {"hotel_id": hotel_db_id, "has_active_prices": has_active_prices},
+        )
+        await db.commit()
+
+
 async def _process_hotel(
-    client,
+    client: Any,
     url_path: str,
     iso2: str,
     operator_id: int,
@@ -91,13 +124,11 @@ async def _process_hotel(
 
         # Persist meta first — even if calendar probe fails the catalog row stays.
         async with async_session_factory() as db:
-            hotel_db_id = await _upsert_hotel(db, meta, dest_id)
+            hotel_db_id = await _upsert_hotel(db, meta, dest_id, operator_id)
             await _upsert_mapping(db, hotel_db_id, operator_id, meta)
             await db.commit()
 
-        # Probe a small set of check-in dates. PROBE_OFFSETS skips offsets
-        # the daily snapshot already covers densely (3, 45, 75) so we
-        # broaden coverage without exact duplication.
+        # Probe the full supported check-in window for this hotel.
         all_prices = []
         seen_keys: set[str] = set()
         for offset in PROBE_OFFSETS:
@@ -111,7 +142,9 @@ async def _process_hotel(
 
     if all_prices:
         async with async_session_factory() as db:
-            inserted = await _insert_prices(db, hotel_db_id, operator_id, meta, all_prices)
+            inserted = await _insert_prices(
+                db, hotel_db_id, operator_id, meta, all_prices, country_iso2=iso2
+            )
             if inserted > 0:
                 await _mark_priced(db, hotel_db_id)
             await db.commit()
@@ -125,6 +158,7 @@ async def _process_hotel(
         return (1, inserted)
 
     log.info("sitemap.hotel.no_inventory", hotel=meta.name[:50], hotel_key=meta.hotel_id)
+    await _mark_price_probe_complete(hotel_db_id, has_active_prices=False)
     return (1, 0)
 
 
@@ -234,6 +268,114 @@ async def main(cap: int | None) -> int:
         elapsed_s=int(elapsed),
     )
     return seen_hotels
+
+
+async def _record_sitemap_run(
+    status: str,
+    rows: int = 0,
+    error: str = "",
+    started_at: datetime | None = None,
+    source: str = "sitemap_long_tail",
+) -> None:
+    """Record a sitemap pass outcome to scrape_runs.
+
+    Independent of `_record_run` in snapshot_farvater because the sitemap
+    ingest can fail BEFORE it ever resolves an operator_id (e.g. DNS error
+    on the very first request) — so we record with `operator_id IS NULL`
+    via a direct INSERT that omits the column.
+    """
+    try:
+        async with async_session_factory() as db:
+            await db.execute(
+                text(
+                    """INSERT INTO scrape_runs
+                          (started_at, finished_at, source, status,
+                           rows_inserted, error_text)
+                        VALUES (:s, NOW(), :src, :st, :n, :e)"""
+                ),
+                {
+                    "s": started_at or datetime.now(UTC),
+                    "src": source,
+                    "st": status,
+                    "n": rows,
+                    "e": error[:500],
+                },
+            )
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        # Recording to scrape_runs must NEVER crash the scheduler. The
+        # DB might itself be the reason this run failed.
+        log.exception("sitemap_long_tail.scrape_run_record_failed", error=str(exc))
+
+
+async def sitemap_long_tail_ingest_resilient(
+    cap: int | None = None,
+    max_attempts: int = 5,
+    base_delay_s: float = 2.0,
+    max_delay_s: float = 60.0,
+) -> int:
+    """Resilient wrapper around `sitemap_long_tail_ingest`.
+
+    Retries on transient network errors (DNS, connect, timeout) with
+    exponential backoff. On final failure, records the failure in
+    `scrape_runs` and returns 0 — does NOT raise, so a failed run cannot
+    crash APScheduler or take down `main()`.
+
+    Used by both the startup one-shot resume and the daily fallback
+    CronTrigger so the system self-heals from transient infra issues
+    rather than waiting a week for the next Sunday tick.
+    """
+    started_at = datetime.now(UTC)
+    last_exc: BaseException | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = await sitemap_long_tail_ingest(cap)
+        except _TRANSIENT_ERRORS as exc:
+            last_exc = exc
+            delay = min(base_delay_s * (2 ** (attempt - 1)), max_delay_s)
+            log.warning(
+                "sitemap_long_tail.transient_error",
+                attempt=attempt,
+                max_attempts=max_attempts,
+                delay_s=delay,
+                error=str(exc)[:200],
+            )
+            if attempt < max_attempts:
+                await asyncio.sleep(delay)
+        except Exception as exc:  # noqa: BLE001 — record and swallow
+            log.exception("sitemap_long_tail.unexpected_error", error=str(exc))
+            # Outer guard: _record_sitemap_run has its own try/except but
+            # if a test or runtime-replaced impl raises, we still must NOT
+            # let it escape — the scheduler depends on this contract.
+            try:
+                await _record_sitemap_run("failed", 0, f"unexpected: {exc!s}", started_at)
+            except Exception:  # noqa: BLE001
+                log.exception("sitemap_long_tail.outer_record_failed")
+            return 0
+        else:
+            log.info(
+                "sitemap_long_tail.success",
+                attempt=attempt,
+                hotels_processed=result,
+            )
+            return result
+
+    log.error(
+        "sitemap_long_tail.exhausted_retries",
+        attempts=max_attempts,
+        last_error=str(last_exc)[:200],
+    )
+    try:
+        await _record_sitemap_run(
+            "failed",
+            0,
+            f"exhausted_retries after {max_attempts}: {last_exc!s}",
+            started_at,
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("sitemap_long_tail.outer_record_failed")
+    return 0
 
 
 if __name__ == "__main__":
