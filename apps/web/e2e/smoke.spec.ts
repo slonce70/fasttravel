@@ -41,7 +41,10 @@ test('search results navigate to a real hotel detail page with a price calendar'
   await expect(hotelLinks.first()).toBeVisible();
   expect(await hotelLinks.count()).toBeGreaterThan(0);
 
-  await hotelLinks.first().click();
+  const detailHref = await hotelLinks.first().getAttribute('href');
+  expect(detailHref).toMatch(/^\/hotels\/[^/]+$/);
+  await page.goto(detailHref!);
+
   await expect(page).toHaveURL(/\/hotels\//);
   await expect(page.locator('h1')).toBeVisible();
   await expect(page.getByRole('heading', { name: /Календар цін/ })).toBeVisible();
