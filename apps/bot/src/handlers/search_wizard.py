@@ -25,6 +25,7 @@ from aiogram.types import (
     Message,
 )
 
+from shared.text_uk import plural_uk
 from src.config import get_settings
 from src.infra.api_client import ApiError, get_destinations, search_hotels
 from src.infra.db import add_subscription, ensure_subscriber
@@ -48,6 +49,11 @@ log = get_logger(__name__)
 _RESULTS_KEY = "results"
 _PAGE_KEY = "page"
 _PAGE_SIZE = 5
+
+
+def _format_results_header(*, total: int, page: int, total_pages: int) -> str:
+    tour_word = plural_uk(total, "тур", "тури", "турів")
+    return f"✅ Знайдено *{total}* {tour_word} · сторінка *{page}/{total_pages}*"
 
 
 def _hotel_site_url(slug: str | None, medium: str = "wizard") -> str | None:
@@ -323,7 +329,7 @@ async def _show_results(
     start = (page - 1) * _PAGE_SIZE
     chunk = items[start : start + _PAGE_SIZE]
 
-    header = f"✅ Знайдено *{total}* турів · сторінка *{page}/{total_pages}*"
+    header = _format_results_header(total=int(total), page=int(page), total_pages=int(total_pages))
     body = "\n\n— · — · —\n\n".join(render_search_hit(h) for h in chunk)
     text = f"{header}\n\n{body}"
 

@@ -8,6 +8,18 @@ import pytest
 from src.handlers import search_wizard
 
 
+def test_results_header_pluralizes_tours() -> None:
+    assert search_wizard._format_results_header(total=1, page=1, total_pages=1) == (
+        "✅ Знайдено *1* тур · сторінка *1/1*"
+    )
+    assert search_wizard._format_results_header(total=2, page=1, total_pages=1) == (
+        "✅ Знайдено *2* тури · сторінка *1/1*"
+    )
+    assert search_wizard._format_results_header(total=5, page=1, total_pages=1) == (
+        "✅ Знайдено *5* турів · сторінка *1/1*"
+    )
+
+
 class FakeState:
     def __init__(self, data: dict) -> None:
         self.data = data

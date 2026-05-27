@@ -13,6 +13,7 @@ from typing import Any
 
 from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import escape_markdown_v2
+from shared.text_uk import format_nights, format_reviews
 
 _MEAL_LABELS = {
     "AI": "Все включено",
@@ -39,6 +40,24 @@ def _format_uah(price: int | float | None) -> str:
 
 def _format_pct(pct: float | int | None) -> str:
     return f"{int(round(float(pct)))}" if pct is not None else "0"
+
+
+def _format_hotel_context(row: dict[str, Any]) -> str:
+    lines: list[str] = []
+    review_score = row.get("review_score")
+    review_count = int(row.get("review_count") or 0)
+    if review_score is not None and review_count > 0:
+        lines.append(f"⭐ {float(review_score):.1f}/10 · {format_reviews(review_count)}")
+
+    description = " ".join(str(row.get("description_uk") or "").split())
+    if description:
+        if len(description) > 140:
+            description = description[:137].rstrip() + "..."
+        lines.append(f"ℹ️ {description}")
+
+    if not lines:
+        return ""
+    return "".join(f"{escape_markdown_v2(line)}\n" for line in lines)
 
 
 def _format_date(value: str | date | datetime) -> str:
@@ -87,12 +106,12 @@ def render_search_hit(hit: dict[str, Any]) -> str:
         lines.append(f"📍 {destination}")
     lines.append(f"💰 від *{escape_markdown_v2(min_price)}*")
     if hit.get("nights_fallback") and hit.get("requested_nights") and hit.get("effective_nights"):
-        effective = escape_markdown_v2(str(hit["effective_nights"]))
-        requested = escape_markdown_v2(str(hit["requested_nights"]))
-        lines.append(f"⚠️ ціна за {effective} ноч\\.\\, не за {requested}")
+        effective = escape_markdown_v2(format_nights(int(hit["effective_nights"])))
+        requested = escape_markdown_v2(format_nights(int(hit["requested_nights"])))
+        lines.append(f"⚠️ ціна за {effective}\\, не за {requested}")
     if review_score is not None and review_count > 0:
         score_txt = escape_markdown_v2(f"{float(review_score):.1f}")
-        lines.append(f"⭐ {score_txt}/10 · {review_count} відгуків")
+        lines.append(f"⭐ {score_txt}/10 · {escape_markdown_v2(format_reviews(int(review_count)))}")
     return "\n".join(lines)
 
 
@@ -104,7 +123,7 @@ def render_deal(row: dict[str, Any]) -> str:
         🔥 *-37% · економія 12 500 ₴*
         🏨 *Hotel Name* ⭐⭐⭐⭐
         📍 Antalya
-        📅 14 черв. · 7 ноч. · Все включено
+        📅 14 черв. · 7 ночей · Все включено
         💰 *21 000 ₴* ~33 500 ₴~
         _📉 Аномально дешева дата у цьому готелі_
 
@@ -144,7 +163,8 @@ def render_deal(row: dict[str, Any]) -> str:
         + f"🏨 *{name}* {stars}".rstrip()
         + "\n"
         + (f"📍 {destination}\n" if destination else "")
-        + f"📅 {check_in} · {nights} ноч\\. · {meal}\n"
+        + _format_hotel_context(row)
+        + f"📅 {check_in} · {escape_markdown_v2(format_nights(int(nights)))} · {meal}\n"
         + price_line
         + why_block
     )
