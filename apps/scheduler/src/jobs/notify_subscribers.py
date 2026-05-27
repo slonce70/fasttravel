@@ -83,15 +83,7 @@ _MATCH_SQL = text(
       AND (f.min_stars      IS NULL OR h.stars     >= f.min_stars)
       AND (f.meal_plan IS NULL OR d.meal_plan = f.meal_plan)
       AND d.source IN ('farvater_scrape', 'live_refresh', 'ittour')
-      AND d.discount_pct >= 15
-      -- Higher floor for peer_anomaly (cold-start): peer-group comparison
-      -- has more false positives than a hotel's own-history percentile or
-      -- a calendar date-dip, so we only DM the subscriber on big drops.
-      -- Other methods keep the same 15% floor used by public channel posts.
-      AND (
-          d.detection_method != 'peer_anomaly'
-          OR d.discount_pct >= 25
-      )
+      AND d.discount_pct >= 10
     -- Tie-break by d.id DESC so the cursor `f.last_notified_deal_id`
     -- advances monotonically even when two deals tie on discount.
     ORDER BY f.id, d.discount_pct DESC, d.id DESC
