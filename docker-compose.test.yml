@@ -9,8 +9,8 @@
 services:
   api-test:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      context: ./apps
+      dockerfile: api/Dockerfile
       args:
         INSTALL_DEV: "true"
     image: fasttravel/api:test

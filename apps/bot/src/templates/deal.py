@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
+from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import escape_markdown_v2
 
 _MEAL_LABELS = {
@@ -20,18 +21,6 @@ _MEAL_LABELS = {
     "BB": "Сніданок",
     "FB": "Повний пансіон",
     "RO": "Без харчування",
-}
-
-
-# Mirrors apps/scheduler/src/jobs/post_deals.py:_WHY_LINES. Kept here so
-# the bot can render the same explanatory subtitle for any deal payload
-# (channel post, /deals page, /best feed, personal alert) without
-# importing from the scheduler package.
-_WHY_LINES = {
-    "calendar_anomaly": "📉 Аномально дешева дата у цьому готелі",
-    "promo_discount": "🏷 Спецціна оператора",
-    "percentile": "📊 Нижче історичної ціни цього готелю",
-    "peer_anomaly": "📊 Дешевше за середнє по сусідніх готелях",
 }
 
 
@@ -144,16 +133,22 @@ def render_deal(row: dict[str, Any]) -> str:
 
     strikethrough = f"~{baseline_fmt}~" if savings > 0 else ""
 
-    method = (row.get("detection_method") or "").lower()
-    why = _WHY_LINES.get(method, "")
+    signal = get_deal_signal_copy(row.get("detection_method"))
+    why = signal.why_line
     why_block = f"\n_{escape_markdown_v2(why)}_" if why else ""
+    if signal.peer_comparison:
+        headline = f"📊 *{discount}% дешевше за схожі готелі*\n"
+        price_line = f"💰 *{price_fmt}* · орієнтир схожих {baseline_fmt}"
+    else:
+        headline = f"🔥 *\\-{discount}% · економія {savings_fmt}*\n"
+        price_line = f"💰 *{price_fmt}* {strikethrough}".rstrip()
 
     return (
-        f"🔥 *\\-{discount}% · економія {savings_fmt}*\n"
-        f"🏨 *{name}* {stars}".rstrip()
+        headline
+        + f"🏨 *{name}* {stars}".rstrip()
         + "\n"
         + (f"📍 {destination}\n" if destination else "")
         + f"📅 {check_in} · {nights} ноч\\. · {meal}\n"
-        + f"💰 *{price_fmt}* {strikethrough}".rstrip()
+        + price_line
         + why_block
     )

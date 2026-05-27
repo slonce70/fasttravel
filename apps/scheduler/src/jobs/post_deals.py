@@ -25,6 +25,7 @@ from typing import Protocol
 
 from sqlalchemy import text
 
+from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2, make_bot
 from src.config import get_settings
 from src.infra.db import async_session_factory
@@ -79,23 +80,6 @@ _MEAL_LABELS = {
     "BB": "Сніданок",
     "FB": "Повний пансіон",
     "RO": "Без харчування",
-}
-
-
-# Why-this-is-cheap explanation per detection method. Helps the channel
-# reader trust the discount: a 30% drop "vs other dates of the same
-# hotel" reads very differently from "vs peer 4-star hotels in Antalya".
-# Kept short — Telegram channel posts compete with everything else in
-# the user's feed for attention.
-#
-# peer_anomaly is intentionally NOT broadcast to the channel (filtered
-# in _SELECT_UNPOSTED), but the label still appears here because the
-# bot's /deals and /best surfaces re-use this map for their cards.
-_WHY_LINES = {
-    "calendar_anomaly": "📉 Аномально дешева дата у цьому готелі",
-    "promo_discount": "🏷 Спецціна оператора",
-    "percentile": "📊 Нижче історичної ціни цього готелю",
-    "peer_anomaly": "📊 Дешевше за середнє по сусідніх готелях",
 }
 
 
@@ -240,7 +224,7 @@ def _render_deal(row: _DealRow) -> str:
         else ""
     )
 
-    why = _WHY_LINES.get((getattr(row, "detection_method", None) or "").lower(), "")
+    why = get_deal_signal_copy(getattr(row, "detection_method", None)).why_line
     why_line = f"_{escape_markdown_v2(why)}_\n\n" if why else ""
 
     # All DB strings get escaped at the boundary. Numbers are safe.

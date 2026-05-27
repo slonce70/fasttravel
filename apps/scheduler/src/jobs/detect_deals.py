@@ -35,6 +35,7 @@ from collections.abc import Awaitable, Callable
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.deal_signals import metric_detection_method_for_reason
 from src.infra.cache import get_redis
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -512,13 +513,7 @@ def _record_inserted(rows: list[tuple[int, int, float]], reason: str) -> None:
 
         # Map reason → detection_method label so the counter mirrors the
         # DB column. The reason label is the sub-branch within a method.
-        method = {
-            "warm": "percentile",
-            "cold": "percentile",
-            "bucket": "promo_discount",
-            "date_dip": "calendar_anomaly",
-            "stay_inversion": "calendar_anomaly",
-        }.get(reason, "unknown")
+        method = metric_detection_method_for_reason(reason)
         DEALS_INSERTED.labels(detection_method=method, reason=reason).inc(len(rows))
     except Exception:  # noqa: BLE001
         log.exception("detect_deals.metric_write_failed", reason=reason)

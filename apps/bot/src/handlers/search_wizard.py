@@ -27,6 +27,7 @@ from aiogram.types import (
 
 from src.config import get_settings
 from src.infra.api_client import ApiError, get_destinations, search_hotels
+from src.infra.db import add_subscription, ensure_subscriber
 from src.infra.logging import get_logger
 from src.keyboards.countries import countries_kb, country_emoji
 from src.keyboards.filters import (
@@ -326,17 +327,13 @@ async def _show_results(
     body = "\n\n— · — · —\n\n".join(render_search_hit(h) for h in chunk)
     text = f"{header}\n\n{body}"
 
-    detail_rows = _result_link_rows(chunk)
-
-    nav_kb = results_actions_kb(
+    combined = _results_markup(
+        chunk=chunk,
         has_prev=page > 1,
         has_next=page < total_pages,
         page=page,
         total_pages=total_pages,
-        subscription_set=bool(data.get("subscribed", False)),
-    )
-    combined = InlineKeyboardMarkup(
-        inline_keyboard=detail_rows + nav_kb.inline_keyboard
+        subscribed=bool(data.get("subscribed", False)),
     )
 
     if edit:
@@ -387,10 +384,66 @@ async def cb_noop(query: CallbackQuery) -> None:
     await query.answer()
 
 
+def _results_markup(
+    *,
+    chunk: list[dict[str, Any]],
+    has_prev: bool,
+    has_next: bool,
+    page: int,
+    total_pages: int,
+    subscribed: bool,
+) -> InlineKeyboardMarkup:
+    detail_rows = _result_link_rows(chunk)
+    nav_kb = results_actions_kb(
+        has_prev=has_prev,
+        has_next=has_next,
+        page=page,
+        total_pages=total_pages,
+        subscription_set=subscribed,
+    )
+    return InlineKeyboardMarkup(inline_keyboard=detail_rows + nav_kb.inline_keyboard)
+
+
 @router.callback_query(F.data == "res:subscribe", SearchState.viewing_results)
 async def cb_subscribe(query: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    country = data.get("country")
+    if not country:
+        await query.answer("Спочатку оберіть країну для підписки", show_alert=True)
+        return
+
+    chat_id = query.from_user.id
+    await ensure_subscriber(chat_id, query.from_user.username)
+    sub_id = await add_subscription(
+        chat_id,
+        country_iso2=country,
+        max_price_uah=data.get("price_max"),
+        min_stars=data.get("stars_min"),
+        meal_plan=data.get("meal_plan"),
+    )
     await state.update_data(subscribed=True)
-    await query.answer("Підписку додамо в наступному оновленні ✨", show_alert=True)
+
+    cached = data.get(_RESULTS_KEY) or {}
+    items: list[dict[str, Any]] = cached.get("items", [])
+    if items and query.message:
+        total_pages = max(1, (len(items) + _PAGE_SIZE - 1) // _PAGE_SIZE)
+        page = max(1, min(int(data.get(_PAGE_KEY, 1)), total_pages))
+        start = (page - 1) * _PAGE_SIZE
+        chunk = items[start : start + _PAGE_SIZE]
+        await query.message.edit_reply_markup(
+            reply_markup=_results_markup(
+                chunk=chunk,
+                has_prev=page > 1,
+                has_next=page < total_pages,
+                page=page,
+                total_pages=total_pages,
+                subscribed=True,
+            )
+        )
+    await query.answer(
+        f"Підписка #{sub_id} створена: країна, бюджет, зірковість і харчування",
+        show_alert=True,
+    )
 
 
 async def _go_back_to_country(query: CallbackQuery, state: FSMContext) -> None:

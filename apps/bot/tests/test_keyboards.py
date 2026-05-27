@@ -118,6 +118,11 @@ def test_results_actions_kb_pagination_states():
     assert "res:next" in cbs
     # "Subscribe" appears when subscription_set=False
     assert "res:subscribe" in cbs
+    assert any(
+        b.text == "🔔 Алерт за цими фільтрами"
+        for row in kb.inline_keyboard
+        for b in row
+    )
 
     kb = results_actions_kb(
         has_prev=True, has_next=False, page=3, total_pages=3, subscription_set=True
