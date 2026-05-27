@@ -136,6 +136,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
+      TELEGRAM_ALERTS_CHAT_ID: ${TELEGRAM_ALERTS_CHAT_ID:-}
       ALERTMANAGER_WEBHOOK_SECRET: ${ALERTMANAGER_WEBHOOK_SECRET:-}
     depends_on:
       api:

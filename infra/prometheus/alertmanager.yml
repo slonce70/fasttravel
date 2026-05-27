@@ -1,9 +1,8 @@
 # AlertManager configuration.
 #
 # Single receiver: the bot's webhook on port 9103. The bot formats each
-# alert as MarkdownV2 and posts to TELEGRAM_CHANNEL_ID, the same channel
-# `post_deals` uses for promo broadcasts. Cheap, $0 friendly, no
-# additional accounts to provision (Sprint 2.3).
+# alert as MarkdownV2 and posts to TELEGRAM_ALERTS_CHAT_ID. This MUST be
+# a private/operator chat, not the public deals group used by post_deals.
 #
 # Routing strategy:
 #   - Critical alerts send firing + resolved notifications.

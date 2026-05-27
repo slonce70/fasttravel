@@ -112,6 +112,7 @@ required_env=(
     SCHEDULER_IMAGE
     TELEGRAM_BOT_TOKEN
     TELEGRAM_CHANNEL_ID
+    TELEGRAM_ALERTS_CHAT_ID
     GRAFANA_ADMIN_PASSWORD
 )
 for name in "${required_env[@]}"; do
@@ -135,11 +136,16 @@ if [[ -f "$ENV_FILE" ]]; then
         fi
     fi
     if [[ "$STRICT_ENV" == "1" ]] || grep -q '^ENVIRONMENT=prod' "$ENV_FILE"; then
-        for name in TELEGRAM_BOT_TOKEN TELEGRAM_CHANNEL_ID API_IMAGE BOT_IMAGE SCHEDULER_IMAGE ALERTMANAGER_WEBHOOK_SECRET; do
+        for name in TELEGRAM_BOT_TOKEN TELEGRAM_CHANNEL_ID TELEGRAM_ALERTS_CHAT_ID API_IMAGE BOT_IMAGE SCHEDULER_IMAGE ALERTMANAGER_WEBHOOK_SECRET; do
             if ! grep -Eq "^${name}=.+" "$ENV_FILE"; then
                 fail "prod env missing non-empty $name"
             fi
         done
+        public_channel="$(grep -E '^TELEGRAM_CHANNEL_ID=' "$ENV_FILE" | tail -n1 | cut -d= -f2-)"
+        alerts_channel="$(grep -E '^TELEGRAM_ALERTS_CHAT_ID=' "$ENV_FILE" | tail -n1 | cut -d= -f2-)"
+        if [[ -n "$public_channel" && "$public_channel" == "$alerts_channel" ]]; then
+            fail "TELEGRAM_ALERTS_CHAT_ID must differ from TELEGRAM_CHANNEL_ID"
+        fi
     fi
 else
     warn "env file not found: $ENV_FILE (set ENV_FILE=/path/to/.env.prod for strict prod checks)"

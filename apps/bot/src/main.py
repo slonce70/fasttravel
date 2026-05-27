@@ -150,7 +150,7 @@ async def main() -> None:
     alert_runner = await start_alert_webhook(
         bot,
         port=int(settings.alert_webhook_port),
-        channel_id=settings.telegram_channel_id,
+        channel_id=settings.telegram_alerts_chat_id,
     )
     try:
         # Publish command list + open it via the blue MenuButton. Idempotent;
