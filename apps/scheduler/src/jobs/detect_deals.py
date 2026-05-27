@@ -374,18 +374,45 @@ _DATE_DIP_SQL = text(
             hs.sample_n
         FROM priced cp
         JOIN LATERAL (
+            -- Two-pronged baseline robustness, both required:
+            --
+            -- 1. Trimmed-median (interquartile mean): average the middle
+            --    50% of neighbour prices. Robust to a few synthetic
+            --    "sold out" placeholder rows that Farvater returns at
+            --    ~3-5x normal price.
+            --
+            -- 2. Consistency gate: refuse the baseline if neighbours span
+            --    > 2.5x in price (max/min). When ≥half the calendar is
+            --    synthetic the centre is still bogus and no trim recovers
+            --    it; the spread is the only reliable "this data is dirty"
+            --    signal we have without per-row availability flags. We
+            --    saw real cases like Sura Hagia Sophia with 4 real prices
+            --    around 55-58k and 17 synthetic at 257k → 4.6x spread →
+            --    rejected, no false 78% "deal".
+            --
+            -- sample_n is the RAW count (pre-trim) so hs.sample_n >= 4
+            -- still measures calendar density, not trimmed size.
             SELECT
-                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY neighbor.price_uah)::int AS p50,
-                COUNT(*) AS sample_n
-            FROM current_prices neighbor
-            WHERE neighbor.hotel_id = cp.hotel_id
-              AND neighbor.operator_id = cp.operator_id
-              AND neighbor.nights = cp.nights
-              AND neighbor.meal_plan = cp.meal_plan
-              AND neighbor.check_in BETWEEN cp.check_in - INTERVAL '14 days'
-                                        AND cp.check_in + INTERVAL '14 days'
-              AND neighbor.check_in <> cp.check_in
+                AVG(CASE WHEN rnk BETWEEN 0.25 AND 0.75 THEN price_uah END)::int AS p50,
+                COUNT(*) AS sample_n,
+                MIN(price_uah) AS p_min,
+                MAX(price_uah) AS p_max
+            FROM (
+                SELECT
+                    neighbor.price_uah,
+                    PERCENT_RANK() OVER (ORDER BY neighbor.price_uah) AS rnk
+                FROM current_prices neighbor
+                WHERE neighbor.hotel_id = cp.hotel_id
+                  AND neighbor.operator_id = cp.operator_id
+                  AND neighbor.nights = cp.nights
+                  AND neighbor.meal_plan = cp.meal_plan
+                  AND neighbor.check_in BETWEEN cp.check_in - INTERVAL '14 days'
+                                            AND cp.check_in + INTERVAL '14 days'
+                  AND neighbor.check_in <> cp.check_in
+            ) ranked
         ) hs ON hs.sample_n >= 4
+              AND hs.p50 IS NOT NULL
+              AND hs.p_max <= hs.p_min * 2.5
     )
     INSERT INTO deals (
         hotel_id, operator_id, check_in, nights, meal_plan,

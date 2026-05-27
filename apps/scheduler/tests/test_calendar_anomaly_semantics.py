@@ -104,6 +104,17 @@ async def test_date_dip_uses_nearby_dates_not_whole_season(patched_orchestrator)
     assert "neighbor.check_in <> cp.check_in" in sql
     assert "JOIN LATERAL" in sql
     assert "hs.sample_n >= 4" in sql
+    # Trimmed median + consistency gate. Farvater's synthetic "sold out"
+    # placeholder prices were inflating the plain median by 3-5x and
+    # triggering false 70-80% "deals". Two defences:
+    #   1. interquartile mean (PERCENT_RANK middle 50%) — robust to a few
+    #      outliers in an otherwise clean sample.
+    #   2. p_max <= p_min * 2.5 — rejects the baseline entirely when the
+    #      neighbour spread is too wide to be trusted (bimodal data with
+    #      ≥half synthetic rows can't be saved by trimming alone).
+    assert "PERCENT_RANK()" in sql
+    assert "rnk BETWEEN 0.25 AND 0.75" in sql
+    assert "hs.p_max <= hs.p_min * 2.5" in sql
 
 
 @pytest.mark.asyncio
