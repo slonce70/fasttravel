@@ -38,8 +38,7 @@ export default async function DealsPage({
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Гарячі знижки</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Усього виявлено {initial.total}{' '}
-          {initial.total === 1 ? 'знижку' : initial.total < 5 ? 'знижки' : 'знижок'}.
+          Усього виявлено {initial.total} {pluralDeals(initial.total)}.
         </p>
       </div>
 
@@ -52,4 +51,12 @@ export default async function DealsPage({
       )}
     </Container>
   );
+}
+
+function pluralDeals(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'знижку';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'знижки';
+  return 'знижок';
 }
