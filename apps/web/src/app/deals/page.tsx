@@ -5,7 +5,8 @@ import { fetchDeals, userMessageForApiError } from '@/lib/api-client';
 
 export const metadata: Metadata = {
   title: 'Гарячі знижки на тури',
-  description: 'Усі знайдені аномалії в цінах на тури в Туреччину.',
+  description:
+    'Знижки на тури до Туреччини, Єгипту, ОАЕ, Греції та інших напрямків — аномально дешеві дати, спецціни операторів.',
 };
 
 // SSR з 5-хв ревалідацією — баланс свіжість/CDN-кеш.
