@@ -22,7 +22,7 @@ class Settings(BaseAppSettings):
     telegram_bot_token: str | None = None
     telegram_channel_id: str | None = None
     telegram_alerts_chat_id: str | None = None
-    public_channel_link: str = "https://t.me/testtyhhh"
+    public_channel_link: str = "https://t.me/fasttravel_deals"
 
     # Backend HTTP API. In docker-compose this resolves to the api service;
     # for local pytest runs we fall back to the published port on host.

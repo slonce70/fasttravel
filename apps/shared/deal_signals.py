@@ -12,11 +12,11 @@ class DealSignalCopy:
 
 
 _SIGNALS: dict[str, DealSignalCopy] = {
-    "calendar_anomaly": DealSignalCopy("📉 Аномально дешева дата у цьому готелі"),
-    "promo_discount": DealSignalCopy("🏷 Спецціна оператора"),
-    "percentile": DealSignalCopy("📊 Нижче історичної ціни цього готелю"),
+    "calendar_anomaly": DealSignalCopy("📉 Ця дата значно дешевша за сусідні у цьому готелі"),
+    "promo_discount": DealSignalCopy("🏷 Спецціна від оператора — обмежена пропозиція"),
+    "percentile": DealSignalCopy("📊 Ціна нижча за звичайну для цього готелю"),
     "peer_anomaly": DealSignalCopy(
-        "📊 Дешевше за середнє по сусідніх готелях",
+        "📊 Дешевше за аналогічні готелі в цьому регіоні",
         peer_comparison=True,
     ),
 }
