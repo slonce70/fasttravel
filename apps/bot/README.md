@@ -59,7 +59,8 @@ apps/bot/
 
 `POST /alerts` (port 9103, internal-only inside the fasttravel docker
 network) accepts the Prometheus AlertManager payload and re-broadcasts
-each firing/resolved alert to the configured Telegram channel.
+each firing/resolved alert to `TELEGRAM_ALERTS_CHAT_ID`. This must be a
+private/operator chat, not the public deals group.
 
 Authentication:
 
@@ -109,7 +110,8 @@ PYTHONPATH=.:.. ../scheduler/.venv/bin/python -m pytest tests/
 | Var | Required | Notes |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | prod | Empty in dev → bot idles, alert webhook still runs |
-| `TELEGRAM_CHANNEL_ID` | prod | `-100…` integer or `@slug` |
+| `TELEGRAM_CHANNEL_ID` | prod | Public deals group/channel for tour posts only |
+| `TELEGRAM_ALERTS_CHAT_ID` | prod | Separate private/operator chat for AlertManager notifications |
 | `ALERTMANAGER_WEBHOOK_SECRET` | prod | Generate via `openssl rand -hex 32`; mirror into AlertManager config |
 | `API_BASE_URL` | always | `http://api:8000` inside compose |
 | `DATABASE_URL` | always | bot writes `telegram_subscribers` / `telegram_subscriber_filters` directly |

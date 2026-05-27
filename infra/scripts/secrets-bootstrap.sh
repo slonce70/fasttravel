@@ -82,6 +82,7 @@ SCHEDULER_IMAGE=
 # --- Telegram (FILL IN before launch) ---
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHANNEL_ID=
+TELEGRAM_ALERTS_CHAT_ID=
 
 # --- ittour API (FILL IN when access granted) ---
 ITTOUR_API_BASE=https://api.ittour.com.ua
