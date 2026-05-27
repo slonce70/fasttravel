@@ -116,3 +116,80 @@ groups:
           description: |
             Redis refresh queue has stayed above 1000 items for 10 minutes.
             Check refresh_worker throughput and Farvater upstream errors.
+
+  # Audit quarter #17 — host-level alerts. Most outages on small VMs
+  # are infra-level (disk, OOM, postgres dead tuples). These four sit
+  # on top of the new node_exporter / postgres_exporter / redis_exporter
+  # scrapes; routing reuses the existing AlertManager → bot pipeline.
+  - name: fasttravel-host
+    interval: 1m
+    rules:
+      - alert: DiskFull80Pct
+        # Boot disk fills up in real outages — docker logs (now capped
+        # at 10m × 5 per service), prometheus TSDB (capped at 8GB),
+        # postgres WAL, runaway backup dumps. 80% leaves ops room.
+        expr: |
+          (1 - node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.*"} / node_filesystem_size_bytes{fstype!~"tmpfs|fuse.*"}) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} on {{ $labels.instance }} >80% full"
+          description: |
+            Free space on {{ $labels.mountpoint }} dropped below 20%.
+            Common causes: docker logs (rotate via max-size), prometheus
+            TSDB, accumulating pg_dump archives.
+
+      - alert: OOMRiskHigh
+        # Available memory below 10% AND swap >50% used → next OOM-kill
+        # is coming. Postgres usually goes first because it has the
+        # biggest RSS; losing it cascades the whole stack.
+        expr: |
+          (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) < 0.10
+          and ON (instance)
+          (node_memory_SwapTotal_bytes > 0 and (node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes) / node_memory_SwapTotal_bytes > 0.50)
+        for: 5m
+        labels:
+          severity: critical
+          team: infra
+        annotations:
+          summary: "Low free memory + heavy swap on {{ $labels.instance }}"
+          description: |
+            <10% free RAM and >50% swap used for 5 minutes — OOM-killer
+            is likely to fire. Postgres has the biggest RSS by far;
+            losing it cascades. Investigate `docker stats` immediately.
+
+      - alert: PostgresDeadTuplesHigh
+        # Bloat — autovacuum can't keep up. Surfaces as slow seq scans
+        # before it surfaces as outright corruption. Threshold: any
+        # table with >50% dead tuples that's also >100k rows.
+        expr: |
+          (pg_stat_user_tables_n_dead_tup / (pg_stat_user_tables_n_dead_tup + pg_stat_user_tables_n_live_tup + 1)) > 0.5
+          and pg_stat_user_tables_n_live_tup > 100000
+        for: 30m
+        labels:
+          severity: warning
+          team: data
+        annotations:
+          summary: "Postgres table {{ $labels.relname }} has >50% dead tuples"
+          description: |
+            Autovacuum is falling behind on {{ $labels.relname }}.
+            Run `VACUUM (VERBOSE, ANALYZE) <table>` and review
+            autovacuum_vacuum_scale_factor for this table.
+
+      - alert: RedisDown
+        # `up` is 0 when the redis-exporter can't reach redis. If redis
+        # is genuinely down the bot's FSM storage breaks, the scheduler
+        # refresh queue stalls — surface fast.
+        expr: |
+          up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: infra
+        annotations:
+          summary: "Redis exporter cannot reach redis"
+          description: |
+            redis-exporter has been unable to scrape Redis for 2 minutes.
+            Bot FSM storage + scheduler refresh queue both depend on it.

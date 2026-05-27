@@ -34,9 +34,13 @@ if [[ -e "$OUTPUT" ]] && [[ "$FORCE" != true ]]; then
     exit 1
 fi
 
-# 32 bytes from /dev/urandom, base64-encoded, strip = / + that break shell.
+# Audit 2.4 Low — the previous version was `openssl rand -base64 32 |
+# tr -d '=+/\n'`, which (a) quietly shrunk the base64 alphabet from
+# 66 to 63 chars (losing entropy) and (b) advertised "32 bytes" while
+# the post-tr output had no guaranteed length. `openssl rand -hex 32`
+# is 64 hex chars (256 bits, no escaping needed) and is shell-safe.
 gen_secret() {
-    openssl rand -base64 32 | tr -d '=+/\n'
+    openssl rand -hex 32
 }
 
 POSTGRES_PASSWORD="$(gen_secret)"

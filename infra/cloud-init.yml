@@ -48,6 +48,11 @@ packages:
   - git
   - unzip
   - tzdata
+  # Audit 4.2 Medium "No unattended-upgrades у cloud-init" — auto-patch
+  # the OS for security updates. Without this an unattended SSH-only
+  # box gets the apt CVE backlog only when an operator remembers.
+  - unattended-upgrades
+  - apt-listchanges
 
 # --- Swap (4 GB) ------------------------------------------------------------
 swap:
@@ -128,6 +133,30 @@ write_files:
         systemctl restart fasttravel-stack.service || true
       fi
 
+  # Audit P0 #9: certbot was installed but the renewal pipeline wasn't
+  # wired. LE certs expire after 90 days; without renewal hooks the
+  # operator finds out via 5xx alerts. This deploy hook restarts nginx
+  # inside the docker-compose stack after a successful renewal so the
+  # new cert is actually served.
+  - path: /etc/letsencrypt/renewal-hooks/deploy/10-reload-nginx.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      # Triggered by certbot.timer after a successful renewal.
+      # Reloads nginx INSIDE the docker-compose stack (the cert lives on
+      # the host's /etc/letsencrypt and is bind-mounted into the nginx
+      # container — see docker-compose.prod.yml).
+      set -u
+      cd /opt/fasttravel || exit 0
+      if [ -f docker-compose.yml ] && [ -f docker-compose.prod.yml ]; then
+        # `nginx -s reload` is a graceful zero-downtime reload.
+        docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+          exec -T nginx nginx -s reload \
+          && logger -t fasttravel-certbot "nginx reloaded with renewed cert" \
+          || logger -t fasttravel-certbot "WARN: nginx reload after renewal failed"
+      fi
+
   # Marker file so we can tell at a glance whether cloud-init completed.
   - path: /etc/fasttravel-bootstrap.version
     permissions: "0644"
@@ -191,7 +220,21 @@ runcmd:
   - install -d -m 755 -o fasttravel -g fasttravel /opt/fasttravel/data
   - install -d -m 755 -o fasttravel -g fasttravel /opt/fasttravel/logs
 
-  # 9) Mark cloud-init complete in a file the runbook can probe.
+  # 9a) Audit 4.2 Medium — enable unattended-upgrades on the security
+  # pocket. Reboot policy stays "manual" so a kernel update doesn't
+  # drop the box without warning; operator runs `apt full-upgrade &&
+  # reboot` during a maintenance window.
+  - dpkg-reconfigure -plow unattended-upgrades || true
+  - systemctl enable --now unattended-upgrades
+
+  # 9) Audit P0 #9 — enable + start certbot.timer so renewals happen on
+  # their own. The systemd timer runs `certbot renew` twice daily;
+  # successful renewals trigger the deploy hook above to reload nginx.
+  # Both lines are idempotent — re-running cloud-init is a no-op.
+  - install -d -m 755 -o root -g root /etc/letsencrypt/renewal-hooks/deploy
+  - systemctl enable --now certbot.timer
+
+  # 10) Mark cloud-init complete in a file the runbook can probe.
   - date -Iseconds > /etc/fasttravel-bootstrap.completed
 
 # --- Final message ----------------------------------------------------------

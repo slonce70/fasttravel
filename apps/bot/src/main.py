@@ -37,8 +37,9 @@ log = get_logger("bot.main")
 
 PUBLIC_COMMANDS: list[BotCommand] = [
     BotCommand(command="start", description="Почати"),
+    BotCommand(command="best", description="🏆 ТОП знижок зараз"),
     BotCommand(command="search", description="🔍 Знайти тур"),
-    BotCommand(command="deals", description="🔥 Гарячі знижки"),
+    BotCommand(command="deals", description="🔥 Усі знижки"),
     BotCommand(command="destinations", description="🌍 Напрямки"),
     BotCommand(command="subscribe", description="🔔 Підписки на знижки"),
     BotCommand(command="profile", description="👤 Профіль"),

@@ -28,18 +28,14 @@
 name: Deploy API
 
 on:
-  push:
+  # Audit 4.2 Medium "deploy-api.yml немає needs: [ci]" — the deploy
+  # now runs ONLY after a successful CI run on main. workflow_run fires
+  # once CI completes; the job-level guard below blocks anything other
+  # than a green run. A red CI no longer means "deploy might still ship".
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
-    paths:
-      - "apps/api/**"
-      - "apps/bot/**"
-      - "apps/scheduler/**"
-      - "apps/ingest/**"
-      - "apps/shared/**"
-      - "infra/**"
-      - "docker-compose.yml"
-      - "docker-compose.prod.yml"
-      - ".github/workflows/deploy-api.yml"
   workflow_dispatch:
 
 concurrency:
@@ -56,6 +52,13 @@ jobs:
     name: build + push + ssh deploy
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # workflow_run fires on BOTH success and failure of the parent CI run.
+    # Only proceed when:
+    #   - manual dispatch, OR
+    #   - CI run completed with conclusion == 'success'.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success')
 
     env:
       DEPLOY_SSH_HOST: ${{ secrets.DEPLOY_SSH_HOST }}
@@ -85,15 +88,15 @@ jobs:
 
       - name: Checkout
         if: steps.gate.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Docker Buildx
         if: steps.gate.outputs.skip != 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
         if: steps.gate.outputs.skip != 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -109,34 +112,37 @@ jobs:
           echo "prefix=${PREFIX}" >> "$GITHUB_OUTPUT"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
 
+      # Audit 4.2 Medium ":latest tags pushed alongside sha-<short>" —
+      # the `:latest` floating tag defeats image-pin rollback (operator
+      # `docker pull` of the previous sha can be silently bypassed if
+      # anything resolves `latest`). We push ONLY the sha tag now;
+      # rollback = re-deploy with the previous sha-XYZ tag.
       - name: Build and push api
         if: steps.gate.outputs.skip != 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ./apps/api
           push: true
           tags: |
             ${{ steps.tags.outputs.prefix }}-api:${{ steps.tags.outputs.sha }}
-            ${{ steps.tags.outputs.prefix }}-api:latest
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
       - name: Build and push bot
         if: steps.gate.outputs.skip != 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ./apps
           file: ./apps/bot/Dockerfile
           push: true
           tags: |
             ${{ steps.tags.outputs.prefix }}-bot:${{ steps.tags.outputs.sha }}
-            ${{ steps.tags.outputs.prefix }}-bot:latest
           cache-from: type=gha,scope=bot
           cache-to: type=gha,mode=max,scope=bot
 
       - name: Build and push scheduler
         if: steps.gate.outputs.skip != 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           # Build context is ./apps (one level above) because the scheduler
           # Dockerfile vendors apps/shared/. See apps/scheduler/Dockerfile.
@@ -145,22 +151,43 @@ jobs:
           push: true
           tags: |
             ${{ steps.tags.outputs.prefix }}-scheduler:${{ steps.tags.outputs.sha }}
-            ${{ steps.tags.outputs.prefix }}-scheduler:latest
           cache-from: type=gha,scope=scheduler
           cache-to: type=gha,mode=max,scope=scheduler
 
+      # Audit "Low" #20 — SBOM. Generate a CycloneDX SBOM for the
+      # pushed api image so a security responder can answer "which
+      # commits include CVE-X?" via `syft search` without rebuilding.
+      - name: Generate SBOM for api image
+        if: steps.gate.outputs.skip != 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ steps.tags.outputs.prefix }}-api:${{ steps.tags.outputs.sha }}
+          format: cyclonedx-json
+          output-file: api-sbom.cyclonedx.json
+          upload-artifact: true
+          upload-release-assets: false
+
       - name: Configure SSH
         if: steps.gate.outputs.skip != 'true'
+        env:
+          DEPLOY_SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           echo "${DEPLOY_SSH_KEY}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          if [ -n "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" ]; then
-            echo "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
-          else
-            ssh-keyscan -H "${DEPLOY_SSH_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+          # Audit 2.4 Low — ssh-keyscan TOFU fallback was MITM-able on
+          # the first deploy (sticky thereafter). Require explicit
+          # known_hosts now; an operator must run:
+          #   ssh-keyscan -H <vps_host> | base64 | pbcopy
+          # and paste into DEPLOY_SSH_KNOWN_HOSTS secret before this
+          # workflow can succeed.
+          if [ -z "${DEPLOY_SSH_KNOWN_HOSTS}" ]; then
+            echo "ERROR: DEPLOY_SSH_KNOWN_HOSTS secret is required."
+            echo "Capture it once with: ssh-keyscan -H <vps_host>"
+            exit 1
           fi
+          echo "${DEPLOY_SSH_KNOWN_HOSTS}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
       - name: Deploy on VPS

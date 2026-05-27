@@ -39,8 +39,9 @@ _MATCH_SQL = text(
     """
     -- For each (filter, deal) pair where the deal matches the filter
     -- AND was detected after the last notification we sent on that
-    -- filter, emit one row. The DISTINCT ON keeps it to the most recent
-    -- deal per filter so a quiet hour doesn't queue up 20 alerts.
+    -- filter, emit one row. The DISTINCT ON keeps it to one alert per
+    -- filter per tick — we pick the BEST DISCOUNT (not the newest) so
+    -- a quiet hour doesn't bury a 35% steal under a 16% routine drop.
     SELECT DISTINCT ON (f.id)
         f.id           AS filter_id,
         f.chat_id      AS chat_id,
@@ -54,6 +55,7 @@ _MATCH_SQL = text(
         d.price_uah,
         d.baseline_p50,
         d.deep_link,
+        d.detection_method,
         h.name_uk      AS hotel_name_uk,
         h.canonical_slug AS hotel_slug,
         h.stars        AS hotel_stars,
@@ -70,7 +72,17 @@ _MATCH_SQL = text(
       AND (f.max_price_uah IS NULL OR d.price_uah <= f.max_price_uah)
       AND (f.min_stars      IS NULL OR h.stars     >= f.min_stars)
       AND d.source IN ('farvater_scrape', 'live_refresh', 'ittour')
-    ORDER BY f.id, d.id DESC
+      -- Higher floor for peer_anomaly (cold-start): peer-group comparison
+      -- has more false positives than a hotel's own-history percentile or
+      -- a calendar date-dip, so we only DM the subscriber on big drops.
+      -- Other methods keep their natural threshold (>0% measurable).
+      AND (
+          d.detection_method != 'peer_anomaly'
+          OR d.discount_pct >= 25
+      )
+    -- Tie-break by d.id DESC so the cursor `f.last_notified_deal_id`
+    -- advances monotonically even when two deals tie on discount.
+    ORDER BY f.id, d.discount_pct DESC, d.id DESC
     LIMIT :max_per_run
     """
 )
@@ -97,25 +109,54 @@ def _stars_str(stars: int | None) -> str:
     return "⭐" * int(stars)
 
 
+_MEAL_LABELS = {
+    "AI": "Все включено",
+    "UAI": "Ультра все включено",
+    "HB": "Напівпансіон",
+    "BB": "Сніданок",
+    "FB": "Повний пансіон",
+    "RO": "Без харчування",
+}
+
+# Mirrors post_deals._WHY_LINES so the personal alert tells the
+# subscriber WHY this deal beat the others — calendar dip vs operator
+# promo vs hotel-history percentile vs peer-group cold-start.
+_WHY_LINES = {
+    "calendar_anomaly": "📉 Аномально дешева дата у цьому готелі",
+    "promo_discount": "🏷 Спецціна оператора",
+    "percentile": "📊 Нижче історичної ціни цього готелю",
+    "peer_anomaly": "📊 Дешевше за середнє по сусідніх готелях",
+}
+
+
 def _render(row: Any, public_site_url: str) -> str:
     discount = int(round(float(row.discount_pct or 0)))
     name = escape_markdown_v2(row.hotel_name_uk or "Готель")
     stars = _stars_str(row.hotel_stars)
     dest = escape_markdown_v2(row.destination_name or "")
     nights = int(row.nights or 7)
-    meal = escape_markdown_v2(row.meal_plan or "")
+    raw_meal = row.meal_plan or ""
+    meal = escape_markdown_v2(_MEAL_LABELS.get(raw_meal, raw_meal))
     price = escape_markdown_v2(_format_uah(row.price_uah))
-    baseline = escape_markdown_v2(_format_uah(row.baseline_p50))
+    baseline_int = int(row.baseline_p50 or 0)
+    savings = max(0, baseline_int - int(row.price_uah or 0))
+    savings_fmt = escape_markdown_v2(_format_uah(savings))
+    baseline = escape_markdown_v2(_format_uah(baseline_int))
     check_in = escape_markdown_v2(str(row.check_in))
+    method = (getattr(row, "detection_method", None) or "").lower()
+    why = _WHY_LINES.get(method, "")
+    why_line = f"\n_{escape_markdown_v2(why)}_" if why else ""
 
     return (
-        f"🔥 *Нова знижка за вашою підпискою*\n"
-        f"\\({escape_markdown_v2(row.country_iso2)} · до {escape_markdown_v2(_format_uah(int(row.price_uah)))}\\)\n\n"
+        f"🔔 *Знижка за вашою підпискою*\n"
+        f"🌍 {escape_markdown_v2(row.country_iso2)}\n\n"
         f"🏨 *{name}* {stars}".rstrip()
         + "\n"
         + (f"📍 {dest}\n" if dest else "")
-        + f"📅 {check_in} · {nights} ноч\\. · {meal}\n"
-        + f"💰 *{price}* · \\-{discount}% від звичайної {baseline}"
+        + f"📅 {check_in} · {nights} ноч\\. · {meal}\n\n"
+        + f"💰 *{price}* ~{baseline}~\n"
+        + f"🔥 *\\-{discount}%* · економія *{savings_fmt}*"
+        + why_line
     )
 
 

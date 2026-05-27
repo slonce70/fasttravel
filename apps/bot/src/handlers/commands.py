@@ -16,10 +16,11 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
-from shared.publishers.broadcast import escape_markdown_v2
 
+from shared.publishers.broadcast import escape_markdown_v2
 from src.config import get_settings
 from src.keyboards.main_menu import (
+    BEST,
     DEALS,
     DESTINATIONS,
     HELP,
@@ -49,13 +50,13 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     name = escape_markdown_v2(message.from_user.first_name if message.from_user else "")
     body = (
         f"Привіт{', ' + name if name else ''}\\! 👋\n\n"
-        "*FastTravel* шукає аномально низькі ціни на тури в Туреччину, Єгипет, "
-        "ОАЕ, Грецію та інші напрямки\\.\n\n"
-        "Скористайтесь меню нижче — або введіть команду:\n"
-        "  • /search — знайти тур\n"
-        "  • /deals — гарячі знижки сьогодні\n"
-        "  • /destinations — каталог країн\n"
-        "  • /subscribe — алерт коли впаде ціна"
+        "*FastTravel* знаходить *аномально дешеві дати* на тури — "
+        "коли один день у готелі коштує помітно менше за всі сусідні\\.\n\n"
+        "Що далі:\n"
+        "  🏆 /best — ТОП знижок зараз\n"
+        "  🔍 /search — знайти тур під ваші дати\n"
+        "  🔔 /subscribe — алерт коли впаде ціна\n\n"
+        "Або тисніть кнопку в меню нижче 👇"
     )
     await message.answer(
         body,
@@ -69,16 +70,20 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 @router.message(F.text == HELP)
 async def cmd_help(message: Message) -> None:
     body = (
-        "*Допомога*\n\n"
-        "Команди:\n"
-        "  • /start — головне меню\n"
+        "*Як працює FastTravel*\n\n"
+        "Ми двічі на день перевіряємо ціни на ~3000 готелів у Туреччині, "
+        "Єгипті, ОАЕ, Греції та інших напрямках\\. "
+        "Коли якийсь день виявляється *суттєво дешевшим за сусідні* — "
+        "ви бачите його в боті та в каналі знижок\\.\n\n"
+        "*Команди:*\n"
+        "  • /best — ТОП\\-10 знижок зараз 🏆\n"
         "  • /search — знайти тур \\(майстер з 6 кроків\\)\n"
-        "  • /deals — топ\\-10 гарячих знижок зараз\n"
+        "  • /deals — стрічка усіх активних знижок\n"
         "  • /destinations — каталог країн\n"
-        "  • /subscribe — підписатися на персональні алерти\n"
+        "  • /subscribe — персональні алерти на email\\-стилі підписку\n"
         "  • /profile — мій профіль і підписки\n"
         "  • /channel — публічний канал з усіма знижками\n\n"
-        "Календар цін доступний у боті через /search\n"
+        "Календар цін — у деталях кожного готелю\\.\n"
         "Питання: hello@fasttravel\\.com\\.ua"
     )
     await message.answer(
@@ -105,6 +110,13 @@ async def cmd_channel(message: Message) -> None:
 # Wizard / multi-step flows are routed in their own modules and registered
 # AFTER this commands router so the F.text filters fall through.
 # ---------------------------------------------------------------------------
+
+
+@router.message(F.text == BEST)
+async def text_best(message: Message) -> None:
+    from src.handlers.deals import cmd_best
+
+    await cmd_best(message)
 
 
 @router.message(F.text == DEALS)

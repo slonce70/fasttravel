@@ -11,6 +11,16 @@
 
 name: fasttravel
 
+# Shared logging cap. Docker's default json-file driver has no max-size,
+# so a chatty container fills the boot disk over weeks (audit #8). Every
+# service inherits this via YAML anchor; override per-service if you need
+# longer retention for a specific log stream.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 networks:
   fasttravel:
     driver: bridge
@@ -20,6 +30,8 @@ volumes:
   redis_data:
   grafana_data:
   prometheus_data:
+  # Loki chunks + index (observability profile only).
+  loki_data:
 
 services:
   postgres:
@@ -29,6 +41,7 @@ services:
     image: fasttravel/postgres:16
     container_name: ft_postgres
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-fasttravel}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fasttravel_dev_change_me}
@@ -50,6 +63,7 @@ services:
     image: redis:7-alpine
     container_name: ft_redis
     restart: unless-stopped
+    logging: *default-logging
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "allkeys-lru"]
     volumes:
       - redis_data:/data
@@ -70,6 +84,7 @@ services:
     image: fasttravel/api:dev
     container_name: ft_api
     restart: unless-stopped
+    logging: *default-logging
     env_file: .env
     environment:
       # Override the host names so they point at compose service names
@@ -103,6 +118,7 @@ services:
     image: fasttravel/bot:dev
     container_name: ft_bot
     restart: unless-stopped
+    logging: *default-logging
     env_file: .env
     # 9102 = Prometheus exporter (see apps/bot/src/infra/metrics.py).
     # 9103 = AlertManager webhook receiver (see apps/bot/src/alert_webhook.py).
@@ -139,6 +155,7 @@ services:
     image: fasttravel/scheduler:dev
     container_name: ft_scheduler
     restart: unless-stopped
+    logging: *default-logging
     env_file: .env
     # 9101 is the Prometheus exporter started by src.infra.metrics. Bound to
     # the fasttravel network only; the prod overlay keeps it unpublished and
@@ -162,10 +179,19 @@ services:
     image: prom/prometheus:v2.55.1
     container_name: ft_prometheus
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
+    # Retention caps so TSDB doesn't unboundedly fill the boot disk
+    # (audit 4.1 #3). 30d × 8 GB matches the free-tier VPS budget.
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.retention.size=8GB'
+      - '--web.enable-lifecycle'
     ports:
       - "9090:9090"
     depends_on:
@@ -176,10 +202,53 @@ services:
   # Sprint 2.3 — AlertManager fans firing alerts out to the bot's
   # /alerts webhook (port 9103). Internal-only; the operator hits the
   # web UI by tunnelling from the host.
+  # Audit quarter #17 — infra-level exporters. None of these scrape the
+  # public internet; they all expose /metrics on the fasttravel network
+  # so Prometheus can pull. Tiny RSS (~10-30 MB each).
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: ft_node_exporter
+    restart: unless-stopped
+    logging: *default-logging
+    command:
+      - '--path.rootfs=/host'
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - fasttravel
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: ft_postgres_exporter
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fasttravel
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.66.0
+    container_name: ft_redis_exporter
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - fasttravel
+
   alertmanager:
     image: prom/alertmanager:v0.27.0
     container_name: ft_alertmanager
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - ./infra/prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       # Webhook secret file (gitignored). AlertManager reads via
@@ -194,13 +263,49 @@ services:
     networks:
       - fasttravel
 
+  # Audit Quarter #16 — log aggregation via Loki + Vector. Opt-in:
+  # enable with `docker compose --profile observability up -d`. Kept
+  # off by default because it adds ~300 MB of RSS and most dev work
+  # doesn't need centralised logs.
+  loki:
+    image: grafana/loki:3.3.0
+    container_name: ft_loki
+    restart: unless-stopped
+    logging: *default-logging
+    profiles: ["observability"]
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - loki_data:/loki
+    networks:
+      - fasttravel
+
+  vector:
+    image: timberio/vector:0.41.1-debian
+    container_name: ft_vector
+    restart: unless-stopped
+    logging: *default-logging
+    profiles: ["observability"]
+    volumes:
+      - ./infra/vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      - loki
+    networks:
+      - fasttravel
+
   grafana:
     image: grafana/grafana-oss:11.3.1
     container_name: ft_grafana
     restart: unless-stopped
+    logging: *default-logging
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # No dev fallback to `admin` — Grafana boots only when the operator
+      # provides an explicit password. Defends against the audit 2.2 bullet
+      # ("Grafana default admin:admin"). production-preflight.sh enforces
+      # the same invariant for prod.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD required}
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana

@@ -2,9 +2,14 @@
 # Verify that a FastTravel PostgreSQL dump can be restored into a clean DB.
 #
 # Usage:
-#   ./infra/scripts/backup-restore-drill.sh [dump.sql.gz]
+#   ./infra/scripts/backup-restore-drill.sh [dump-path]
 #
-# If no dump path is provided, the script creates a temporary dump from the
+# Format auto-detection:
+#   - *.dump      → pg_custom (pg_restore, parallel-restorable)
+#   - *.sql.gz    → plain SQL piped through gzip -dc | psql (legacy)
+#   - otherwise   → tried as pg_custom first, then plain SQL fallback
+#
+# If no dump path is provided, the script creates a temporary -Fc dump from the
 # local compose `postgres` service first. CI backup workflow passes the dump it
 # just downloaded from the VPS before uploading it to R2.
 
@@ -45,15 +50,15 @@ fi
 
 if [[ -z "$DUMP_FILE" ]]; then
     TMP_DIR="$(mktemp -d /tmp/fasttravel-restore-drill.XXXXXX)"
-    DUMP_FILE="$TMP_DIR/fasttravel-local.sql.gz"
-    log "creating temporary local dump from compose postgres"
+    DUMP_FILE="$TMP_DIR/fasttravel-local.dump"
+    log "creating temporary local -Fc dump from compose postgres"
     (
         cd "$ROOT"
         docker compose exec -T postgres \
             pg_dump -U "${POSTGRES_USER:-fasttravel}" \
             -d "${POSTGRES_DB:-fasttravel}" \
-            --no-owner --clean --if-exists \
-            | gzip -9 > "$DUMP_FILE"
+            -Fc --compress=9 --no-owner --clean --if-exists \
+            > "$DUMP_FILE"
     )
 fi
 
@@ -62,8 +67,30 @@ if [[ ! -s "$DUMP_FILE" ]]; then
     exit 1
 fi
 
-log "validating gzip archive"
-gzip -t "$DUMP_FILE"
+# Detect format: pg_custom starts with "PGDMP" magic; plain gzip starts
+# with 0x1f 0x8b. Decision drives both validation and restore commands.
+DUMP_FORMAT="unknown"
+if head -c 5 "$DUMP_FILE" | grep -q '^PGDMP'; then
+    DUMP_FORMAT="custom"
+elif head -c 2 "$DUMP_FILE" | od -An -tx1 | tr -d ' \n' | grep -q '^1f8b'; then
+    DUMP_FORMAT="plain_gz"
+fi
+
+log "validating dump archive (format=${DUMP_FORMAT})"
+case "$DUMP_FORMAT" in
+    custom)
+        # pg_restore --list reads only the TOC; structural validity check.
+        docker run --rm -v "$DUMP_FILE:/tmp/dump:ro" "$POSTGRES_IMAGE" \
+            pg_restore --list /tmp/dump >/dev/null
+        ;;
+    plain_gz)
+        gzip -t "$DUMP_FILE"
+        ;;
+    *)
+        echo "unrecognised dump format; expected pg_custom (-Fc) or .sql.gz" >&2
+        exit 1
+        ;;
+esac
 
 if ! docker image inspect "$POSTGRES_IMAGE" >/dev/null 2>&1; then
     if [[ "$POSTGRES_IMAGE" == "fasttravel/postgres:16" ]]; then
@@ -95,12 +122,29 @@ if ! docker exec "$RESTORE_CONTAINER" pg_isready -U "$RESTORE_USER" -d "$RESTORE
     exit 1
 fi
 
-log "restoring dump with ON_ERROR_STOP"
-if ! gzip -dc "$DUMP_FILE" | docker exec -i "$RESTORE_CONTAINER" \
-    psql -v ON_ERROR_STOP=1 -U "$RESTORE_USER" -d "$RESTORE_DB" >/tmp/fasttravel-restore-drill-psql.log 2>&1; then
-    cat /tmp/fasttravel-restore-drill-psql.log >&2
-    exit 1
-fi
+log "restoring dump"
+RESTORE_LOG=/tmp/fasttravel-restore-drill-psql.log
+case "$DUMP_FORMAT" in
+    custom)
+        # -j 4 parallel restore — main win of the pg_custom format
+        # (audit 4.2 "single-threaded restore" complaint).
+        if ! docker exec -i "$RESTORE_CONTAINER" \
+            pg_restore -j 4 --no-owner --clean --if-exists \
+            -U "$RESTORE_USER" -d "$RESTORE_DB" \
+            < "$DUMP_FILE" > "$RESTORE_LOG" 2>&1; then
+            cat "$RESTORE_LOG" >&2
+            exit 1
+        fi
+        ;;
+    plain_gz)
+        if ! gzip -dc "$DUMP_FILE" | docker exec -i "$RESTORE_CONTAINER" \
+            psql -v ON_ERROR_STOP=1 -U "$RESTORE_USER" -d "$RESTORE_DB" \
+            > "$RESTORE_LOG" 2>&1; then
+            cat "$RESTORE_LOG" >&2
+            exit 1
+        fi
+        ;;
+esac
 
 table_count="$(
     docker exec "$RESTORE_CONTAINER" psql -At -U "$RESTORE_USER" -d "$RESTORE_DB" \

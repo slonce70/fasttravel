@@ -29,13 +29,15 @@ healthcheck.
 
 from __future__ import annotations
 
+import hmac
 import os
 from typing import Any
 
 from aiogram import Bot
 from aiohttp import web
-from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2
 
+from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2
+from src.config import get_settings
 from src.infra.logging import get_logger
 
 log = get_logger(__name__)
@@ -89,19 +91,27 @@ def _format_alert(alert: dict[str, Any]) -> str:
 
 
 async def _alerts_handler(request: web.Request) -> web.Response:
-    secret = os.getenv("ALERTMANAGER_WEBHOOK_SECRET")
-    if secret:
+    secret = os.getenv("ALERTMANAGER_WEBHOOK_SECRET", "")
+    # Fail-closed in prod: an unset secret in prod means "anyone with
+    # network reach can spoof firing alerts into the operator channel"
+    # — refuse the request rather than silently accepting (audit #2).
+    if not secret:
+        if get_settings().is_prod:
+            log.error("alert_webhook.secret_missing_in_prod")
+            return web.json_response({"error": "server_misconfigured"}, status=503)
+    else:
         # Accept either:
         #   X-Webhook-Secret: <secret>       (custom header, dev convenience)
         #   Authorization: Bearer <secret>   (AlertManager native, prod path)
         # so the same bot works with curl smoke tests AND with a
         # production AlertManager `authorization: credentials:` block.
         custom = request.headers.get(SECRET_HEADER, "")
-        bearer = request.headers.get("Authorization", "")
-        bearer = (
-            bearer[len("Bearer ") :].strip() if bearer.startswith("Bearer ") else ""
-        )
-        if custom != secret and bearer != secret:
+        auth = request.headers.get("Authorization", "")
+        bearer = auth[len("Bearer ") :].strip() if auth.startswith("Bearer ") else ""
+        # compare_digest is constant-time — defends against the timing
+        # side-channel a plain `!=` would expose.
+        ok = hmac.compare_digest(custom, secret) or hmac.compare_digest(bearer, secret)
+        if not ok:
             log.warning("alert_webhook.bad_secret")
             return web.json_response({"error": "unauthorized"}, status=401)
 

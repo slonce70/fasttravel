@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from src.config import Settings
 
 
@@ -31,6 +32,7 @@ def test_prod_rejects_default_database_url() -> None:
         environment="prod",
         telegram_bot_token="123456:prod-token",
         telegram_channel_id="-1003825850110",
+        alertmanager_webhook_secret="abc123",
     )
 
     with pytest.raises(RuntimeError, match="DATABASE_URL"):
@@ -44,9 +46,24 @@ def test_prod_requires_telegram_credentials() -> None:
         database_url="postgresql+asyncpg://fasttravel:secret@postgres:5432/fasttravel",
         telegram_bot_token=None,
         telegram_channel_id=None,
+        alertmanager_webhook_secret="abc123",
     )
 
     with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN.*TELEGRAM_CHANNEL_ID"):
+        settings.assert_prod_secrets()
+
+
+def test_prod_requires_alertmanager_webhook_secret() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="prod",
+        database_url="postgresql+asyncpg://fasttravel:secret@postgres:5432/fasttravel",
+        telegram_bot_token="123456:prod-token",
+        telegram_channel_id="-1003825850110",
+        alertmanager_webhook_secret=None,
+    )
+
+    with pytest.raises(RuntimeError, match="ALERTMANAGER_WEBHOOK_SECRET"):
         settings.assert_prod_secrets()
 
 
@@ -57,6 +74,7 @@ def test_prod_accepts_rotated_secrets() -> None:
         database_url="postgresql+asyncpg://fasttravel:secret@postgres:5432/fasttravel",
         telegram_bot_token="123456:prod-token",
         telegram_channel_id="-1003825850110",
+        alertmanager_webhook_secret="rotated-supersecret",
     )
 
     settings.assert_prod_secrets()

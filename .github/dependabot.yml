@@ -41,7 +41,20 @@ updates:
       scheduler-minor-patch:
         update-types: ["minor", "patch"]
 
-  # apps/bot doesn't have a pyproject.toml yet; once it does, add a block here.
+  - package-ecosystem: pip
+    directory: /apps/bot
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python", "bot"]
+    commit-message:
+      prefix: "chore(deps/bot)"
+    groups:
+      bot-minor-patch:
+        update-types: ["minor", "patch"]
 
   # ---------- npm (pnpm) ----------
   - package-ecosystem: npm
@@ -110,11 +123,26 @@ updates:
       prefix: "chore(deps/terraform)"
 
   # ---------- GitHub Actions ----------
+  # Audit quarter #20: tj-actions/changed-files supply-chain incident
+  # (Mar 2025) showed that tag-pinned third-party actions can be hijacked
+  # without warning. Long-term fix is to pin every `uses:` to a 40-char
+  # commit SHA. We rely on Dependabot to track action versions; once an
+  # operator does the one-time bulk-rewrite to SHA pins (tools like
+  # `pinact` or `frizbee` do this in a single pass), Dependabot will
+  # then keep the SHAs current AND surface diffs for review.
+  #
+  # Until that rewrite lands, the highest-risk actions to audit by hand:
+  #   - third-party docker/* (build/login) → can run arbitrary commands
+  #     during build
+  #   - third-party codecov/codecov-action → has had token-exfil incidents
+  #   - aquasecurity/trivy-action (already pinned to 0.28.0, but not SHA)
+  #   - pnpm/action-setup (sets up the package manager — full RCE if hijacked)
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: monthly
-    labels: ["dependencies", "ci"]
+      interval: weekly        # bumped from monthly post-tj-actions
+      day: monday
+    labels: ["dependencies", "ci", "security"]
     commit-message:
       prefix: "chore(deps/actions)"
     groups:

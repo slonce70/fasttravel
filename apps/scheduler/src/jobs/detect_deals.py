@@ -30,6 +30,7 @@ hour is therefore safe.
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +38,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.infra.cache import get_redis
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
+
+# Inserted-deal tuple: (deal_id, hotel_id, discount_pct). Hoisted into
+# a type alias because the strategy runners + record helper all use it.
+_RowList = list[tuple[int, int, float]]
 
 log = get_logger(__name__)
 
@@ -172,13 +177,21 @@ _COLD_START_SQL = text(
     )
     INSERT INTO deals (
         hotel_id, operator_id, check_in, nights, meal_plan,
-        price_uah, baseline_p50, discount_pct, deep_link, source
+        price_uah, baseline_p50, discount_pct, deep_link, source,
+        detection_method
     )
     -- DISTINCT ON (hotel_id): same cooldown-within-batch issue as warm mode —
     -- without it the cold-start rule emits one row per qualifying check_in.
     SELECT DISTINCT ON (cand.hotel_id)
         cand.hotel_id, cand.operator_id, cand.check_in, cand.nights, cand.meal_plan,
-        cand.price_uah, cand.baseline_p50, cand.discount_pct, cand.deep_link, cand.source
+        cand.price_uah, cand.baseline_p50, cand.discount_pct, cand.deep_link, cand.source,
+        -- Cold-start fires on PEER comparison (other hotels in the same
+        -- destination+stars+meal+nights bucket), not on this hotel's own
+        -- history. Tagging it 'peer_anomaly' lets every downstream
+        -- surface (post_deals broadcast filter, /api/deals UI, bot
+        -- templates) treat it appropriately — it's a weaker signal than
+        -- date_dip / warm percentile and the user copy reflects that.
+        'peer_anomaly' AS detection_method
     FROM (
         SELECT
             cp.hotel_id,
@@ -517,7 +530,7 @@ async def _run_query(
     cold_start: bool,
     cooldown_hours: int,
     max_per_run: int,
-) -> list[tuple[int, int, float]]:
+) -> _RowList:
     sql = _COLD_START_SQL if cold_start else _WARM_SQL
     result = await db.execute(
         sql,
@@ -528,6 +541,31 @@ async def _run_query(
     return [(r.id, r.hotel_id, float(r.discount_pct)) for r in rows]
 
 
+# Strategy-shaped wrappers (audit #1.2 split): each accepts the same
+# (db, cooldown_hours, max_per_run) signature so the orchestration loop
+# in `detect_deals()` can iterate over them without per-branch glue.
+async def _run_warm_query(
+    db: AsyncSession, cooldown_hours: int, max_per_run: int
+) -> _RowList:
+    return await _run_query(
+        db,
+        cold_start=False,
+        cooldown_hours=cooldown_hours,
+        max_per_run=max_per_run,
+    )
+
+
+async def _run_cold_query(
+    db: AsyncSession, cooldown_hours: int, max_per_run: int
+) -> _RowList:
+    return await _run_query(
+        db,
+        cold_start=True,
+        cooldown_hours=cooldown_hours,
+        max_per_run=max_per_run,
+    )
+
+
 async def detect_deals(
     *,
     cooldown_hours: int = 24,
@@ -536,13 +574,11 @@ async def detect_deals(
 ) -> int:
     """Insert new deals based on current prices vs. baselines.
 
-    Hybrid execution (default):
-      1. Warm SQL runs first — uses each hotel's own price history. These
-         are the most trustworthy deals because the baseline is the hotel's
-         own median, not a peer-group estimate that may be biased.
-      2. Cold SQL fills the remainder of `max_per_run` with peer-comparison
-         deals. The shared cooldown table prevents the same hotel from
-         showing up in both modes.
+    Hybrid execution: a list of strategies in priority order, each given
+    the remaining budget. The first strategies (bucket / date_dip) carry
+    the strongest signal; the last (cold peer-group) only fills leftover
+    budget. The shared per-hotel cooldown prevents the same hotel from
+    showing up across two strategies on the same tick.
 
     The Redis `flag:cold_start` toggle still forces cold-only behaviour
     (legacy bootstrap mode for empty databases).
@@ -554,92 +590,59 @@ async def detect_deals(
 
     Returns: number of new deals inserted.
     """
-    cold_only = force_cold_start if force_cold_start is not None else await _is_cold_start_mode()
+    cold_only = (
+        force_cold_start if force_cold_start is not None else await _is_cold_start_mode()
+    )
     stay_inv_enabled = await _is_stay_inversion_enabled()
 
+    # Strategy table (audit #1.2): each entry is (reason_label, enabled,
+    # runner). `enabled` lets the caller toggle a strategy without
+    # mutating the loop body. `runner` takes (db, cooldown_hours,
+    # max_per_run) and returns the inserted rows.
+    #
+    # Order matters — earlier strategies consume the per-tick budget
+    # first, so the strongest signals lead. This is the same ordering
+    # the audit recommended ("BUCKET → DATE_DIP → STAY_INV → WARM →
+    # COLD"); now it's data, not control flow.
+    strategies: list[
+        tuple[str, bool, Callable[[AsyncSession, int, int], Awaitable[_RowList]]]
+    ] = [
+        ("bucket", _buckets_enabled(), _run_bucket_query),
+        ("date_dip", True, _run_date_dip_query),
+        ("stay_inversion", stay_inv_enabled, _run_stay_inversion_query),
+        ("warm", not cold_only, _run_warm_query),
+        # Cold always fills leftover budget — no flag.
+        ("cold", True, _run_cold_query),
+    ]
+
+    results: dict[str, _RowList] = {}
     async with async_session_factory() as db:
         try:
-            # 1) BUCKET branch first — operator-flagged promos are
-            # always-true signals, they shouldn't compete with statistical
-            # deals for the per-tick budget. Skipped if feature flag off.
-            bucket_rows: list[tuple[int, int, float]] = []
-            if _buckets_enabled():
-                bucket_rows = await _run_bucket_query(
-                    db,
-                    cooldown_hours=cooldown_hours,
-                    max_per_run=max_per_run,
-                )
-                _record_inserted(bucket_rows, reason="bucket")
-
-            # 2a) CALENDAR anomaly — date_dip is always on. Catches the
-            # main product case: one check-in is sharply cheaper than the
-            # rest of the same hotel's calendar.
-            date_dip_rows: list[tuple[int, int, float]] = []
-            date_dip_budget = max_per_run - len(bucket_rows)
-            if date_dip_budget > 0:
-                date_dip_rows = await _run_date_dip_query(
-                    db,
-                    cooldown_hours=cooldown_hours,
-                    max_per_run=date_dip_budget,
-                )
-                _record_inserted(date_dip_rows, reason="date_dip")
-
-            # 2b) CALENDAR anomaly — stay_inversion is flag-gated. Often
-            # fires on legitimate longer-stay discounts (package tourism),
-            # so default OFF until ops verifies signal/noise.
-            stay_inversion_rows: list[tuple[int, int, float]] = []
-            stay_inv_budget = max_per_run - len(bucket_rows) - len(date_dip_rows)
-            if stay_inv_enabled and stay_inv_budget > 0:
-                stay_inversion_rows = await _run_stay_inversion_query(
-                    db,
-                    cooldown_hours=cooldown_hours,
-                    max_per_run=stay_inv_budget,
-                )
-                _record_inserted(stay_inversion_rows, reason="stay_inversion")
-
-            # 3) WARM percentile — uses per-hotel history.
-            warm_rows: list[tuple[int, int, float]] = []
-            warm_budget = (
-                max_per_run - len(bucket_rows) - len(date_dip_rows) - len(stay_inversion_rows)
-            )
-            if not cold_only and warm_budget > 0:
-                warm_rows = await _run_query(
-                    db,
-                    cold_start=False,
-                    cooldown_hours=cooldown_hours,
-                    max_per_run=warm_budget,
-                )
-                _record_inserted(warm_rows, reason="warm")
-
-            # 4) COLD peer-group fills whatever budget remains.
-            cold_budget = (
-                max_per_run
-                - len(bucket_rows)
-                - len(date_dip_rows)
-                - len(stay_inversion_rows)
-                - len(warm_rows)
-            )
-            cold_rows: list[tuple[int, int, float]] = []
-            if cold_budget > 0:
-                cold_rows = await _run_query(
-                    db,
-                    cold_start=True,
-                    cooldown_hours=cooldown_hours,
-                    max_per_run=cold_budget,
-                )
-                _record_inserted(cold_rows, reason="cold")
-            inserted = bucket_rows + date_dip_rows + stay_inversion_rows + warm_rows + cold_rows
-            mode_parts = [
-                f"bucket={len(bucket_rows)}",
-                f"date_dip={len(date_dip_rows)}",
-                f"stay_inv={len(stay_inversion_rows)}" + ("" if stay_inv_enabled else "(off)"),
-                f"warm={len(warm_rows)}",
-                f"cold={len(cold_rows)}",
-            ]
-            mode = f"{'cold_only' if cold_only else 'hybrid'}({','.join(mode_parts)})"
+            remaining = max_per_run
+            for reason, enabled, runner in strategies:
+                if not enabled or remaining <= 0:
+                    results[reason] = []
+                    continue
+                rows = await runner(db, cooldown_hours, remaining)
+                results[reason] = rows
+                _record_inserted(rows, reason=reason)
+                remaining -= len(rows)
         except Exception:
             await db.rollback()
             raise
+
+    inserted: _RowList = []
+    for _reason, _enabled, _runner in strategies:
+        inserted.extend(results[_reason])
+
+    mode_parts = [f"{name}={len(results[name])}" for name, _e, _r in strategies]
+    # Append "(off)" suffix on flag-gated strategies that were skipped,
+    # mirroring the pre-refactor log line so dashboards keep parsing.
+    mode_parts = [
+        part + ("(off)" if not enabled else "")
+        for part, (name, enabled, _r) in zip(mode_parts, strategies, strict=True)
+    ]
+    mode = f"{'cold_only' if cold_only else 'hybrid'}({','.join(mode_parts)})"
 
     if inserted:
         top = max(inserted, key=lambda r: r[2])
@@ -656,11 +659,8 @@ async def detect_deals(
 
 
 async def _run_bucket_query(
-    db: AsyncSession,
-    *,
-    cooldown_hours: int,
-    max_per_run: int,
-) -> list[tuple[int, int, float]]:
+    db: AsyncSession, cooldown_hours: int, max_per_run: int
+) -> _RowList:
     result = await db.execute(
         _BUCKET_SQL,
         {"cooldown_hours": cooldown_hours, "max_per_run": max_per_run},
@@ -671,11 +671,8 @@ async def _run_bucket_query(
 
 
 async def _run_date_dip_query(
-    db: AsyncSession,
-    *,
-    cooldown_hours: int,
-    max_per_run: int,
-) -> list[tuple[int, int, float]]:
+    db: AsyncSession, cooldown_hours: int, max_per_run: int
+) -> _RowList:
     result = await db.execute(
         _DATE_DIP_SQL,
         {"cooldown_hours": cooldown_hours, "max_per_run": max_per_run},
@@ -686,11 +683,8 @@ async def _run_date_dip_query(
 
 
 async def _run_stay_inversion_query(
-    db: AsyncSession,
-    *,
-    cooldown_hours: int,
-    max_per_run: int,
-) -> list[tuple[int, int, float]]:
+    db: AsyncSession, cooldown_hours: int, max_per_run: int
+) -> _RowList:
     result = await db.execute(
         _STAY_INVERSION_SQL,
         {"cooldown_hours": cooldown_hours, "max_per_run": max_per_run},

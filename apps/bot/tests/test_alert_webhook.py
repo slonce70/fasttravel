@@ -9,8 +9,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-import src.alert_webhook as alert_webhook
 from aiohttp.test_utils import TestClient, TestServer
+
+import src.alert_webhook as alert_webhook
 from src.alert_webhook import _format_alert, build_app
 
 
@@ -201,8 +202,46 @@ async def test_secret_required_when_env_set(fake_bot, monkeypatch) -> None:
             headers={"X-Webhook-Secret": "supersecret-xyz"},
         )
         assert resp.status == 202
+
+        # Bearer token equivalence (AlertManager native path)
+        resp = await cl.post(
+            "/alerts",
+            json={"alerts": []},
+            headers={"Authorization": "Bearer supersecret-xyz"},
+        )
+        assert resp.status == 202
     finally:
         await cl.close()
+
+
+async def test_prod_fails_closed_when_secret_unset(fake_bot, monkeypatch) -> None:
+    """Audit #2: with no ALERTMANAGER_WEBHOOK_SECRET in prod, the webhook
+    must refuse the request rather than silently accept it."""
+    from src.config import Settings, get_settings
+
+    monkeypatch.delenv("ALERTMANAGER_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setattr(alert_webhook, "broadcast_deal", AsyncMock())
+
+    fake_prod = Settings(
+        _env_file=None,
+        environment="prod",
+        database_url="postgresql+asyncpg://fasttravel:s@postgres:5432/fasttravel",
+        telegram_bot_token="123:t",
+        telegram_channel_id="-100",
+        alertmanager_webhook_secret=None,
+    )
+    monkeypatch.setattr(alert_webhook, "get_settings", lambda: fake_prod)
+
+    app = build_app(fake_bot, channel_id="@test")
+    server = TestServer(app)
+    cl = TestClient(server)
+    await cl.start_server()
+    try:
+        resp = await cl.post("/alerts", json={"alerts": []})
+        assert resp.status == 503
+    finally:
+        await cl.close()
+        get_settings.cache_clear()
 
 
 async def test_no_channel_returns_202_with_note(monkeypatch) -> None:

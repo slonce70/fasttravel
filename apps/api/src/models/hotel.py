@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
@@ -53,7 +54,13 @@ class Hotel(Base):
     description_uk: Mapped[str | None] = mapped_column(Text, nullable=True)
     photos_jsonb: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     amenities: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
-    review_score: Mapped[float | None] = mapped_column(Numeric(3, 1), nullable=True)
+    # Audit 1.3 Low — SQLAlchemy returns Numeric columns as Decimal, not
+    # float. Annotation was a quiet lie; consumers doing
+    # `float(hotel.review_score)` worked but consumers doing arithmetic
+    # without coercion silently mixed Decimal + float and lost
+    # precision. Now the type matches the runtime; convert at the
+    # serialization boundary (`float(...)` in templates / pydantic).
+    review_score: Mapped[Decimal | None] = mapped_column(Numeric(3, 1), nullable=True)
     review_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     last_updated: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")

@@ -1,66 +1,23 @@
-"""structlog setup.
+"""API logging wiring — thin wrapper over shared.infra.logging.
 
-JSON renderer in prod, pretty console renderer in dev. Standard-library
-loggers (uvicorn, sqlalchemy, etc.) are routed through the same processor
-chain so the output is uniformly structured.
+The actual structlog configuration lives in `shared.infra.logging`;
+this file just feeds it the API's quiet-list (uvicorn.access — the
+HTTP access log is noisy at INFO and adds nothing the FastAPI
+instrumentator metrics don't already capture).
 """
 
 from __future__ import annotations
 
-import logging
-import sys
-from typing import cast
-
-import structlog
-from structlog.types import Processor
+from shared.infra.logging import configure_logging as _shared_configure
+from shared.infra.logging import get_logger as _shared_get_logger
 
 from src.config import get_settings
 
 
 def configure_logging() -> None:
-    settings = get_settings()
-    is_prod = settings.is_prod
-
-    shared_processors: list[Processor] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.processors.add_log_level,
-        structlog.processors.TimeStamper(fmt="iso", utc=True),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-    ]
-
-    if is_prod:
-        renderer: Processor = structlog.processors.JSONRenderer()
-    else:
-        renderer = structlog.dev.ConsoleRenderer(colors=True)
-
-    structlog.configure(
-        processors=[*shared_processors, renderer],
-        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, settings.log_level)),
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
-        cache_logger_on_first_use=True,
-    )
-
-    # Route std-lib logging through structlog as well.
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(
-        structlog.stdlib.ProcessorFormatter(
-            processors=[
-                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                renderer,
-            ],
-            foreign_pre_chain=shared_processors,
-        )
-    )
-
-    root = logging.getLogger()
-    root.handlers = [handler]
-    root.setLevel(getattr(logging, settings.log_level))
-
-    # Quiet down noisy libs unless explicitly debugging.
-    for noisy in ("sqlalchemy.engine", "uvicorn.access"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    _shared_configure(get_settings(), extra_quiet=("uvicorn.access",))
 
 
-def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
-    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))
+# Re-export so existing `from src.infra.logging import get_logger` callers
+# keep working without touching every module.
+get_logger = _shared_get_logger

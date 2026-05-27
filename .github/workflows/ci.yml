@@ -75,15 +75,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip + poetry virtualenv
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/pip
@@ -119,7 +119,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         # Won't block CI if CODECOV_TOKEN is missing (open-source repos work without).
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         continue-on-error: true
         with:
           files: apps/api/coverage.xml
@@ -133,20 +133,57 @@ jobs:
   scheduler-lint-test:
     name: scheduler lint + test
     runs-on: ubuntu-latest
+
+    # Audit Sprint #12 — scheduler tests for detect_deals / post_deals
+    # were heavy-mocked because there were no Postgres/Redis services.
+    # Adding them mirrors the API job's services block so future
+    # integration tests (tests/integration/test_detect_deals_sql.py)
+    # can run against real engines instead of fakeredis + mocked sessions.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: dev
+      LOG_LEVEL: WARNING
+
     defaults:
       run:
         working-directory: apps/scheduler
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip + poetry virtualenv
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/pip
@@ -172,10 +209,14 @@ jobs:
         continue-on-error: true
         run: poetry run mypy src/ || true
 
-      - name: Run tests (if tests/ exists)
+      - name: Run tests with coverage (if tests/ exists)
+        env:
+          # scheduler tests import `shared.publishers` from sibling apps/shared/.
+          # Pyproject pythonpath = ["."], so prepend the parent here.
+          PYTHONPATH: .:..
         run: |
           if [ -d tests ] && [ -n "$(ls -A tests 2>/dev/null)" ]; then
-            poetry run pytest
+            poetry run pytest --cov=src --cov-report=xml --cov-report=term
           else
             echo "No tests/ directory yet — skipping pytest. Remove this guard once tests are added."
           fi
@@ -191,15 +232,15 @@ jobs:
         working-directory: apps/ingest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Cache pip + poetry virtualenv
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/pip
@@ -225,48 +266,57 @@ jobs:
         continue-on-error: true
         run: poetry run mypy src/ || true
 
-      - name: Run tests
-        run: poetry run pytest
+      - name: Run tests with coverage
+        run: poetry run pytest --cov=src --cov-report=xml --cov-report=term
 
   # ---------------------------------------------------------------------------
-  # Bot: lint only (no pyproject.toml / no tests yet)
+  # Bot: lint + test via Poetry (Audit #8 sprint — pyproject + lockfile now)
   # ---------------------------------------------------------------------------
   bot-lint-test:
     name: bot lint + test
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/bot
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Cache pip + poetry virtualenv
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/pypoetry
+            ~/.local/share/pypoetry
+          key: poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-bot-${{ hashFiles('apps/bot/pyproject.toml', 'apps/bot/poetry.lock') }}
+          restore-keys: |
+            poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-bot-
+
+      - name: Install Poetry
+        run: pip install "poetry==${{ env.POETRY_VERSION }}"
+
       - name: Install dependencies
-        # No pyproject.toml yet — install the exact pins that bot/Dockerfile uses
-        # so tests run against the same versions production will ship.
-        run: |
-          pip install "ruff==0.7.4" pytest==8.3.3 pytest-asyncio==0.24.0 \
-                       aiogram==3.13.1 structlog==24.4.0 \
-                       pydantic==2.9.2 pydantic-settings==2.6.0 \
-                       httpx==0.27.2 redis==5.2.0 \
-                       prometheus-client==0.21.0 sentry-sdk==2.18.0 \
-                       "sqlalchemy[asyncio]==2.0.36" asyncpg==0.30.0
+        run: poetry install --no-root --with dev
 
       - name: Lint (ruff check)
-        run: ruff check apps/bot/src apps/bot/tests
+        run: poetry run ruff check src/ tests/
 
       - name: Format check (ruff format)
-        run: ruff format --check apps/bot/src apps/bot/tests
+        run: poetry run ruff format --check src/ tests/
 
-      - name: Run tests
+      - name: Run tests with coverage
         env:
-          # Bot tests import src modules — point PYTHONPATH at bot/ and
-          # the shared/ package so `from shared.publishers...` resolves.
-          PYTHONPATH: apps/bot:apps
-        run: |
-          cd apps/bot && python -m pytest tests/ --tb=short -q
+          # Bot src imports `shared.publishers...` from the sibling
+          # apps/shared/ directory. Poetry venv doesn't know about it,
+          # so we extend PYTHONPATH at test time.
+          PYTHONPATH: .:..
+        run: poetry run pytest --cov=src --cov-report=xml --cov-report=term --tb=short -q
 
   # ---------------------------------------------------------------------------
   # Frontend (Next.js): lint + typecheck + build
@@ -280,15 +330,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3
         with:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Set up Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -317,7 +367,7 @@ jobs:
 
       - name: Upload .next build artifacts
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: web-next-build
           path: |
@@ -339,22 +389,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v3
+        uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v3
         with:
           version: ${{ env.PNPM_VERSION }}
 
       - name: Set up Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: apps/web/pnpm-lock.yaml
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -409,7 +459,7 @@ jobs:
 
       - name: Upload Playwright artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ci-browser-smoke-artifacts
           path: |
@@ -436,10 +486,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Prepare .env for compose validation
         # docker compose config interpolates ${VAR} so we need a populated .env.

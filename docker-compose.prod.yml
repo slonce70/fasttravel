@@ -11,40 +11,59 @@
 services:
   postgres:
     ports: !reset []     # remove host-port publishing
+    # Audit #8 — memory caps so a runaway container can't OOM-kill its
+    # neighbours. Postgres gets the biggest share because shared_buffers
+    # + work_mem live here.
+    mem_limit: 6g
     # In prod, mount a custom postgresql.conf overlay if needed:
     # volumes:
     #   - ./infra/postgres/postgresql.prod.conf:/etc/postgresql/postgresql.conf:ro
 
   redis:
     ports: !reset []
+    # `maxmemory 512mb` is set inside the container; the cgroup cap gives
+    # the OS overhead a buffer above that.
+    mem_limit: 768m
 
   api:
     # Use registry image built by CI in prod.
     image: ${API_IMAGE:?API_IMAGE is required in production}
     ports: !reset []     # only nginx fronts the API
+    mem_limit: 1g
     environment:
       ENVIRONMENT: prod
 
   bot:
     image: ${BOT_IMAGE:?BOT_IMAGE is required in production}
+    mem_limit: 512m
     environment:
       ENVIRONMENT: prod
 
   scheduler:
     image: ${SCHEDULER_IMAGE:?SCHEDULER_IMAGE is required in production}
+    mem_limit: 512m
     environment:
       ENVIRONMENT: prod
 
   prometheus:
     ports: !reset []
+    mem_limit: 1g
+
+  alertmanager:
+    # Audit #3: keep AlertManager off the public internet. Operators reach
+    # the web UI by SSH-tunnelling 9093 from the host.
+    ports: !reset []
+    mem_limit: 256m
 
   grafana:
     ports: !reset []
+    mem_limit: 512m
 
   nginx:
     image: nginx:1.27-alpine
     container_name: ft_nginx
     restart: unless-stopped
+    mem_limit: 128m
     volumes:
       - ./infra/nginx:/etc/nginx/conf.d:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro

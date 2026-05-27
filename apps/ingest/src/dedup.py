@@ -40,7 +40,10 @@ def offer_fingerprint(offer: NormalizedOffer) -> str:
         f"{offer.hotel_external_id}|{offer.operator_code}|{offer.check_in.isoformat()}"
         f"|{offer.nights}|{offer.meal_plan}|{offer.price_uah}"
     )
-    return hashlib.md5(payload.encode("utf-8")).hexdigest()
+    # Audit 2.2 Medium (Bandit HIGH B324): the dedup hash is not a
+    # security primitive — it's a cache key. usedforsecurity=False
+    # silences the bandit/HIGH warning without changing semantics.
+    return hashlib.md5(payload.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 async def is_duplicate(redis: Redis, fingerprint: str, ttl_hours: int | None = None) -> bool:

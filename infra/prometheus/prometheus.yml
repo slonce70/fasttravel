@@ -41,3 +41,18 @@ scrape_configs:
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
+
+  # Audit quarter #17 — host/infra-level metrics. Most outages on small
+  # VMs are infra problems (disk, OOM, postgres locks). App-only
+  # exporters above can't see those; the three jobs below close the gap.
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']

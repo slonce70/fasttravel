@@ -1,6 +1,12 @@
-"""Optional Sentry init — only enabled when SENTRY_DSN is set."""
+"""API Sentry wiring — thin wrapper over shared.infra.sentry.
+
+The actual init lives in `shared.infra.sentry`; this file injects the
+FastAPI integration that's API-only (scheduler / bot don't need it).
+"""
 
 from __future__ import annotations
+
+from shared.infra.sentry import configure_sentry as _shared_configure
 
 from src.config import get_settings
 
@@ -10,22 +16,8 @@ def configure_sentry() -> bool:
     settings = get_settings()
     if not settings.sentry_dsn:
         return False
-
-    # Import inside the function so the dependency is optional at import time.
-    import sentry_sdk
-    from sentry_sdk.integrations.asyncio import AsyncioIntegration
+    # FastApiIntegration import is deferred so unit tests that don't
+    # touch the API surface don't pull sentry-sdk[fastapi] at collect time.
     from sentry_sdk.integrations.fastapi import FastApiIntegration
-    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
-    sentry_sdk.init(
-        dsn=settings.sentry_dsn,
-        environment=settings.environment,
-        traces_sample_rate=settings.sentry_traces_sample_rate,
-        send_default_pii=False,
-        integrations=[
-            FastApiIntegration(),
-            SqlalchemyIntegration(),
-            AsyncioIntegration(),
-        ],
-    )
-    return True
+    return _shared_configure(settings, extra_integrations=[FastApiIntegration()])

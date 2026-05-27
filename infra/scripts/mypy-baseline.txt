@@ -1,0 +1,14 @@
+# Mypy error baseline per service — audit Sprint #11 ratchet.
+# Format: `<service> <error_count>`. Lines starting with `#` ignored.
+#
+# How to update: after a deliberate typing cleanup, re-run:
+#   ./infra/scripts/mypy-ratchet.sh --refresh-baseline api scheduler ingest bot
+# and commit the changes. CI fails if any service's mypy error count
+# exceeds the number recorded here.
+#
+# Initial baseline numbers are placeholders — run the ratchet locally
+# once with --refresh-baseline to seed them with the real current count.
+api 0
+scheduler 0
+ingest 0
+bot 70
