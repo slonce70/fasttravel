@@ -4,10 +4,11 @@ Revision ID: 018
 Revises: 017
 Create Date: 2026-05-27
 
-Audit #1.3 Low — `hotels.coords` was a plain `Text` column ("POINT(lng
-lat)") with no spatial index. The first feature that needs "find hotels
-near X" would have to ALTER the column anyway. Doing it now while the
-table is still small is far cheaper than later.
+Audit #1.3 Low — `hotels.coords` is a legacy coordinate column with no
+spatial index. Fresh schemas promote it to Postgres `point`; older
+snapshots may still resemble text values. The first feature that needs
+"find hotels near X" would have to ALTER the column anyway. Doing it now
+while the table is still small is far cheaper than later.
 
 Strategy:
   1. CREATE EXTENSION postgis IF NOT EXISTS.
@@ -51,18 +52,22 @@ def upgrade() -> None:
         ADD COLUMN IF NOT EXISTS coords_geo geography(Point, 4326)
         """
     )
-    # Backfill from the legacy `coords` text column. Accepts both
-    # "POINT(lng lat)" (PostGIS canonical text form) and plain "lng,lat".
+    # Backfill from the legacy `coords` column. Accepts native Postgres
+    # point output "(lng,lat)", PostGIS-ish "POINT(lng lat)", and plain
+    # "lng,lat" text snapshots.
     op.execute(
         """
         UPDATE hotels
         SET coords_geo = ST_SetSRID(
             ST_GeomFromText(
                 CASE
-                    WHEN coords ILIKE 'POINT(%' THEN coords
-                    WHEN coords ~ '^-?[0-9]+(\\.[0-9]+)?,\\s*-?[0-9]+(\\.[0-9]+)?$' THEN
-                        'POINT(' || split_part(coords, ',', 1) || ' '
-                                 || trim(split_part(coords, ',', 2)) || ')'
+                    WHEN coords::text ILIKE 'POINT(%' THEN coords::text
+                    WHEN coords::text ~ '^\\(-?[0-9]+(\\.[0-9]+)?,\\s*-?[0-9]+(\\.[0-9]+)?\\)$' THEN
+                        'POINT(' || split_part(trim(both '()' from coords::text), ',', 1) || ' '
+                                 || trim(split_part(trim(both '()' from coords::text), ',', 2)) || ')'
+                    WHEN coords::text ~ '^-?[0-9]+(\\.[0-9]+)?,\\s*-?[0-9]+(\\.[0-9]+)?$' THEN
+                        'POINT(' || split_part(coords::text, ',', 1) || ' '
+                                 || trim(split_part(coords::text, ',', 2)) || ')'
                     ELSE NULL
                 END
             ),
