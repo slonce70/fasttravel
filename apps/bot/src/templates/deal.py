@@ -8,25 +8,18 @@ Every DB-supplied field is piped through `escape_markdown_v2`.
 
 from __future__ import annotations
 
-from datetime import date, datetime
 from typing import Any
 
 from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import escape_markdown_v2
-from shared.text_uk import format_meal_plan, format_nights, format_reviews
-
-
-def _stars_str(stars: int | None) -> str:
-    if not stars:
-        return ""
-    return "⭐" * int(stars)
-
-
-def _format_uah(price: int | float | None) -> str:
-    if price is None:
-        return "—"
-    # 35 200 ₴
-    return f"{int(price):,}".replace(",", " ") + " ₴"
+from shared.text_uk import (
+    format_date_short,
+    format_meal_plan,
+    format_nights,
+    format_reviews,
+    format_stars,
+    format_uah,
+)
 
 
 def _format_pct(pct: float | int | None) -> str:
@@ -51,34 +44,6 @@ def _format_hotel_context(row: dict[str, Any]) -> str:
     return "".join(f"{escape_markdown_v2(line)}\n" for line in lines)
 
 
-def _format_date(value: str | date | datetime) -> str:
-    """Render '14 черв.' style. Accepts ISO string or date/datetime."""
-    if isinstance(value, str):
-        try:
-            d = date.fromisoformat(value.split("T", 1)[0])
-        except ValueError:
-            return value
-    elif isinstance(value, datetime):
-        d = value.date()
-    else:
-        d = value
-    months = (
-        "січ.",
-        "лют.",
-        "бер.",
-        "квіт.",
-        "трав.",
-        "черв.",
-        "лип.",
-        "серп.",
-        "вер.",
-        "жовт.",
-        "лист.",
-        "груд.",
-    )
-    return f"{d.day} {months[d.month - 1]}"
-
-
 def render_search_hit(hit: dict[str, Any]) -> str:
     """One search-result card (no buttons — those come from a keyboard).
 
@@ -86,9 +51,9 @@ def render_search_hit(hit: dict[str, Any]) -> str:
     in apps/api/src/schemas/search.py.
     """
     name = escape_markdown_v2(hit.get("name_uk") or "Готель")
-    stars = _stars_str(hit.get("stars"))
+    stars = format_stars(hit.get("stars"))
     destination = escape_markdown_v2(hit.get("destination_name") or "")
-    min_price = _format_uah(hit.get("min_price_uah"))
+    min_price = format_uah(hit.get("min_price_uah"))
     review_score = hit.get("review_score")
     review_count = hit.get("review_count") or 0
 
@@ -124,17 +89,17 @@ def render_deal(row: dict[str, Any]) -> str:
     """
     discount = _format_pct(row.get("discount_pct"))
     name = escape_markdown_v2(row.get("hotel_name_uk") or "Готель")
-    stars = _stars_str(row.get("hotel_stars"))
+    stars = format_stars(row.get("hotel_stars"))
     destination = escape_markdown_v2(row.get("destination_name") or "")
-    check_in = escape_markdown_v2(_format_date(row.get("check_in")))
+    check_in = escape_markdown_v2(format_date_short(row.get("check_in") or ""))
     nights = row.get("nights") or 7
     meal = escape_markdown_v2(format_meal_plan(row.get("meal_plan")))
     price_int = int(row.get("price_uah") or 0)
     baseline_int = int(row.get("baseline_p50") or 0)
     savings = max(0, baseline_int - price_int)
-    price_fmt = escape_markdown_v2(_format_uah(price_int))
-    baseline_fmt = escape_markdown_v2(_format_uah(baseline_int))
-    savings_fmt = escape_markdown_v2(_format_uah(savings))
+    price_fmt = escape_markdown_v2(format_uah(price_int))
+    baseline_fmt = escape_markdown_v2(format_uah(baseline_int))
+    savings_fmt = escape_markdown_v2(format_uah(savings))
 
     strikethrough = f"~{baseline_fmt}~" if savings > 0 else ""
 

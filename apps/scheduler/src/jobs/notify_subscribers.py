@@ -25,7 +25,13 @@ from sqlalchemy import text
 
 from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import escape_markdown_v2, make_bot
-from shared.text_uk import format_meal_plan, format_nights
+from shared.text_uk import (
+    format_date_short,
+    format_meal_plan,
+    format_nights,
+    format_stars,
+    format_uah,
+)
 from src.config import get_settings
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -61,7 +67,8 @@ _MATCH_SQL = text(
         h.name_uk      AS hotel_name_uk,
         h.canonical_slug AS hotel_slug,
         h.stars        AS hotel_stars,
-        dest.name_uk   AS destination_name
+        dest.name_uk   AS destination_name,
+        country.name_uk AS country_name
     FROM telegram_subscriber_filters f
     JOIN telegram_subscribers s ON s.chat_id = f.chat_id AND NOT s.is_blocked
     JOIN deals d
@@ -69,6 +76,7 @@ _MATCH_SQL = text(
       AND (f.last_notified_deal_id IS NULL OR d.id > f.last_notified_deal_id)
     JOIN hotels h ON h.id = d.hotel_id
     LEFT JOIN destinations dest ON dest.id = h.destination_id
+    LEFT JOIN destinations country ON country.id = dest.parent_id
     WHERE f.is_active
       AND dest.country_iso2 = f.country_iso2
       AND (f.max_price_uah IS NULL OR d.price_uah <= f.max_price_uah)
@@ -101,31 +109,23 @@ _MARK_NOTIFIED = text(
 )
 
 
-def _format_uah(price: int | None) -> str:
-    if price is None:
-        return "—"
-    return f"{int(price):,}".replace(",", " ") + " ₴"
-
-
-def _stars_str(stars: int | None) -> str:
-    if not stars:
-        return ""
-    return "⭐" * int(stars)
-
-
 def _render(row: Any, public_site_url: str) -> str:
     discount = int(round(float(row.discount_pct or 0)))
     name = escape_markdown_v2(row.hotel_name_uk or "Готель")
-    stars = _stars_str(row.hotel_stars)
+    stars = format_stars(row.hotel_stars)
     dest = escape_markdown_v2(row.destination_name or "")
+    country = getattr(row, "country_name", None) or ""
+    location = escape_markdown_v2(
+        f"{dest}, {country}" if dest and country else dest or country or ""
+    ) if (dest or country) else ""
     nights = int(row.nights or 7)
     meal = escape_markdown_v2(format_meal_plan(row.meal_plan))
-    price = escape_markdown_v2(_format_uah(row.price_uah))
+    price = escape_markdown_v2(format_uah(row.price_uah))
     baseline_int = int(row.baseline_p50 or 0)
     savings = max(0, baseline_int - int(row.price_uah or 0))
-    savings_fmt = escape_markdown_v2(_format_uah(savings))
-    baseline = escape_markdown_v2(_format_uah(baseline_int))
-    check_in = escape_markdown_v2(str(row.check_in))
+    savings_fmt = escape_markdown_v2(format_uah(savings))
+    baseline = escape_markdown_v2(format_uah(baseline_int))
+    check_in = escape_markdown_v2(format_date_short(row.check_in))
     signal = get_deal_signal_copy(getattr(row, "detection_method", None))
     why = signal.why_line
     why_line = f"\n_{escape_markdown_v2(why)}_" if why else ""
@@ -139,11 +139,10 @@ def _render(row: Any, public_site_url: str) -> str:
         comparison_line = f"🔥 *\\-{discount}%* · економія *{savings_fmt}*"
 
     return (
-        f"{title}\n"
-        f"🌍 {escape_markdown_v2(row.country_iso2)}\n\n"
+        f"{title}\n\n"
         f"🏨 *{name}* {stars}".rstrip()
         + "\n"
-        + (f"📍 {dest}\n" if dest else "")
+        + (f"📍 {location}\n" if location else "")
         + f"📅 {check_in} · {escape_markdown_v2(format_nights(nights))} · {meal}\n\n"
         + f"{baseline_line}\n"
         + comparison_line
