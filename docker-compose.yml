@@ -79,8 +79,9 @@ services:
 
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      # Build context spans ./apps so the API image can vendor apps/shared/.
+      context: ./apps
+      dockerfile: api/Dockerfile
     image: fasttravel/api:dev
     container_name: ft_api
     restart: unless-stopped

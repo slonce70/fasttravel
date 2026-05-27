@@ -64,18 +64,18 @@ describe('DealCard', () => {
     );
   });
 
-  it('rounds the discount percent and includes the fire emoji', () => {
+  it('rounds the discount percent and includes the method badge icon', () => {
     render(<DealCard deal={fullDeal} />);
     // 37.4 → -37
     expect(screen.getByText(/-37%/)).toBeInTheDocument();
-    expect(screen.getByText(/🔥/)).toBeInTheDocument();
+    expect(screen.getByText(/📉/)).toBeInTheDocument();
   });
 
-  it('renders strike-through baseline price when baseline > price', () => {
+  it('renders method-specific baseline price when baseline > price', () => {
     render(<DealCard deal={fullDeal} />);
-    // "зазвичай 51 500 ₴" — non-breaking space inside the formatter,
+    // "інші дати 51 500 ₴" — non-breaking space inside the formatter,
     // so use a relaxed regex (only on prefix + the integer part).
-    expect(screen.getByText(/зазвичай/i)).toBeInTheDocument();
+    expect(screen.getByText(/інші дати/i)).toBeInTheDocument();
     expect(screen.getByText(/51/)).toBeInTheDocument();
     // Current price uses bigger font but same component — verify present.
     expect(screen.getByText(/32/)).toBeInTheDocument();
@@ -104,5 +104,13 @@ describe('DealCard', () => {
     expect(screen.getByText('Belport Beach Hotel')).toBeInTheDocument();
     // No CTA when deep_link is null.
     expect(screen.queryByRole('link', { name: /Купити/i })).toBeNull();
+  });
+
+  it('labels peer-comparison deals without implying same-hotel usual savings', () => {
+    render(<DealCard deal={{ ...fullDeal, detection_method: 'peer_anomaly' }} />);
+
+    expect(screen.getByText(/Дешевше за схожі готелі/i)).toBeInTheDocument();
+    expect(screen.getByText(/орієнтир схожих/i)).toBeInTheDocument();
+    expect(screen.queryByText(/зазвичай/i)).toBeNull();
   });
 });

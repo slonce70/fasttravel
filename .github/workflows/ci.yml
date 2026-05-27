@@ -68,6 +68,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       ENVIRONMENT: dev
       LOG_LEVEL: WARNING
+      PYTHONPATH: .:..
 
     defaults:
       run:

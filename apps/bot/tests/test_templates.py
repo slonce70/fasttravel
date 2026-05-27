@@ -99,3 +99,25 @@ def test_render_deal_handles_missing_destination():
     # Doesn't crash, no destination line emitted
     assert "Test Hotel" in out
     assert "📍" not in out
+
+
+def test_render_deal_peer_anomaly_names_peer_baseline_without_savings_claim():
+    row = {
+        "discount_pct": 29,
+        "hotel_name_uk": "Peer Hotel",
+        "hotel_stars": 4,
+        "destination_name": "Анталія",
+        "check_in": "2026-07-10",
+        "nights": 7,
+        "meal_plan": "AI",
+        "price_uah": 32000,
+        "baseline_p50": 45500,
+        "detection_method": "peer_anomaly",
+    }
+
+    out = render_deal(row)
+
+    assert "дешевше за схожі готелі" in out
+    assert "орієнтир схожих" in out
+    assert "економія" not in out
+    assert "~45 500 ₴~" not in out

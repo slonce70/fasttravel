@@ -23,6 +23,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import escape_markdown_v2, make_bot
 from src.config import get_settings
 from src.infra.db import async_session_factory
@@ -71,11 +72,13 @@ _MATCH_SQL = text(
       AND dest.country_iso2 = f.country_iso2
       AND (f.max_price_uah IS NULL OR d.price_uah <= f.max_price_uah)
       AND (f.min_stars      IS NULL OR h.stars     >= f.min_stars)
+      AND (f.meal_plan IS NULL OR d.meal_plan = f.meal_plan)
       AND d.source IN ('farvater_scrape', 'live_refresh', 'ittour')
+      AND d.discount_pct >= 15
       -- Higher floor for peer_anomaly (cold-start): peer-group comparison
       -- has more false positives than a hotel's own-history percentile or
       -- a calendar date-dip, so we only DM the subscriber on big drops.
-      -- Other methods keep their natural threshold (>0% measurable).
+      -- Other methods keep the same 15% floor used by public channel posts.
       AND (
           d.detection_method != 'peer_anomaly'
           OR d.discount_pct >= 25
@@ -118,17 +121,6 @@ _MEAL_LABELS = {
     "RO": "Без харчування",
 }
 
-# Mirrors post_deals._WHY_LINES so the personal alert tells the
-# subscriber WHY this deal beat the others — calendar dip vs operator
-# promo vs hotel-history percentile vs peer-group cold-start.
-_WHY_LINES = {
-    "calendar_anomaly": "📉 Аномально дешева дата у цьому готелі",
-    "promo_discount": "🏷 Спецціна оператора",
-    "percentile": "📊 Нижче історичної ціни цього готелю",
-    "peer_anomaly": "📊 Дешевше за середнє по сусідніх готелях",
-}
-
-
 def _render(row: Any, public_site_url: str) -> str:
     discount = int(round(float(row.discount_pct or 0)))
     name = escape_markdown_v2(row.hotel_name_uk or "Готель")
@@ -143,19 +135,27 @@ def _render(row: Any, public_site_url: str) -> str:
     savings_fmt = escape_markdown_v2(_format_uah(savings))
     baseline = escape_markdown_v2(_format_uah(baseline_int))
     check_in = escape_markdown_v2(str(row.check_in))
-    method = (getattr(row, "detection_method", None) or "").lower()
-    why = _WHY_LINES.get(method, "")
+    signal = get_deal_signal_copy(getattr(row, "detection_method", None))
+    why = signal.why_line
     why_line = f"\n_{escape_markdown_v2(why)}_" if why else ""
+    if signal.peer_comparison:
+        title = "🔔 *Варіант за вашою підпискою*"
+        baseline_line = f"💰 *{price}* · орієнтир схожих {baseline}"
+        comparison_line = f"📊 *{discount}% дешевше за схожі готелі*"
+    else:
+        title = "🔔 *Знижка за вашою підпискою*"
+        baseline_line = f"💰 *{price}* ~{baseline}~"
+        comparison_line = f"🔥 *\\-{discount}%* · економія *{savings_fmt}*"
 
     return (
-        f"🔔 *Знижка за вашою підпискою*\n"
+        f"{title}\n"
         f"🌍 {escape_markdown_v2(row.country_iso2)}\n\n"
         f"🏨 *{name}* {stars}".rstrip()
         + "\n"
         + (f"📍 {dest}\n" if dest else "")
         + f"📅 {check_in} · {nights} ноч\\. · {meal}\n\n"
-        + f"💰 *{price}* ~{baseline}~\n"
-        + f"🔥 *\\-{discount}%* · економія *{savings_fmt}*"
+        + f"{baseline_line}\n"
+        + comparison_line
         + why_line
     )
 
@@ -205,7 +205,7 @@ async def notify_subscribers() -> int:
             kb_rows.append(
                 [
                     InlineKeyboardButton(
-                        text="🔕 Призупинити підписку",
+                        text="❌ Видалити цю підписку",
                         callback_data=f"sub:del:{row.filter_id}",
                     )
                 ]

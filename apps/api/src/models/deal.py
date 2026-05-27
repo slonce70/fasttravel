@@ -56,9 +56,10 @@ class Deal(Base):
 
     # Why detect_deals flagged this row — orthogonal to `source` which
     # is the upstream pipeline. Added in migration 013.
-    # Values: 'percentile' (warm/cold percentile rule),
+    # Values: 'percentile' (same-hotel history),
     #         'promo_discount' (promo_offers with real strike-through),
-    #         'peer_anomaly' (Phase 2 ML detector, future).
+    #         'calendar_anomaly' (same-hotel date-dip / gated stay inversion),
+    #         'peer_anomaly' (cold-start peer comparison).
     # NOT NULL with server_default='percentile' so historical rows get
     # the right value retroactively.
     detection_method: Mapped[str] = mapped_column(

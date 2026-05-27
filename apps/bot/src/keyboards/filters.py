@@ -133,7 +133,7 @@ def results_actions_kb(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="🔔 Підписатись на оновлення",
+                    text="🔔 Алерт за цими фільтрами",
                     callback_data="res:subscribe",
                 )
             ]
