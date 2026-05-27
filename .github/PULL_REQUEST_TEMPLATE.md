@@ -15,7 +15,9 @@
 <!-- Який use-case / баг / decision стоїть за зміною. Лінкуй issue / ADR. -->
 
 Closes #
-Related ADR: docs/DECISIONS.md#
+<!-- For non-trivial architectural choices, link the spec under
+docs/superpowers/specs/ or attach an inline ADR section below. -->
+Spec / ADR (optional):
 
 ## Як перевірено (local)
 
@@ -34,7 +36,7 @@ curl -fsS http://localhost:8000/health
 - [ ] `ruff check` + `ruff format` пройшли (`cd apps/api && poetry run ruff check src/ tests/`)
 - [ ] Тести зелені (`poetry run pytest`)
 - [ ] Якщо змінена схема БД — додано міграцію Alembic (`alembic revision --autogenerate -m "..."`)
-- [ ] Якщо архітектурне рішення — додано/оновлено запис у `docs/DECISIONS.md`
-- [ ] Якщо змінений публічний API — оновлено `docs/ARCHITECTURE.md` / README
+- [ ] Якщо архітектурне рішення — додано spec у `docs/superpowers/specs/` (або inline ADR у тілі PR)
+- [ ] Якщо змінений публічний API — оновлено відповідний `apps/<service>/README.md`
 - [ ] Жодних секретів у diff (`.env`, токени, ключі)
 - [ ] CI пройшов (workflow `CI` зелений)

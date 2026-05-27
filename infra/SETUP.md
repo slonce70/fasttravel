@@ -173,25 +173,19 @@ sudo htpasswd -c /etc/nginx/.htpasswd-grafana admin   # prompts for password
 
 The file is mounted into the nginx container by `docker-compose.prod.yml`.
 
-### Certbot renewal hooks
+### Certbot renewal — already wired
 
-The compose nginx container owns ports 80/443 after deploy, so standalone
-renewal must stop it briefly during the ACME challenge:
+`cloud-init.yml` writes a deploy hook to
+`/etc/letsencrypt/renewal-hooks/deploy/10-reload-nginx.sh` that runs
+`nginx -s reload` **inside the compose nginx container** after every
+successful renewal, plus enables `certbot.timer` (twice-daily renew
+check). You don't need to install hooks manually.
+
+Verify after cloud-init:
 
 ```bash
-sudo install -d /etc/letsencrypt/renewal-hooks/pre /etc/letsencrypt/renewal-hooks/post
-
-sudo tee /etc/letsencrypt/renewal-hooks/pre/fasttravel-stop-nginx.sh >/dev/null <<'SH'
-#!/usr/bin/env bash
-docker stop ft_nginx >/dev/null 2>&1 || true
-SH
-sudo chmod +x /etc/letsencrypt/renewal-hooks/pre/fasttravel-stop-nginx.sh
-
-sudo tee /etc/letsencrypt/renewal-hooks/post/fasttravel-start-nginx.sh >/dev/null <<'SH'
-#!/usr/bin/env bash
-docker start ft_nginx >/dev/null 2>&1 || true
-SH
-sudo chmod +x /etc/letsencrypt/renewal-hooks/post/fasttravel-start-nginx.sh
+systemctl is-enabled certbot.timer       # → enabled
+ls /etc/letsencrypt/renewal-hooks/deploy # → 10-reload-nginx.sh
 ```
 
 ---

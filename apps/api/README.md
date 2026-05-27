@@ -7,24 +7,37 @@ FastAPI service exposing read-only HTTP over the price/hotel aggregator.
 ```
 apps/api/
   src/
-    main.py                 FastAPI app, lifespan, middleware
-    config.py               Pydantic Settings (BaseSettings)
-    deps.py                 DI providers (get_db, get_redis, get_app_settings)
+    main.py                 FastAPI app, lifespan, middleware (incl. AmpQueryParamMiddleware)
+    config.py               Settings, inherits BaseAppSettings from apps/shared/infra/
+    deps.py                 DI providers (get_db, get_redis)
     routers/                HTTP layer
       health.py             /health
-      hotels.py             /api/hotels/{slug}, /api/hotels/{id}/{calendar,offers}
+      hotels.py             /api/hotels/{slug}, /api/hotels/{id}/{calendar,offers,refresh,hot-ping}
       search.py             /api/search
-      deals.py              /api/deals
-    services/               Business logic for search, calendar, deals, redirects
+      deals.py              /api/deals (sort=discount|newest|price)
+      promotions.py         /api/promotions  (operator-flagged offers)
+      destinations.py       /api/destinations
+      seo.py                /robots.txt, /sitemap.xml
+    services/               Business logic
+      calendar_service.py   heatmap query for hotel calendar
+      search_service.py     ranked hotel search with min_price
+      deal_service.py       /api/deals listing + sort
+      refresh_queue.py      Persistent refresh-queue logic (audit #1.3 split)
+      promo_service.py      operator promo lookups
     models/                 SQLAlchemy 2.x async ORM
     schemas/                Pydantic 2 response/request models
-    infra/                  DB engine, Redis client, structlog, Sentry
-  migrations/               Alembic
-    versions/001_init.py    Full schema
+    infra/                  Service-local wrappers over apps/shared/infra/
+      db.py                 async engine + session factory
+      cache.py              Redis client
+      logging.py            thin wrapper over shared.infra.logging
+      sentry.py             thin wrapper over shared.infra.sentry (adds FastApiIntegration)
+      limiter.py            slowapi per-IP keying (CF-Connecting-IP → XFF → client.host)
+      middleware.py         AmpQueryParamMiddleware (rewrites ?amp;param=)
+  migrations/versions/      Alembic; latest = 018_hotels_coords_postgis.py
   tests/                    pytest + httpx + pytest-asyncio
   alembic.ini
   pyproject.toml
-  Dockerfile
+  Dockerfile                multi-stage, USER app, HEALTHCHECK
 ```
 
 ## Running locally
@@ -118,20 +131,32 @@ handler automatically carries the id.
 |---|---|---|
 | `GET` | `/health` | DB + Redis ping; 200 ok / 503 degraded |
 | `GET` | `/api/hotels/{slug}` | Public lookup by SEO slug |
-| `GET` | `/api/hotels/{id}/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD` | Heatmap data; max window 180 days |
-| `GET` | `/api/hotels/{id}/offers?date=YYYY-MM-DD&nights=7&meal=AI` | All operator offers for the date |
-| `GET` | `/api/search?country=tr&stars_min=4&limit=20&offset=0` | Hotel search (facets only on MVP) |
-| `GET` | `/api/deals?country=tr&limit=50&offset=0` | Recent detected deals |
+| `GET` | `/api/hotels/{id}/calendar?from=…&to=…&meal=AI&nights=7` | Heatmap; max window 180 days. **Read-only** (audit fix — no Redis mutation). |
+| `GET` | `/api/hotels/{id}/offers?date=…&nights=7&meal=AI` | All operator offers for the date |
+| `POST` | `/api/hotels/{id}/hot-ping` | Client-driven heat signal (replaces the GET-side INCR). 60/min/IP rate-limited. Returns 204. |
+| `POST` | `/api/hotels/{id}/refresh?nights=N` | Enqueue live-price fetch. 10/IP/hour. Dedup via 5-min lock per (hotel, nights). |
+| `GET` | `/api/search?country=tr&stars_min=4&…` | Hotel search. Accepts `?amp;param=…` aliases via AmpQueryParamMiddleware. |
+| `GET` | `/api/deals?country=tr&sort=discount&limit=50&offset=0` | Recent deals; default `sort=discount` (biggest %). `sort=newest\|price` also supported. Exposes `detection_method` per row. |
+| `GET` | `/api/deals/{id}` | Single deal permalink (404 if not found / aged out / synthetic). |
+| `GET` | `/api/promotions` | Operator-flagged Farvater promos (bucket-membership; not the same as deals). |
+| `GET` | `/api/destinations` | Country list filtered by `has_active_prices`. |
 
 ## Production contracts
 
-- `Settings.assert_prod_secrets()` refuses to boot `ENVIRONMENT=prod`
-  with default `_change_me` database passwords.
+- `Settings.assert_prod_secrets()` (inherited from `shared.infra.BaseAppSettings`)
+  refuses to boot `ENVIRONMENT=prod` with default `_change_me` database
+  passwords; the API adds `DATABASE_URL_SYNC` to the offender list.
+- Per-IP rate limiter (`src/infra/limiter.py`) reads `CF-Connecting-IP` →
+  `X-Forwarded-For[0]` → `request.client.host`. Operator can override the
+  trusted-header preference with `RATE_LIMIT_TRUSTED_HEADER` env var.
+- AmpQueryParamMiddleware rewrites `?amp;param=…` → `?param=…` before
+  route matching. Means every router stays clean; you don't need to
+  declare alias Query() params per endpoint (audit #1.3 cleanup).
 - Calendar/search/deals endpoints read from real tables and materialized
   views populated by scheduler ingest jobs; no demo seed path is required.
 - Affiliate redirects are template-based until partner APIs provide final
-  signing rules; unavailable partners should stay explicit rather than
-  silently pretending checkout happens on FastTravel.
+  signing rules; unavailable partners stay explicit rather than silently
+  pretending checkout happens on FastTravel.
 
 ## Architectural decisions worth knowing
 

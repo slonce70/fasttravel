@@ -77,10 +77,11 @@ def _missing_paths(obj: Any, paths: list[str]) -> list[str]:
     return missing
 
 
-# Minimal "must exist" paths per endpoint. Names match the HAR snapshot
-# in docs/farvater-har-report.md. Don't tighten beyond what's actually
-# load-bearing — too tight means false alarms on cosmetic upstream
-# changes (e.g. a new field added next to an existing one).
+# Minimal "must exist" paths per endpoint. Names match the original HAR
+# capture against the Farvater production endpoints (2026-05-25). Don't
+# tighten beyond what's actually load-bearing — too tight means false
+# alarms on cosmetic upstream changes (e.g. a new field added next to
+# an existing one).
 _CALENDAR_REQUIRED_PATHS = [
     "statusCode",
     "data",

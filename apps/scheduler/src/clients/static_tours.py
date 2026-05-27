@@ -1,10 +1,9 @@
 """farvater `/uk/catalog/static-tours` client + parser.
 
-This is the endpoint the HAR investigation (docs/farvater-har-report.md)
-identified as the canonical carrier of operator-flagged promotion
-signals. It is NOT the same as the calendar endpoint that
-`snapshot_farvater` already calls — the calendar carries pricing
-only, no flags.
+This is the endpoint the 2026-05-25 HAR investigation identified as the
+canonical carrier of operator-flagged promotion signals. It is NOT the
+same as the calendar endpoint that `snapshot_farvater` already calls —
+the calendar carries pricing only, no flags.
 
 Schema (per HAR snapshot 2026-05-25):
 

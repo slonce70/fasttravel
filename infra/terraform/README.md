@@ -94,7 +94,7 @@ Default: **local state** (`terraform.tfstate` in this directory). Acceptable whi
 | VCNs | "no enforced limit" but soft cap ~3 | 1 |
 | Egress | 10 TB/month | far below |
 
-The 200 GB boot volume **exhausts the free block-volume quota** — you cannot attach additional volumes without paying. If you outgrow it, the migration path in [`docs/DECISIONS.md`](../../docs/DECISIONS.md) is a Hetzner CX22 read-replica.
+The 200 GB boot volume **exhausts the free block-volume quota** — you cannot attach additional volumes without paying. If you outgrow it, the documented migration path is a Hetzner CX22 (€4/mo, 80 GB NVMe) acting as a Postgres read-replica via streaming replication, then promoting when ready.
 
 ## Files
 
