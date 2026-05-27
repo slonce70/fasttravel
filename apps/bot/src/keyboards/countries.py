@@ -61,9 +61,7 @@ def countries_kb(
             if show_counts:
                 label += f" ({d['hotel_count']})"
             current.append(
-                InlineKeyboardButton(
-                    text=label, callback_data=f"{callback_prefix}:{iso}"
-                )
+                InlineKeyboardButton(text=label, callback_data=f"{callback_prefix}:{iso}")
             )
             if len(current) == 2:
                 rows.append(current)
@@ -72,10 +70,6 @@ def countries_kb(
         rows.append(current)
     if include_cancel:
         rows.append(
-            [
-                InlineKeyboardButton(
-                    text="❌ Скасувати", callback_data=f"{callback_prefix}:cancel"
-                )
-            ]
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data=f"{callback_prefix}:cancel")]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)

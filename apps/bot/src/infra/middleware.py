@@ -46,9 +46,7 @@ class MetricsMiddleware(BaseMiddleware):
             BOT_MESSAGES.labels(handler=handler_name, outcome="error").inc()
             raise
         finally:
-            BOT_HANDLER_LATENCY.labels(handler=handler_name).observe(
-                time.perf_counter() - t0
-            )
+            BOT_HANDLER_LATENCY.labels(handler=handler_name).observe(time.perf_counter() - t0)
 
 
 class ThrottleMiddleware(BaseMiddleware):

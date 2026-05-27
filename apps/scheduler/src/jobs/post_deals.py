@@ -219,9 +219,7 @@ def _render_deal(row: _DealRow) -> str:
     # `~text~`. Escaped braces in the template would interfere with
     # .format(), so we render the strikethrough block here.
     strikethrough = (
-        f"~{escape_markdown_v2(_format_uah(int(row.baseline_p50)))}~"
-        if savings > 0
-        else ""
+        f"~{escape_markdown_v2(_format_uah(int(row.baseline_p50)))}~" if savings > 0 else ""
     )
 
     why = get_deal_signal_copy(getattr(row, "detection_method", None)).why_line

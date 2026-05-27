@@ -46,11 +46,7 @@ def when_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Найближчі тижні", callback_data="w:soon")],
             [InlineKeyboardButton(text="📅 Через місяць", callback_data="w:month")],
-            [
-                InlineKeyboardButton(
-                    text="🌴 Через 2-3 місяці", callback_data="w:season"
-                )
-            ],
+            [InlineKeyboardButton(text="🌴 Через 2-3 місяці", callback_data="w:season")],
             [InlineKeyboardButton(text="🤷 Без різниці", callback_data="w:any")],
             _back_row("w"),
         ]
@@ -119,9 +115,7 @@ def results_actions_kb(
     nav_row: list[InlineKeyboardButton] = []
     if has_prev:
         nav_row.append(InlineKeyboardButton(text="◀", callback_data="res:prev"))
-    nav_row.append(
-        InlineKeyboardButton(text=f"📄 {page}/{total_pages}", callback_data="res:noop")
-    )
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page}/{total_pages}", callback_data="res:noop"))
     if has_next:
         nav_row.append(InlineKeyboardButton(text="▶", callback_data="res:next"))
 

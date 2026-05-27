@@ -30,9 +30,7 @@ def test_result_rows_add_site_link_only_when_configured(monkeypatch) -> None:
     monkeypatch.setattr(
         search_wizard,
         "get_settings",
-        lambda: type(
-            "Settings", (), {"public_site_url": "https://web.fasttravel.test"}
-        )(),
+        lambda: type("Settings", (), {"public_site_url": "https://web.fasttravel.test"})(),
     )
 
     rows = search_wizard._result_link_rows(

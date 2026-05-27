@@ -62,9 +62,7 @@ def _build_keyboard(
     nav: list[InlineKeyboardButton] = []
     if page > 1:
         nav.append(InlineKeyboardButton(text="◀", callback_data=f"d:page:{page - 1}"))
-    nav.append(
-        InlineKeyboardButton(text=f"📄 {page}/{total_pages}", callback_data="d:noop")
-    )
+    nav.append(InlineKeyboardButton(text=f"📄 {page}/{total_pages}", callback_data="d:noop"))
     if page < total_pages:
         nav.append(InlineKeyboardButton(text="▶", callback_data=f"d:page:{page + 1}"))
     rows.append(nav)
@@ -154,19 +152,9 @@ async def _best_keyboard(deals: list[dict[str, Any]]) -> InlineKeyboardMarkup:
                 "?utm_source=tg_bot&utm_medium=best"
             )
         if url:
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"−{discount}% · {hotel_name}", url=url
-                    )
-                ]
-            )
+            rows.append([InlineKeyboardButton(text=f"−{discount}% · {hotel_name}", url=url)])
     rows.append(
-        [
-            InlineKeyboardButton(
-                text="🔔 Підписатись на знижки", callback_data="best:subscribe"
-            )
-        ]
+        [InlineKeyboardButton(text="🔔 Підписатись на знижки", callback_data="best:subscribe")]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 

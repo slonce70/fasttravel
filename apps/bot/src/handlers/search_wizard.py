@@ -359,17 +359,13 @@ async def _show_results(
 @router.callback_query(F.data == "res:prev", SearchState.viewing_results)
 async def cb_prev(query: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
-    await _show_results(
-        query, state, edit=True, page_override=data.get(_PAGE_KEY, 1) - 1
-    )
+    await _show_results(query, state, edit=True, page_override=data.get(_PAGE_KEY, 1) - 1)
 
 
 @router.callback_query(F.data == "res:next", SearchState.viewing_results)
 async def cb_next(query: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
-    await _show_results(
-        query, state, edit=True, page_override=data.get(_PAGE_KEY, 1) + 1
-    )
+    await _show_results(query, state, edit=True, page_override=data.get(_PAGE_KEY, 1) + 1)
 
 
 @router.callback_query(F.data == "res:restart", SearchState.viewing_results)

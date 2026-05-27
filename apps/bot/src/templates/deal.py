@@ -86,11 +86,7 @@ def render_search_hit(hit: dict[str, Any]) -> str:
     if destination:
         lines.append(f"📍 {destination}")
     lines.append(f"💰 від *{escape_markdown_v2(min_price)}*")
-    if (
-        hit.get("nights_fallback")
-        and hit.get("requested_nights")
-        and hit.get("effective_nights")
-    ):
+    if hit.get("nights_fallback") and hit.get("requested_nights") and hit.get("effective_nights"):
         effective = escape_markdown_v2(str(hit["effective_nights"]))
         requested = escape_markdown_v2(str(hit["requested_nights"]))
         lines.append(f"⚠️ ціна за {effective} ноч\\.\\, не за {requested}")
