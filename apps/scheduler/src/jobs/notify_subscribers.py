@@ -113,11 +113,13 @@ def _render(row: Any, public_site_url: str) -> str:
     discount = int(round(float(row.discount_pct or 0)))
     name = escape_markdown_v2(row.hotel_name_uk or "Готель")
     stars = format_stars(row.hotel_stars)
-    dest = escape_markdown_v2(row.destination_name or "")
-    country = getattr(row, "country_name", None) or ""
-    location = escape_markdown_v2(
-        f"{dest}, {country}" if dest and country else dest or country or ""
-    ) if (dest or country) else ""
+    raw_dest = row.destination_name or ""
+    raw_country = getattr(row, "country_name", None) or ""
+    raw_location = (
+        f"{raw_dest}, {raw_country}" if raw_dest and raw_country
+        else raw_dest or raw_country or ""
+    )
+    location = escape_markdown_v2(raw_location) if raw_location else ""
     nights = int(row.nights or 7)
     meal = escape_markdown_v2(format_meal_plan(row.meal_plan))
     price = escape_markdown_v2(format_uah(row.price_uah))

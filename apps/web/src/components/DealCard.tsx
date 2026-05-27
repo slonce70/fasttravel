@@ -17,17 +17,21 @@ export function DealCard({ deal }: DealCardProps) {
   const signal = getDealSignalCopy(deal.detection_method);
   return (
     <Card className="flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
-      {deal.hotel_photo_url && (
-        <Link href={href} aria-label={heading}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+      <Link href={href} aria-label={heading} className="relative block h-40 w-full overflow-hidden bg-slate-100">
+        {deal.hotel_photo_url ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
           <img
             src={deal.hotel_photo_url}
             alt={heading}
-            className="h-40 w-full object-cover"
+            className="h-full w-full object-cover"
             loading="lazy"
           />
-        </Link>
-      )}
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-3xl text-slate-300">
+            🏨
+          </div>
+        )}
+      </Link>
       <CardBody className="flex flex-1 flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
           <Badge variant={signal.badgeVariant} size="md">
