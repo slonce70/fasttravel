@@ -38,7 +38,7 @@ sentry-sdk = {extras = ["asyncio"], version = "^2.18.0"}
 # python:3.12-slim does NOT bundle zoneinfo data; APScheduler timezone="Europe/Kyiv"
 # would raise ZoneInfoNotFoundError without it. Pulling the wheel-only `tzdata`
 # package is cheaper than apt-get'ing system tzdata in Dockerfile.
-tzdata = "^2024.2"
+tzdata = ">=2024.2,<2027.0"
 # Prometheus metrics — exposed on a tiny HTTP server (port 9101 by default,
 # see src.infra.metrics). Scraped by Prometheus to track job duration,
 # success/failure counts, and queue depth.
