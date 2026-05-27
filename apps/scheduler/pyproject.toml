@@ -46,7 +46,7 @@ prometheus-client = "^0.21.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.3"
-pytest-asyncio = "^0.24.0"
+pytest-asyncio = ">=0.24,<1.5"
 pytest-cov = "^6.0.0"
 # fakeredis covers tests that exercise Redis-touching code paths
 # (snapshot_hot, refresh_worker) without spinning a real Redis.
