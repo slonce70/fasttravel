@@ -15,6 +15,8 @@ from typing import Any
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from shared.text_uk import format_hotels
+
 # Hand-mapped emoji flags. Telegram clients render them natively.
 _FLAG_BY_ISO: dict[str, str] = {
     "TR": "🇹🇷",
@@ -59,7 +61,7 @@ def countries_kb(
             iso = d["country_iso2"]
             label = f"{country_emoji(iso)} {d['name_uk']}"
             if show_counts:
-                label += f" ({d['hotel_count']})"
+                label += f" ({format_hotels(int(d['hotel_count']))})"
             current.append(
                 InlineKeyboardButton(text=label, callback_data=f"{callback_prefix}:{iso}")
             )

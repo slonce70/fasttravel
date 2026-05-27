@@ -27,6 +27,7 @@ from sqlalchemy import text
 
 from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2, make_bot
+from shared.text_uk import format_nights, format_reviews
 from src.config import get_settings
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -49,6 +50,9 @@ class _DealRow(Protocol):
     operator_display_name: str
     deep_link: str | None
     detection_method: str | None
+    description_uk: str | None
+    review_score: float | None
+    review_count: int | None
 
 
 # Pre-escaped MarkdownV2 template. Literal punctuation that MarkdownV2
@@ -63,7 +67,8 @@ _DEAL_TEMPLATE = (
     "\n"
     "🏨 *{hotel_name}* {stars_str}\n"
     "📍 {destination}\n"
-    "📅 {check_in_formatted} · {nights} ноч\\. · {meal_plan_label}\n"
+    "{hotel_context}"
+    "📅 {check_in_formatted} · {nights_label} · {meal_plan_label}\n"
     "\n"
     "💰 *{price_formatted}* {strikethrough}\n"
     "{why_line}"
@@ -105,6 +110,9 @@ _SELECT_UNPOSTED = text(
         d.detection_method,
         h.name_uk        AS hotel_name,
         h.stars          AS stars,
+        h.description_uk AS description_uk,
+        h.review_score   AS review_score,
+        h.review_count   AS review_count,
         region.name_uk   AS region_name,
         country.name_uk  AS country_name,
         o.display_name   AS operator_display_name
@@ -188,6 +196,25 @@ def _format_uah(amount: int) -> str:
     return f"{amount:,}".replace(",", " ") + " ₴"
 
 
+def _format_hotel_context(row: _DealRow) -> str:
+    lines: list[str] = []
+    review_score = getattr(row, "review_score", None)
+    review_count = int(getattr(row, "review_count", 0) or 0)
+    if review_score is not None and review_count > 0:
+        score = f"{float(review_score):.1f}/10"
+        lines.append(f"⭐ {score} · {format_reviews(review_count)}")
+
+    description = " ".join((getattr(row, "description_uk", None) or "").split())
+    if description:
+        if len(description) > 140:
+            description = description[:137].rstrip() + "..."
+        lines.append(f"ℹ️ {description}")
+
+    if not lines:
+        return ""
+    return "".join(f"{escape_markdown_v2(line)}\n" for line in lines)
+
+
 def _stars_str(stars: int | None) -> str:
     if not stars:
         return ""
@@ -237,8 +264,9 @@ def _render_deal(row: _DealRow) -> str:
                 getattr(row, "country_name", None),
             )
         ),
+        hotel_context=_format_hotel_context(row),
         check_in_formatted=escape_markdown_v2(_format_check_in(row.check_in)),
-        nights=row.nights,
+        nights_label=escape_markdown_v2(format_nights(int(row.nights))),
         meal_plan_label=escape_markdown_v2(meal_label),
         price_formatted=escape_markdown_v2(_format_uah(row.price_uah)),
         strikethrough=strikethrough,

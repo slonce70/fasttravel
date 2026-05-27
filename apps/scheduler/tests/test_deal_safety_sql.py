@@ -32,6 +32,14 @@ def test_post_deals_never_selects_zero_discount_or_bucket_only_rows() -> None:
     assert "d.detection_method != 'peer_anomaly'" in sql
 
 
+def test_post_deals_selects_short_hotel_context_fields() -> None:
+    sql = post_deals._SELECT_UNPOSTED.text
+
+    assert "h.description_uk" in sql
+    assert "h.review_score" in sql
+    assert "h.review_count" in sql
+
+
 def test_notify_subscribers_keeps_stricter_peer_anomaly_floor() -> None:
     sql = notify_subscribers._MATCH_SQL.text
 

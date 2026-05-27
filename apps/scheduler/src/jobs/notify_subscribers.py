@@ -25,6 +25,7 @@ from sqlalchemy import text
 
 from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import escape_markdown_v2, make_bot
+from shared.text_uk import format_nights
 from src.config import get_settings
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -154,7 +155,7 @@ def _render(row: Any, public_site_url: str) -> str:
         f"🏨 *{name}* {stars}".rstrip()
         + "\n"
         + (f"📍 {dest}\n" if dest else "")
-        + f"📅 {check_in} · {nights} ноч\\. · {meal}\n\n"
+        + f"📅 {check_in} · {escape_markdown_v2(format_nights(nights))} · {meal}\n\n"
         + f"{baseline_line}\n"
         + comparison_line
         + why_line
