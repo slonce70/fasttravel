@@ -19,10 +19,15 @@ Strategy:
 
 This is forward-only safe: code keeps reading the text column until a
 follow-up migration removes it.
+
+Plain CI/dev Postgres images do not ship PostGIS. In that case this
+migration is a no-op; production uses infra/postgres/Dockerfile where
+PostGIS is available.
 """
 
 from __future__ import annotations
 
+import sqlalchemy as sa
 from alembic import op
 
 revision = "018"
@@ -32,10 +37,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # PostGIS — bundle ships in the postgis/postgis image; for plain
-    # postgres:16 the operator needs to install it. The custom
-    # infra/postgres/Dockerfile uses postgres:16-bookworm which has the
-    # postgresql-16-postgis-3 .deb available; install it in a follow-up.
+    has_postgis = op.get_bind().scalar(
+        sa.text("SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'postgis')")
+    )
+    if not has_postgis:
+        return
+
+    # PostGIS ships in the custom infra/postgres/Dockerfile image.
     op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
     op.execute(
         """
@@ -64,8 +72,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX IF NOT EXISTS gix_hotels_coords_geo "
-        "ON hotels USING GIST (coords_geo)"
+        "CREATE INDEX IF NOT EXISTS gix_hotels_coords_geo " "ON hotels USING GIST (coords_geo)"
     )
 
 
