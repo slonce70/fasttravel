@@ -54,7 +54,12 @@ def test_date_dip_branch_detects_same_hotel_date_mispricing() -> None:
     sql = detect_deals._DATE_DIP_SQL.text
 
     assert "'calendar_anomaly'" in sql
-    assert "PERCENTILE_CONT(0.5)" in sql
+    # Trimmed-median baseline (interquartile mean) replaces the plain
+    # median that Farvater's synthetic "sold out" placeholder prices
+    # were inflating. Both PERCENT_RANK and the 0.25..0.75 filter must
+    # be present or the false-positive 70-80% deals come back.
+    assert "PERCENT_RANK()" in sql
+    assert "rnk BETWEEN 0.25 AND 0.75" in sql
     assert "local_stats" in sql
     assert "neighbor.check_in BETWEEN cp.check_in - INTERVAL '14 days'" in sql
     assert "neighbor.check_in <> cp.check_in" in sql
