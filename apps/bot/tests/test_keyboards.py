@@ -8,7 +8,7 @@ so the tests are cheap insurance.
 
 from __future__ import annotations
 
-from src.keyboards.countries import countries_kb, country_emoji
+from src.keyboards.countries import countries_kb, country_emoji, country_name_uk
 from src.keyboards.filters import (
     budget_kb,
     meal_kb,
@@ -53,6 +53,16 @@ def test_main_menu_layout():
 def test_country_emoji_known_iso():
     assert country_emoji("TR") == "🇹🇷"
     assert country_emoji("XX") == "📍"  # unknown falls back
+
+
+def test_country_name_uk_known():
+    assert country_name_uk("TR") == "Туреччина"
+    assert country_name_uk("EG") == "Єгипет"
+    assert country_name_uk("AE") == "ОАЕ"
+
+
+def test_country_name_uk_unknown_falls_back_to_iso():
+    assert country_name_uk("XX") == "XX"
 
 
 def test_countries_kb_two_columns_and_skips_zero_count():

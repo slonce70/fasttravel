@@ -32,7 +32,7 @@ from src.infra.db import (
     list_subscriptions,
 )
 from src.infra.logging import get_logger
-from src.keyboards.countries import countries_kb, country_emoji
+from src.keyboards.countries import countries_kb, country_emoji, country_name_uk
 from src.states.subscribe import SubscribeState
 
 router = Router(name="subscribe")
@@ -61,20 +61,23 @@ def _render_subscriptions(subs: list[dict[str, Any]]) -> str:
         )
     lines = ["🔔 *Підписки на знижки*", ""]
     for i, sub in enumerate(subs, 1):
-        flag = country_emoji(sub["country_iso2"])
+        iso = sub["country_iso2"]
+        flag = country_emoji(iso)
+        name = escape_markdown_v2(country_name_uk(iso))
         budget = escape_markdown_v2(_format_budget(sub.get("max_price_uah")))
         stars = escape_markdown_v2(_format_stars(sub.get("min_stars")))
-        lines.append(f"*{i}\\.* {flag} _{sub['country_iso2']}_ · {budget} · {stars}")
+        lines.append(f"*{i}\\.* {flag} *{name}* · {budget} · {stars}")
     return "\n".join(lines)
 
 
 def _subs_kb(subs: list[dict[str, Any]]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for sub in subs:
+        iso = sub["country_iso2"]
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"❌ Видалити {country_emoji(sub['country_iso2'])} {sub['country_iso2']}",
+                    text=f"❌ {country_emoji(iso)} {country_name_uk(iso)}",
                     callback_data=f"sub:del:{sub['id']}",
                 )
             ]
@@ -136,10 +139,10 @@ async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
         await query.message.edit_text("Скасовано\\.")
         await query.answer()
         return
-    await state.update_data(country=iso)
+    name = country_name_uk(iso)
+    await state.update_data(country=iso, country_name=name)
     await state.set_state(SubscribeState.budget)
 
-    # Budget keyboard tailored for subscription — same brackets as wizard
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -155,7 +158,7 @@ async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
         ]
     )
     await query.message.edit_text(
-        f"{country_emoji(iso)} _{iso}_ · *максимальний бюджет\\?* 💰",
+        f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · максимальний бюджет\\? 💰",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=kb,
     )
@@ -208,7 +211,7 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
     if value == "back":
         data = await state.get_data()
         iso = data.get("country", "")
-        # Reuse the budget keyboard from cb_country path
+        name = data.get("country_name") or country_name_uk(iso)
         await state.set_state(SubscribeState.budget)
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -225,7 +228,7 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
             ]
         )
         await query.message.edit_text(
-            f"{country_emoji(iso)} _{iso}_ · *максимальний бюджет\\?* 💰",
+            f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · максимальний бюджет\\? 💰",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=kb,
         )
