@@ -135,9 +135,28 @@ write_files:
 
   # Audit P0 #9: certbot was installed but the renewal pipeline wasn't
   # wired. LE certs expire after 90 days; without renewal hooks the
-  # operator finds out via 5xx alerts. This deploy hook restarts nginx
-  # inside the docker-compose stack after a successful renewal so the
+  # operator finds out via 5xx alerts. Standalone certbot needs port 80,
+  # so the pre/post hooks briefly stop/start the compose nginx container;
+  # the deploy hook then reloads nginx after a successful renewal so the
   # new cert is actually served.
+  - path: /etc/letsencrypt/renewal-hooks/pre/10-stop-nginx.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      # Triggered by certbot.timer before renewal attempts.
+      # Standalone certbot needs port 80 free.
+      docker stop ft_nginx || true
+
+  - path: /etc/letsencrypt/renewal-hooks/post/10-start-nginx.sh
+    permissions: "0755"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      # Triggered by certbot.timer after renewal attempts.
+      # Bring the API proxy back even when renewal found nothing to update.
+      docker start ft_nginx || true
+
   - path: /etc/letsencrypt/renewal-hooks/deploy/10-reload-nginx.sh
     permissions: "0755"
     owner: root:root
@@ -231,7 +250,7 @@ runcmd:
   # their own. The systemd timer runs `certbot renew` twice daily;
   # successful renewals trigger the deploy hook above to reload nginx.
   # Both lines are idempotent — re-running cloud-init is a no-op.
-  - install -d -m 755 -o root -g root /etc/letsencrypt/renewal-hooks/deploy
+  - install -d -m 755 -o root -g root /etc/letsencrypt/renewal-hooks/pre /etc/letsencrypt/renewal-hooks/post /etc/letsencrypt/renewal-hooks/deploy
   - systemctl enable --now certbot.timer
 
   # 10) Mark cloud-init complete in a file the runbook can probe.

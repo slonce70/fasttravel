@@ -23,9 +23,10 @@ RUN apt-get update \
 
 RUN pip install "poetry==${POETRY_VERSION}"
 
-# Copy only what's needed to install deps for layer caching.
-COPY pyproject.toml ./
-COPY poetry.lock* ./
+# Copy only what's needed to install deps for layer caching. The build
+# context is apps/ so this Dockerfile can also vendor apps/shared/.
+COPY api/pyproject.toml ./
+COPY api/poetry.lock* ./
 
 # INSTALL_DEV=true switches in the [tool.poetry.group.dev.dependencies]
 # (pytest, ruff, etc.) so the resulting image can run `pytest`. Default
@@ -61,20 +62,21 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # pyproject.toml is required in the runtime stage so pytest picks up
 # asyncio_mode=auto and markers config when the image is run under the
 # test overlay (docker-compose.test.yml). Prod runtime ignores it.
-COPY --chown=app:app pyproject.toml ./
+COPY --chown=app:app api/pyproject.toml ./
 
 # App source
-COPY --chown=app:app alembic.ini ./
-COPY --chown=app:app migrations/ ./migrations/
-COPY --chown=app:app src/ ./src/
+COPY --chown=app:app api/alembic.ini ./
+COPY --chown=app:app api/migrations/ ./migrations/
+COPY --chown=app:app api/src/ ./src/
+COPY --chown=app:app shared/ ./shared/
 # One-shot bootstrap / maintenance scripts. Not imported by src/ —
 # invoked explicitly as `python -m scripts.<name>`.
-COPY --chown=app:app scripts/ ./scripts/
+COPY --chown=app:app api/scripts/ ./scripts/
 # Tests are always copied so the prod image and the test image differ
 # only by dev deps (controlled by INSTALL_DEV). Adds ~30KB to the image,
 # but means `docker compose -f docker-compose.test.yml run --rm api pytest`
 # works without a separate image build path.
-COPY --chown=app:app tests/ ./tests/
+COPY --chown=app:app api/tests/ ./tests/
 
 USER app
 

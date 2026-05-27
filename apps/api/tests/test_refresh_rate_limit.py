@@ -102,7 +102,17 @@ async def test_refresh_rate_limit_caps_at_ten_per_hour(
         )
     ).scalar_one()
     operator_id = (
-        await db_session.execute(text("SELECT id FROM operators WHERE code='farvater'"))
+        await db_session.execute(
+            text(
+                """
+                INSERT INTO operators (code, display_name)
+                VALUES ('farvater', 'Farvater')
+                ON CONFLICT (code) DO UPDATE
+                SET display_name = EXCLUDED.display_name
+                RETURNING id
+                """
+            )
+        )
     ).scalar_one()
     await db_session.execute(
         text(

@@ -17,6 +17,7 @@ def test_prod_rejects_default_database_url() -> None:
     settings = Settings(
         _env_file=None,
         environment="prod",
+        database_url="postgresql+asyncpg://fasttravel:fasttravel_dev_change_me@postgres:5432/fasttravel",
         telegram_bot_token="123456:prod-token",
         telegram_channel_id="-1003825850110",
     )

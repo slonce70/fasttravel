@@ -175,16 +175,20 @@ The file is mounted into the nginx container by `docker-compose.prod.yml`.
 
 ### Certbot renewal — already wired
 
-`cloud-init.yml` writes a deploy hook to
-`/etc/letsencrypt/renewal-hooks/deploy/10-reload-nginx.sh` that runs
-`nginx -s reload` **inside the compose nginx container** after every
-successful renewal, plus enables `certbot.timer` (twice-daily renew
-check). You don't need to install hooks manually.
+`cloud-init.yml` writes renewal hooks for the container-nginx setup:
+
+- `/etc/letsencrypt/renewal-hooks/pre/10-stop-nginx.sh` runs `docker stop ft_nginx || true` so standalone certbot can bind port 80.
+- `/etc/letsencrypt/renewal-hooks/post/10-start-nginx.sh` runs `docker start ft_nginx || true` so the proxy comes back after renewal.
+- `/etc/letsencrypt/renewal-hooks/deploy/10-reload-nginx.sh` runs `nginx -s reload` **inside the compose nginx container** after every successful renewal.
+
+It also enables `certbot.timer` for the twice-daily renewal check. You don't need to install hooks manually.
 
 Verify after cloud-init:
 
 ```bash
 systemctl is-enabled certbot.timer       # → enabled
+ls /etc/letsencrypt/renewal-hooks/pre    # → 10-stop-nginx.sh
+ls /etc/letsencrypt/renewal-hooks/post   # → 10-start-nginx.sh
 ls /etc/letsencrypt/renewal-hooks/deploy # → 10-reload-nginx.sh
 ```
 

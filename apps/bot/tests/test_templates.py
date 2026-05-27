@@ -36,6 +36,37 @@ def test_render_search_hit_full():
     assert "115 відгуків" in out
 
 
+def test_render_search_hit_pluralizes_review_counts():
+    one = render_search_hit(
+        {
+            "name_uk": "One Review Hotel",
+            "min_price_uah": 30000,
+            "review_score": 9.0,
+            "review_count": 1,
+        }
+    )
+    few = render_search_hit(
+        {
+            "name_uk": "Few Reviews Hotel",
+            "min_price_uah": 30000,
+            "review_score": 9.0,
+            "review_count": 2,
+        }
+    )
+    many = render_search_hit(
+        {
+            "name_uk": "Many Reviews Hotel",
+            "min_price_uah": 30000,
+            "review_score": 9.0,
+            "review_count": 5,
+        }
+    )
+
+    assert "1 відгук" in one
+    assert "2 відгуки" in few
+    assert "5 відгуків" in many
+
+
 def test_render_search_hit_escapes_special_chars_in_name():
     """Hotel name with characters MarkdownV2 reserves must come out escaped."""
     hit = {"name_uk": "Hotel (Beach) - Premium!", "min_price_uah": 30000}
@@ -56,8 +87,8 @@ def test_render_search_hit_marks_nights_fallback():
     }
     out = render_search_hit(hit)
 
-    assert "⚠️ ціна за 7 ноч" in out
-    assert "не за 8" in out
+    assert "⚠️ ціна за 7 ночей" in out
+    assert "не за 8 ночей" in out
 
 
 def test_render_deal_full():
@@ -78,6 +109,7 @@ def test_render_deal_full():
     assert "⭐⭐⭐⭐" in out
     assert "Туреччина" in out
     assert "14 черв" in out  # date formatter
+    assert "7 ночей" in out
     assert "32 200 ₴" in out
     assert "51 500 ₴" in out
     assert "Все включено" in out
@@ -99,3 +131,81 @@ def test_render_deal_handles_missing_destination():
     # Doesn't crash, no destination line emitted
     assert "Test Hotel" in out
     assert "📍" not in out
+
+
+def test_render_deal_peer_anomaly_names_peer_baseline_without_savings_claim():
+    row = {
+        "discount_pct": 29,
+        "hotel_name_uk": "Peer Hotel",
+        "hotel_stars": 4,
+        "destination_name": "Анталія",
+        "check_in": "2026-07-10",
+        "nights": 7,
+        "meal_plan": "AI",
+        "price_uah": 32000,
+        "baseline_p50": 45500,
+        "detection_method": "peer_anomaly",
+    }
+
+    out = render_deal(row)
+
+    assert "дешевше за схожі готелі" in out
+    assert "орієнтир схожих" in out
+    assert "економія" not in out
+    assert "~45 500 ₴~" not in out
+
+
+def test_render_deal_includes_optional_short_hotel_context():
+    row = {
+        "discount_pct": 38,
+        "hotel_name_uk": "Belport Beach Hotel",
+        "hotel_stars": 4,
+        "destination_name": "Туреччина",
+        "check_in": "2026-06-14",
+        "nights": 7,
+        "meal_plan": "AI",
+        "price_uah": 32200,
+        "baseline_p50": 51500,
+        "review_score": 8.6,
+        "review_count": 2,
+        "description_uk": "Пляжний готель (центр) - family_friendly!",
+    }
+
+    out = render_deal(row)
+
+    assert "⭐ 8\\.6/10 · 2 відгуки" in out
+    assert "Пляжний готель \\(центр\\) \\- family\\_friendly\\!" in out
+
+
+def test_render_deal_expands_raw_and_cyrillic_meal_codes():
+    cyrillic_code = render_deal(
+        {
+            "discount_pct": 20,
+            "hotel_name_uk": "Breakfast Hotel",
+            "hotel_stars": 4,
+            "destination_name": "Туреччина",
+            "check_in": "2026-06-14",
+            "nights": 7,
+            "meal_plan": "ВВ",
+            "price_uah": 30000,
+            "baseline_p50": 38000,
+        }
+    )
+    raw_label = render_deal(
+        {
+            "discount_pct": 20,
+            "hotel_name_uk": "Breakfast Hotel",
+            "hotel_stars": 4,
+            "destination_name": "Туреччина",
+            "check_in": "2026-06-14",
+            "nights": 7,
+            "meal_plan": "Сніданок (BB)",
+            "price_uah": 30000,
+            "baseline_p50": 38000,
+        }
+    )
+
+    assert "7 ночей · Сніданок" in cyrillic_code
+    assert "ВВ" not in cyrillic_code
+    assert "7 ночей · Сніданок" in raw_label
+    assert "\\(BB\\)" not in raw_label

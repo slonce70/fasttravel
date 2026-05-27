@@ -68,6 +68,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       ENVIRONMENT: dev
       LOG_LEVEL: WARNING
+      PYTHONPATH: .:..
 
     defaults:
       run:
@@ -505,6 +506,9 @@ jobs:
         # this overlay happens via the language-specific jobs above, which
         # are faster than building images.
         run: docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet
+
+      - name: Install preflight tools
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
 
       - name: Production preflight
         run: infra/scripts/production-preflight.sh

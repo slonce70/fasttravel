@@ -15,18 +15,43 @@ import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
 //     for an MVP. Revisit when SSR streams stabilise.
 //   * 'unsafe-eval' on script-src is required by Next dev-mode HMR;
 //     prod builds don't need it but Cloudflare Workers eval some chunks.
-//   * connect-src lists the live API + image CDN hostnames the app fetches.
+//   * connect-src lists the live API + configured preview/dev API hostname.
 //   * frame-ancestors 'none' replaces X-Frame-Options DENY (CSP3 spec).
+function originFor(url) {
+  try {
+    return url ? new URL(url).origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function unique(items) {
+  return Array.from(new Set(items.filter(Boolean)));
+}
+
+const configuredApiOrigin = originFor(process.env.NEXT_PUBLIC_API_URL);
+const devConnectSrc =
+  process.env.NODE_ENV === 'production'
+    ? []
+    : [configuredApiOrigin ?? 'http://localhost:8000', 'http://127.0.0.1:8000'];
+const connectSrc = unique([
+  "'self'",
+  'https://fasttravel.com.ua',
+  'https://api.fasttravel.com.ua',
+  configuredApiOrigin?.startsWith('https://') ? configuredApiOrigin : undefined,
+  ...devConnectSrc,
+]).join(' ');
+
 const csp = [
   "default-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
-  "img-src 'self' data: https://*.tboholidays.com https://*.farvater.travel https://images.unsplash.com",
+  "img-src 'self' data: https://*.tboholidays.com https://*.farvater.travel https://images.unsplash.com https://api.qrserver.com",
   "font-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-  "connect-src 'self' https://fasttravel.com.ua https://api.fasttravel.com.ua",
+  `connect-src ${connectSrc}`,
   "object-src 'none'",
   "upgrade-insecure-requests",
 ].join('; ');

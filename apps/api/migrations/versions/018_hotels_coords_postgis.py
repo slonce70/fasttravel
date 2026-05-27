@@ -4,10 +4,11 @@ Revision ID: 018
 Revises: 017
 Create Date: 2026-05-27
 
-Audit #1.3 Low — `hotels.coords` was a plain `Text` column ("POINT(lng
-lat)") with no spatial index. The first feature that needs "find hotels
-near X" would have to ALTER the column anyway. Doing it now while the
-table is still small is far cheaper than later.
+Audit #1.3 Low — `hotels.coords` is a legacy coordinate column with no
+spatial index. Fresh schemas promote it to Postgres `point`; older
+snapshots may still resemble text values. The first feature that needs
+"find hotels near X" would have to ALTER the column anyway. Doing it now
+while the table is still small is far cheaper than later.
 
 Strategy:
   1. CREATE EXTENSION postgis IF NOT EXISTS.
@@ -19,10 +20,15 @@ Strategy:
 
 This is forward-only safe: code keeps reading the text column until a
 follow-up migration removes it.
+
+Plain CI/dev Postgres images do not ship PostGIS. In that case this
+migration is a no-op; production uses infra/postgres/Dockerfile where
+PostGIS is available.
 """
 
 from __future__ import annotations
 
+import sqlalchemy as sa
 from alembic import op
 
 revision = "018"
@@ -32,10 +38,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # PostGIS — bundle ships in the postgis/postgis image; for plain
-    # postgres:16 the operator needs to install it. The custom
-    # infra/postgres/Dockerfile uses postgres:16-bookworm which has the
-    # postgresql-16-postgis-3 .deb available; install it in a follow-up.
+    has_postgis = op.get_bind().scalar(
+        sa.text("SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'postgis')")
+    )
+    if not has_postgis:
+        return
+
+    # PostGIS ships in the custom infra/postgres/Dockerfile image.
     op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
     op.execute(
         """
@@ -43,18 +52,22 @@ def upgrade() -> None:
         ADD COLUMN IF NOT EXISTS coords_geo geography(Point, 4326)
         """
     )
-    # Backfill from the legacy `coords` text column. Accepts both
-    # "POINT(lng lat)" (PostGIS canonical text form) and plain "lng,lat".
+    # Backfill from the legacy `coords` column. Accepts native Postgres
+    # point output "(lng,lat)", PostGIS-ish "POINT(lng lat)", and plain
+    # "lng,lat" text snapshots.
     op.execute(
         """
         UPDATE hotels
         SET coords_geo = ST_SetSRID(
             ST_GeomFromText(
                 CASE
-                    WHEN coords ILIKE 'POINT(%' THEN coords
-                    WHEN coords ~ '^-?[0-9]+(\\.[0-9]+)?,\\s*-?[0-9]+(\\.[0-9]+)?$' THEN
-                        'POINT(' || split_part(coords, ',', 1) || ' '
-                                 || trim(split_part(coords, ',', 2)) || ')'
+                    WHEN coords::text ILIKE 'POINT(%' THEN coords::text
+                    WHEN coords::text ~ '^\\(-?[0-9]+(\\.[0-9]+)?,\\s*-?[0-9]+(\\.[0-9]+)?\\)$' THEN
+                        'POINT(' || split_part(trim(both '()' from coords::text), ',', 1) || ' '
+                                 || trim(split_part(trim(both '()' from coords::text), ',', 2)) || ')'
+                    WHEN coords::text ~ '^-?[0-9]+(\\.[0-9]+)?,\\s*-?[0-9]+(\\.[0-9]+)?$' THEN
+                        'POINT(' || split_part(coords::text, ',', 1) || ' '
+                                 || trim(split_part(coords::text, ',', 2)) || ')'
                     ELSE NULL
                 END
             ),
@@ -64,8 +77,7 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX IF NOT EXISTS gix_hotels_coords_geo "
-        "ON hotels USING GIST (coords_geo)"
+        "CREATE INDEX IF NOT EXISTS gix_hotels_coords_geo " "ON hotels USING GIST (coords_geo)"
     )
 
 

@@ -9,8 +9,8 @@
 services:
   api-test:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+      context: ./apps
+      dockerfile: api/Dockerfile
       args:
         INSTALL_DEV: "true"
     image: fasttravel/api:test
@@ -43,6 +43,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
+      TELEGRAM_ALERTS_CHAT_ID: ${TELEGRAM_ALERTS_CHAT_ID:-}
     depends_on:
       postgres:
         condition: service_healthy

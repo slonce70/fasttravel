@@ -25,6 +25,7 @@ from aiogram.types import (
     Message,
 )
 
+from shared.text_uk import format_hotels
 from src.config import get_settings
 from src.infra.api_client import ApiError, get_deals, get_destinations
 from src.infra.logging import get_logger
@@ -49,7 +50,7 @@ def _countries_list_kb(destinations: list[dict[str, Any]]) -> InlineKeyboardMark
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{country_emoji(iso)} {d['name_uk']}   ·   {d['hotel_count']} готелів",
+                    text=f"{country_emoji(iso)} {d['name_uk']}   ·   {format_hotels(int(d['hotel_count']))}",
                     callback_data=f"ds:{iso}",
                 )
             ]
@@ -86,9 +87,7 @@ def _drill_kb(iso: str) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    rows.append(
-        [InlineKeyboardButton(text="◀ До списку країн", callback_data="ds:back")]
-    )
+    rows.append([InlineKeyboardButton(text="◀ До списку країн", callback_data="ds:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

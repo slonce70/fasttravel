@@ -42,7 +42,7 @@ jobs:
       matrix:
         image:
           - name: api
-            context: ./apps/api
+            context: ./apps
             file: ./apps/api/Dockerfile
             tag: fasttravel/api:scan
           - name: bot

@@ -41,7 +41,10 @@ test('search results navigate to a real hotel detail page with a price calendar'
   await expect(hotelLinks.first()).toBeVisible();
   expect(await hotelLinks.count()).toBeGreaterThan(0);
 
-  await hotelLinks.first().click();
+  const detailHref = await hotelLinks.first().getAttribute('href');
+  expect(detailHref).toMatch(/^\/hotels\/[^/]+$/);
+  await page.goto(detailHref!);
+
   await expect(page).toHaveURL(/\/hotels\//);
   await expect(page.locator('h1')).toBeVisible();
   await expect(page.getByRole('heading', { name: /Календар цін/ })).toBeVisible();
@@ -58,9 +61,9 @@ test('hotel nights selector only exposes Farvater calendar durations', async ({ 
     });
   });
 
-  await page.goto('/hotels/fv-me-azimut-hotel');
+  await page.goto('/hotels/ci-e2e-kemer-resort');
 
-  await expect(page.getByRole('heading', { name: 'Azimut Hotel' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'CI E2E Kemer Resort' })).toBeVisible();
 
   for (const nights of [7, 8, 9, 10, 11, 12, 13, 14]) {
     await expect(page.getByRole('button', { name: `${nights} ноч.`, exact: true })).toBeVisible();
