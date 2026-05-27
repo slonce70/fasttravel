@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 
 
 def plural_uk(count: int, one: str, few: str, many: str) -> str:
@@ -95,3 +96,59 @@ def format_meal_plan(raw: str | None) -> str:
     if "room only" in folded or "без харч" in folded or "без питан" in folded:
         return _MEAL_LABELS["RO"]
     return text
+
+
+# ---------------------------------------------------------------------------
+# Price / date / hotel formatters used by channel broadcast, bot templates,
+# and subscriber notifications. Consolidated here from three copies.
+# ---------------------------------------------------------------------------
+
+def format_uah(amount: int | float | None) -> str:
+    """``35200`` → ``'35 200 ₴'``. Returns ``'—'`` for None."""
+    if amount is None:
+        return "—"
+    return f"{int(amount):,}".replace(",", " ") + " ₴"
+
+
+_MONTHS_UK_SHORT = (
+    "січ.", "лют.", "бер.", "квіт.", "трав.", "черв.",
+    "лип.", "серп.", "вер.", "жовт.", "лист.", "груд.",
+)
+
+_MONTHS_UK_FULL = (
+    "", "січня", "лютого", "березня", "квітня", "травня", "червня",
+    "липня", "серпня", "вересня", "жовтня", "листопада", "грудня",
+)
+
+
+def format_date_short(value: str | date | datetime) -> str:
+    """``2026-06-14`` → ``'14 черв.'``."""
+    if isinstance(value, str):
+        try:
+            d = date.fromisoformat(value.split("T", 1)[0])
+        except ValueError:
+            return value
+    elif isinstance(value, datetime):
+        d = value.date()
+    else:
+        d = value
+    return f"{d.day} {_MONTHS_UK_SHORT[d.month - 1]}"
+
+
+def format_date_full(d: date) -> str:
+    """``date(2026, 6, 14)`` → ``'14 червня'``."""
+    return f"{d.day} {_MONTHS_UK_FULL[d.month]}"
+
+
+def format_stars(stars: int | None) -> str:
+    """``4`` → ``'⭐⭐⭐⭐'``, ``None`` → ``''``."""
+    if not stars:
+        return ""
+    return "⭐" * int(stars)
+
+
+def format_location(region: str | None, country: str | None) -> str:
+    """``('Хургада', 'Єгипет')`` → ``'Хургада, Єгипет'``."""
+    if region and country:
+        return f"{region}, {country}"
+    return region or country or "—"
