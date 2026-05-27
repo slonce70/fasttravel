@@ -345,18 +345,15 @@ _BUCKET_SQL = text(
 _DATE_DIP_SQL = text(
     """
     WITH hotel_stats AS (
-        -- Per-hotel calendar shape across the current detection window.
-        -- HAVING >= 5 keeps the percentile meaningful; with 6 check-in
-        -- offsets in snapshot_farvater + 8 nights this threshold catches
-        -- well-populated hotels and excludes long-tail ones with sparse
-        -- data.
+        -- Median price per hotel across all available check-in dates
+        -- for the same (nights, meal_plan) combination. A date that is
+        -- 10%+ below this median is a deal worth posting.
         SELECT
             cp.hotel_id,
             cp.operator_id,
             cp.nights,
             cp.meal_plan,
             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cp.price_uah)::int AS p50,
-            PERCENTILE_CONT(0.15) WITHIN GROUP (ORDER BY cp.price_uah)::int AS p15,
             COUNT(*) AS sample_n
         FROM current_prices cp
         WHERE cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
@@ -398,9 +395,8 @@ _DATE_DIP_SQL = text(
          AND hs.operator_id = cp.operator_id
          AND hs.nights = cp.nights
          AND hs.meal_plan = cp.meal_plan
-        WHERE cp.price_uah < hs.p15
-          AND cp.price_uah < hs.p50 * 0.75
-          AND (hs.p50 - cp.price_uah) >= 3000
+        WHERE cp.price_uah < hs.p50 * 0.90
+          AND (hs.p50 - cp.price_uah) >= 1500
           AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
                               AND CURRENT_DATE + INTERVAL '90 days'
     ) cand
@@ -584,9 +580,8 @@ async def detect_deals(
     Returns: number of new deals inserted.
     """
     cold_only = force_cold_start if force_cold_start is not None else await _is_cold_start_mode()
-    stay_inv_enabled = await _is_stay_inversion_enabled()
 
-    # Strategy table (audit #1.2): each entry is (reason_label, enabled,
+    # Strategy table: only date_dip (calendar anomaly) is active.
     # runner). `enabled` lets the caller toggle a strategy without
     # mutating the loop body. `runner` takes (db, cooldown_hours,
     # max_per_run) and returns the inserted rows.
@@ -596,12 +591,7 @@ async def detect_deals(
     # the audit recommended ("BUCKET → DATE_DIP → STAY_INV → WARM →
     # COLD"); now it's data, not control flow.
     strategies: list[tuple[str, bool, Callable[[AsyncSession, int, int], Awaitable[_RowList]]]] = [
-        ("bucket", _buckets_enabled(), _run_bucket_query),
         ("date_dip", True, _run_date_dip_query),
-        ("stay_inversion", stay_inv_enabled, _run_stay_inversion_query),
-        ("warm", not cold_only, _run_warm_query),
-        # Cold always fills leftover budget — no flag.
-        ("cold", True, _run_cold_query),
     ]
 
     results: dict[str, _RowList] = {}
