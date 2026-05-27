@@ -196,9 +196,7 @@ async def trigger_refresh(
     if not farvater_key:
         # Synthetic hotel — no farvater mapping. Nothing to refresh; pretend
         # we're up-to-date so the UI banner disappears quickly.
-        return RefreshResponse(
-            queued=False, eta_seconds=0, reason="hotel_not_mapped_to_farvater"
-        )
+        return RefreshResponse(queued=False, eta_seconds=0, reason="hotel_not_mapped_to_farvater")
     # SSRF defence-in-depth: the mapping is set by our own scraper from
     # `\d+` regex, but assert here so a future change to the mapping path
     # can't smuggle a non-numeric key into our outbound URL.
@@ -208,9 +206,7 @@ async def trigger_refresh(
             hotel_id=hotel_id,
             key=str(farvater_key)[:32],
         )
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR, detail="hotel mapping invalid"
-        )
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="hotel mapping invalid")
 
     redis = get_redis()
     try:

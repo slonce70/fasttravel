@@ -86,9 +86,7 @@ def _drill_kb(iso: str) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    rows.append(
-        [InlineKeyboardButton(text="◀ До списку країн", callback_data="ds:back")]
-    )
+    rows.append([InlineKeyboardButton(text="◀ До списку країн", callback_data="ds:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

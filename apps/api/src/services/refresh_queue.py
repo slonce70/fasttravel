@@ -94,12 +94,8 @@ async def enqueue_refresh(
     try:
         qlen = await _await_if_needed(redis.llen(REFRESH_QUEUE_KEY))
         if qlen >= REFRESH_QUEUE_MAX_LEN:
-            log.warning(
-                "refresh.queue_full", current=int(qlen), cap=REFRESH_QUEUE_MAX_LEN
-            )
-            raise QueueFullError(
-                f"refresh queue full ({qlen}/{REFRESH_QUEUE_MAX_LEN})"
-            )
+            log.warning("refresh.queue_full", current=int(qlen), cap=REFRESH_QUEUE_MAX_LEN)
+            raise QueueFullError(f"refresh queue full ({qlen}/{REFRESH_QUEUE_MAX_LEN})")
     except QueueFullError:
         raise
     except Exception as exc:  # noqa: BLE001 — Redis blip, let SET decide
@@ -108,9 +104,7 @@ async def enqueue_refresh(
     # SET NX EX — succeed only if no recent refresh for this hotel.
     try:
         acquired = await _await_if_needed(
-            redis.set(
-                cache_key, str(int(time.time())), nx=True, ex=REFRESH_MIN_INTERVAL_S
-            )
+            redis.set(cache_key, str(int(time.time())), nx=True, ex=REFRESH_MIN_INTERVAL_S)
         )
     except Exception as exc:  # noqa: BLE001 — fail-open
         log.warning("refresh.redis_unavailable", error=str(exc))

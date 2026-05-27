@@ -121,6 +121,7 @@ _MEAL_LABELS = {
     "RO": "Без харчування",
 }
 
+
 def _render(row: Any, public_site_url: str) -> str:
     discount = int(round(float(row.discount_pct or 0)))
     name = escape_markdown_v2(row.hotel_name_uk or "Готель")

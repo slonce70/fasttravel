@@ -35,9 +35,7 @@ router = Router(name="commands")
 
 def _channel_buttons() -> InlineKeyboardMarkup:
     s = get_settings()
-    buttons = [
-        InlineKeyboardButton(text="📡 Канал з знижками", url=s.public_channel_link)
-    ]
+    buttons = [InlineKeyboardButton(text="📡 Канал з знижками", url=s.public_channel_link)]
     if s.public_site_url:
         buttons.append(InlineKeyboardButton(text="🌐 Сайт", url=s.public_site_url))
     return InlineKeyboardMarkup(inline_keyboard=[buttons])

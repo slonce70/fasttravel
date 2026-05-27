@@ -112,7 +112,5 @@ def test_cold_start_metrics_are_recorded_as_peer_anomaly(monkeypatch) -> None:
 
     detect_deals._record_inserted([(1, 42, 27.5)], reason="cold")
 
-    assert counter.labels_seen == [
-        {"detection_method": "peer_anomaly", "reason": "cold"}
-    ]
+    assert counter.labels_seen == [{"detection_method": "peer_anomaly", "reason": "cold"}]
     assert counter.inc_seen == [1]

@@ -27,11 +27,7 @@ def _profile_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔔 Мої підписки", callback_data="prof:subs")],
-            [
-                InlineKeyboardButton(
-                    text="🗑 Видалити всі дані", callback_data="prof:delete"
-                )
-            ],
+            [InlineKeyboardButton(text="🗑 Видалити всі дані", callback_data="prof:delete")],
         ]
     )
 
@@ -40,9 +36,7 @@ def _confirm_delete_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="Так, видалити", callback_data="prof:delete:yes"
-                ),
+                InlineKeyboardButton(text="Так, видалити", callback_data="prof:delete:yes"),
                 InlineKeyboardButton(text="Скасувати", callback_data="prof:delete:no"),
             ]
         ]
@@ -86,8 +80,7 @@ async def cb_subs(query: CallbackQuery) -> None:
 @router.callback_query(F.data == "prof:delete")
 async def cb_delete_confirm(query: CallbackQuery) -> None:
     await query.message.edit_text(
-        "🗑 *Видалити всі дані\\?*\n\n"
-        "Це безповоротно видалить ваш профіль і всі підписки\\.",
+        "🗑 *Видалити всі дані\\?*\n\n" "Це безповоротно видалить ваш профіль і всі підписки\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=_confirm_delete_kb(),
     )

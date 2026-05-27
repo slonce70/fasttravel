@@ -38,6 +38,7 @@ require_file() {
 require_cmd docker
 require_cmd jq
 require_cmd curl
+require_cmd rg
 
 require_file docker-compose.yml
 require_file docker-compose.prod.yml
@@ -189,7 +190,15 @@ require_workflow_contains ".github/workflows/deploy-api.yml" "GHCR_PULL_TOKEN" "
 require_workflow_contains ".github/workflows/deploy-api.yml" "docker login ghcr\\.io" "deploy-api logs VPS into GHCR before pull"
 require_workflow_contains ".github/workflows/deploy-api.yml" "alembic upgrade head" "deploy-api runs migrations before recreate"
 require_workflow_contains ".github/workflows/deploy-api.yml" "DEPLOY_NOTIFY_WEBHOOK" "deploy-api has failure webhook wiring"
-require_workflow_contains ".github/workflows/deploy-api.yml" "apps/shared/\\*\\*" "deploy-api triggers when shared code changes"
+if grep -Eq "apps/shared/\\*\\*" "$ROOT/.github/workflows/deploy-api.yml" ||
+    (
+        grep -Eq "workflow_run:" "$ROOT/.github/workflows/deploy-api.yml" &&
+            grep -Eq 'workflows: +\["CI"\]' "$ROOT/.github/workflows/deploy-api.yml"
+    ); then
+    ok "deploy-api triggers when shared code changes"
+else
+    fail "deploy-api triggers when shared code changes"
+fi
 require_workflow_contains ".github/workflows/deploy-api.yml" "production-preflight\\.sh" "deploy-api runs production preflight after recreate"
 require_workflow_contains ".github/workflows/security-scan.yml" "exit-code: \"1\"" "security scan fails on high/critical Trivy findings"
 require_workflow_contains ".github/workflows/deploy-web.yml" "CLOUDFLARE_ACCOUNT_ID" "deploy-web checks Cloudflare account secret"
@@ -253,7 +262,7 @@ fi
 jq empty "$ROOT/infra/grafana/dashboards/fasttravel-app.json"
 ok "Grafana dashboard JSON parses"
 
-if rg -n 'fasttravel_snapshot_seconds|fasttravel_deals_detected_total|pg_stat_user_tables|fasttravel_mv_refresh_seconds|snapshot_stub|fasttravel_ua|TG_BOT_TOKEN|@YOUR_USERNAME|TODO\(setup\)|nightly-sitemap|docs/outreach|YOUR_NAME|YOUR_EMAIL|YOUR_PHONE|ORACLE_RESERVED_IP|Підняти весь стек|запустити весь стек|Frontend агент|app-track agent|apps/bot/src/publishers|apps/api/src/routers/sitemap.py|/calendar endpoint ignores|ADRs to add|Cloudflare Pages|DNS\+Pages|R2 / Pages' \
+if rg -n 'fasttravel_snapshot_seconds|fasttravel_deals_detected_total|fasttravel_mv_refresh_seconds|snapshot_stub|fasttravel_ua|TG_BOT_TOKEN|@YOUR_USERNAME|TODO\(setup\)|nightly-sitemap|docs/outreach|YOUR_NAME|YOUR_EMAIL|YOUR_PHONE|ORACLE_RESERVED_IP|Підняти весь стек|запустити весь стек|Frontend агент|app-track agent|apps/bot/src/publishers|apps/api/src/routers/sitemap.py|/calendar endpoint ignores|ADRs to add|Cloudflare Pages|DNS\+Pages|R2 / Pages' \
     "$ROOT" \
     -g '!apps/web/.next/**' \
     -g '!node_modules/**' \

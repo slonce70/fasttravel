@@ -539,9 +539,7 @@ async def _run_query(
 # Strategy-shaped wrappers (audit #1.2 split): each accepts the same
 # (db, cooldown_hours, max_per_run) signature so the orchestration loop
 # in `detect_deals()` can iterate over them without per-branch glue.
-async def _run_warm_query(
-    db: AsyncSession, cooldown_hours: int, max_per_run: int
-) -> _RowList:
+async def _run_warm_query(db: AsyncSession, cooldown_hours: int, max_per_run: int) -> _RowList:
     return await _run_query(
         db,
         cold_start=False,
@@ -550,9 +548,7 @@ async def _run_warm_query(
     )
 
 
-async def _run_cold_query(
-    db: AsyncSession, cooldown_hours: int, max_per_run: int
-) -> _RowList:
+async def _run_cold_query(db: AsyncSession, cooldown_hours: int, max_per_run: int) -> _RowList:
     return await _run_query(
         db,
         cold_start=True,
@@ -585,9 +581,7 @@ async def detect_deals(
 
     Returns: number of new deals inserted.
     """
-    cold_only = (
-        force_cold_start if force_cold_start is not None else await _is_cold_start_mode()
-    )
+    cold_only = force_cold_start if force_cold_start is not None else await _is_cold_start_mode()
     stay_inv_enabled = await _is_stay_inversion_enabled()
 
     # Strategy table (audit #1.2): each entry is (reason_label, enabled,
@@ -599,9 +593,7 @@ async def detect_deals(
     # first, so the strongest signals lead. This is the same ordering
     # the audit recommended ("BUCKET → DATE_DIP → STAY_INV → WARM →
     # COLD"); now it's data, not control flow.
-    strategies: list[
-        tuple[str, bool, Callable[[AsyncSession, int, int], Awaitable[_RowList]]]
-    ] = [
+    strategies: list[tuple[str, bool, Callable[[AsyncSession, int, int], Awaitable[_RowList]]]] = [
         ("bucket", _buckets_enabled(), _run_bucket_query),
         ("date_dip", True, _run_date_dip_query),
         ("stay_inversion", stay_inv_enabled, _run_stay_inversion_query),
@@ -653,9 +645,7 @@ async def detect_deals(
     return len(inserted)
 
 
-async def _run_bucket_query(
-    db: AsyncSession, cooldown_hours: int, max_per_run: int
-) -> _RowList:
+async def _run_bucket_query(db: AsyncSession, cooldown_hours: int, max_per_run: int) -> _RowList:
     result = await db.execute(
         _BUCKET_SQL,
         {"cooldown_hours": cooldown_hours, "max_per_run": max_per_run},
@@ -665,9 +655,7 @@ async def _run_bucket_query(
     return [(r.id, r.hotel_id, float(r.discount_pct)) for r in rows]
 
 
-async def _run_date_dip_query(
-    db: AsyncSession, cooldown_hours: int, max_per_run: int
-) -> _RowList:
+async def _run_date_dip_query(db: AsyncSession, cooldown_hours: int, max_per_run: int) -> _RowList:
     result = await db.execute(
         _DATE_DIP_SQL,
         {"cooldown_hours": cooldown_hours, "max_per_run": max_per_run},
