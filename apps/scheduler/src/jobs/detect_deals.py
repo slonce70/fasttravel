@@ -72,7 +72,8 @@ _WARM_SQL = text(
     """
     INSERT INTO deals (
         hotel_id, operator_id, check_in, nights, meal_plan,
-        price_uah, baseline_p50, discount_pct, deep_link, source
+        price_uah, baseline_p50, discount_pct, deep_link, source,
+        detection_method
     )
     -- DISTINCT ON (hotel_id) collapses per-hotel candidates to the single
     -- highest-discount row. Without it the NOT EXISTS sub-query — which
@@ -88,7 +89,8 @@ _WARM_SQL = text(
         cand.p50,
         cand.discount_pct,
         cand.deep_link,
-        cand.source
+        cand.source,
+        'percentile' AS detection_method
     FROM (
         SELECT
             cp.hotel_id,

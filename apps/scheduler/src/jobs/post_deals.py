@@ -27,7 +27,15 @@ from sqlalchemy import text
 
 from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2, make_bot
-from shared.text_uk import format_meal_plan, format_nights, format_reviews
+from shared.text_uk import (
+    format_date_full,
+    format_location,
+    format_meal_plan,
+    format_nights,
+    format_reviews,
+    format_stars,
+    format_uah,
+)
 from src.config import get_settings
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -157,33 +165,6 @@ _MARK_POSTED = text(
 )
 
 
-_MONTHS_UK = (
-    "",  # 1-indexed
-    "січня",
-    "лютого",
-    "березня",
-    "квітня",
-    "травня",
-    "червня",
-    "липня",
-    "серпня",
-    "вересня",
-    "жовтня",
-    "листопада",
-    "грудня",
-)
-
-
-def _format_check_in(d: date) -> str:
-    """`2026-06-12` -> `12 червня`."""
-    return f"{d.day} {_MONTHS_UK[d.month]}"
-
-
-def _format_uah(amount: int) -> str:
-    """Thousand-separated with a non-breaking-ish space + ₴."""
-    return f"{amount:,}".replace(",", " ") + " ₴"
-
-
 def _format_hotel_context(row: _DealRow) -> str:
     lines: list[str] = []
     review_score = getattr(row, "review_score", None)
@@ -203,23 +184,6 @@ def _format_hotel_context(row: _DealRow) -> str:
     return "".join(f"{escape_markdown_v2(line)}\n" for line in lines)
 
 
-def _stars_str(stars: int | None) -> str:
-    if not stars:
-        return ""
-    return "⭐" * int(stars)
-
-
-def _format_location(region: str | None, country: str | None) -> str:
-    """`region` + `country` → 'Region, Country' / 'Country' / '—'.
-
-    Region-only case shouldn't happen post-multi-country migration but we
-    keep the fallback so a misconfigured destination doesn't crash the post.
-    """
-    if region and country:
-        return f"{region}, {country}"
-    return region or country or "—"
-
-
 def _render_deal(row: _DealRow) -> str:
     """Render a deal row to a MarkdownV2 message. Pure / testable."""
     # Savings in absolute UAH — the percentage alone doesn't communicate
@@ -229,39 +193,32 @@ def _render_deal(row: _DealRow) -> str:
     savings = max(0, int(row.baseline_p50) - int(row.price_uah))
     meal_label = format_meal_plan(row.meal_plan)
 
-    # Inline strike-through of the typical price. MarkdownV2 syntax is
-    # `~text~`. Escaped braces in the template would interfere with
-    # .format(), so we render the strikethrough block here.
     strikethrough = (
-        f"~{escape_markdown_v2(_format_uah(int(row.baseline_p50)))}~" if savings > 0 else ""
+        f"~{escape_markdown_v2(format_uah(int(row.baseline_p50)))}~" if savings > 0 else ""
     )
 
     why = get_deal_signal_copy(getattr(row, "detection_method", None)).why_line
     why_line = f"_{escape_markdown_v2(why)}_\n\n" if why else ""
 
-    # All DB strings get escaped at the boundary. Numbers are safe.
     return _DEAL_TEMPLATE.format(
         discount_pct=escape_markdown_v2(f"{float(row.discount_pct):.0f}"),
-        savings_formatted=escape_markdown_v2(_format_uah(savings)),
+        savings_formatted=escape_markdown_v2(format_uah(savings)),
         hotel_name=escape_markdown_v2(row.hotel_name),
-        stars_str=_stars_str(row.stars),
+        stars_str=format_stars(row.stars),
         destination=escape_markdown_v2(
-            _format_location(
+            format_location(
                 getattr(row, "region_name", None),
                 getattr(row, "country_name", None),
             )
         ),
         hotel_context=_format_hotel_context(row),
-        check_in_formatted=escape_markdown_v2(_format_check_in(row.check_in)),
+        check_in_formatted=escape_markdown_v2(format_date_full(row.check_in)),
         nights_label=escape_markdown_v2(format_nights(int(row.nights))),
         meal_plan_label=escape_markdown_v2(meal_label),
-        price_formatted=escape_markdown_v2(_format_uah(row.price_uah)),
+        price_formatted=escape_markdown_v2(format_uah(row.price_uah)),
         strikethrough=strikethrough,
         why_line=why_line,
         operator_display_name=escape_markdown_v2(row.operator_display_name),
-        # deep_link goes inside Markdown link parens — `(...)` already
-        # escaped in template, but `)` literally in URL would break out.
-        # MarkdownV2 link-url escaping is `\)` and `\\`.
         deep_link=(row.deep_link or "https://fasttravel.com.ua")
         .replace("\\", "\\\\")
         .replace(")", "\\)"),
