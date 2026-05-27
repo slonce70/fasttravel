@@ -41,17 +41,29 @@ def test_main_module_importable():
     assert hasattr(main, "main")
 
 
-def test_scheduler_registers_weekly_and_startup_sitemap_ingest():
-    """Long-tail sitemap ingest must be both periodic and restart-resumable."""
+def test_scheduler_registers_weekly_sitemap_ingest_but_not_startup_by_default(
+    monkeypatch,
+):
+    """Long-tail sitemap ingest must not auto-run on every scheduler restart."""
     from src import main
 
+    monkeypatch.delenv("FT_SITEMAP_STARTUP_INGEST_ENABLED", raising=False)
     scheduler = main._build_scheduler()
 
     job_ids = {job.id for job in scheduler.get_jobs()}
-    assert {
-        "sitemap_long_tail_ingest",
-        "sitemap_long_tail_ingest_startup",
-    }.issubset(job_ids)
+    assert "sitemap_long_tail_ingest" in job_ids
+    assert "sitemap_long_tail_ingest_startup" not in job_ids
+
+
+def test_scheduler_registers_startup_sitemap_ingest_when_enabled(monkeypatch):
+    """Operator can opt into restart-resume explicitly for manual recovery."""
+    from src import main
+
+    monkeypatch.setenv("FT_SITEMAP_STARTUP_INGEST_ENABLED", "1")
+    scheduler = main._build_scheduler()
+
+    job_ids = {job.id for job in scheduler.get_jobs()}
+    assert "sitemap_long_tail_ingest_startup" in job_ids
 
 
 def test_scheduler_does_not_register_placeholder_jobs():

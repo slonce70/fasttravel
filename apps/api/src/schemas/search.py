@@ -27,11 +27,19 @@ class SearchResultItem(BaseModel):
     name_uk: str
     stars: int | None
     destination_id: int | None
+    # destination_name: short region/city label (e.g. "Хургада"). Bot card
+    # renders this as the "📍 ..." line. None when the hotel has no linked
+    # destination row.
+    destination_name: str | None = None
     min_price_uah: int | None = None
     deep_link: str | None = None
     requested_nights: int | None = None
     effective_nights: int | None = None
     review_score: float | None = None
+    # Mirrors hotels.review_count (integer, NOT NULL, default 0). Used by
+    # the bot card to render "⭐ 9.4/10 · 1353 відгуки" — without it, the
+    # review row hides entirely even when review_score is populated.
+    review_count: int = 0
     # Sprint 2.5 — when the price was last observed by our scraper.
     # Read from `hotel_calendar_prices.last_observed_at` (added in 002).
     # Frontend can render "оновлено N год тому" when this is older than

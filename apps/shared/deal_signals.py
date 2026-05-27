@@ -9,10 +9,19 @@ from dataclasses import dataclass
 class DealSignalCopy:
     why_line: str
     peer_comparison: bool = False
+    # date_anomaly = baseline is the median of NEIGHBOURING check-in dates
+    # for the same hotel/nights/meal, not a price the user would otherwise
+    # have paid for THIS booking. Renderers use this flag to drop the
+    # "економія X ₴" wording and the ~strikethrough~, which together read
+    # like a "old price → new price" promise the baseline can't keep.
+    date_anomaly: bool = False
 
 
 _SIGNALS: dict[str, DealSignalCopy] = {
-    "calendar_anomaly": DealSignalCopy("📉 Ця дата значно дешевша за сусідні у цьому готелі"),
+    "calendar_anomaly": DealSignalCopy(
+        "",  # headline already says it; no second redundant line
+        date_anomaly=True,
+    ),
     "promo_discount": DealSignalCopy("🏷 Спецціна від оператора — обмежена пропозиція"),
     "percentile": DealSignalCopy("📊 Ціна нижча за звичайну для цього готелю"),
     "peer_anomaly": DealSignalCopy(

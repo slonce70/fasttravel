@@ -104,6 +104,41 @@ async def test_search_hotels_projects_best_deep_link() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_hotels_projects_destination_name_and_review_count() -> None:
+    """Bot card hides `📍 ...` and `⭐ N відгуків` rows when these fields are
+    missing. They were missing because the SQL didn't project them, even
+    though both columns exist (destinations.name_uk via JOIN, hotels.review_count
+    NOT NULL DEFAULT 0). Regression guard so the projection stays in place."""
+    session = _FakeSession()
+    session.rows = [
+        {
+            "hotel_id": 91,
+            "canonical_slug": "fv-eg-dana-beach-resort",
+            "name_uk": "Albatros Dana Beach Resort",
+            "stars": 5,
+            "destination_id": 6,
+            "destination_name": "Хургада",
+            "min_price_uah": 50000,
+            "deep_link": "https://farvater.travel/?q=xyz",
+            "requested_nights": None,
+            "effective_nights": 7,
+            "last_observed_at": None,
+            "review_score": 9.4,
+            "review_count": 1353,
+            "photos": [],
+        }
+    ]
+
+    result = await search_hotels(session, country="EG")
+
+    assert "d.name_uk         AS destination_name" in session.execute_sql
+    assert "h.review_count    AS review_count" in session.execute_sql
+    item = result.items[0]
+    assert item.destination_name == "Хургада"
+    assert item.review_count == 1353
+
+
+@pytest.mark.asyncio
 async def test_search_hotels_supports_exact_non_legacy_nights() -> None:
     session = _FakeSession()
     session.rows = [

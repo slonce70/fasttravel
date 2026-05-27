@@ -190,12 +190,14 @@ async def search_hotels(
             h.name_uk         AS name_uk,
             h.stars           AS stars,
             h.destination_id  AS destination_id,
+            d.name_uk         AS destination_name,
             px.effective_price AS min_price_uah,
             px.deep_link      AS deep_link,
             px.requested_nights AS requested_nights,
             px.effective_nights AS effective_nights,
             px.last_observed_at AS last_observed_at,
             h.review_score    AS review_score,
+            h.review_count    AS review_count,
             -- Search-result cards need a thumbnail; without one the grid
             -- looks broken. We pull the whole jsonb (small — usually
             -- 1 object × ~150 bytes) so the frontend can pick whichever
@@ -223,6 +225,7 @@ async def search_hotels(
             name_uk=row["name_uk"],
             stars=row["stars"],
             destination_id=row["destination_id"],
+            destination_name=row.get("destination_name"),
             min_price_uah=(int(row["min_price_uah"]) if row["min_price_uah"] is not None else None),
             deep_link=row["deep_link"],
             requested_nights=(
@@ -232,6 +235,7 @@ async def search_hotels(
                 int(row["effective_nights"]) if row["effective_nights"] is not None else None
             ),
             review_score=(float(row["review_score"]) if row["review_score"] is not None else None),
+            review_count=int(row.get("review_count") or 0),
             last_observed_at=row["last_observed_at"],
             nights_fallback=(
                 row["requested_nights"] is not None
