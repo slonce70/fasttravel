@@ -70,27 +70,22 @@ def _hotel_site_url(slug: str | None, medium: str = "wizard") -> str | None:
 
 
 def _result_link_rows(items: list[dict[str, Any]]) -> list[list[InlineKeyboardButton]]:
+    """One row per hit: a single "🛒 Забронювати · <name>" button to the
+    operator. The internal-site button (📖) was dropped because the web
+    app at public_site_url returns 404 for /hotels/{slug} — keeping it
+    only confused users. Re-add when apps/web/ is deployed (helper
+    `_hotel_site_url` left in place for that day)."""
     rows: list[list[InlineKeyboardButton]] = []
     for h in items:
-        buttons: list[InlineKeyboardButton] = []
-        site_url = _hotel_site_url(h.get("canonical_slug"))
-        if site_url:
-            buttons.append(
-                InlineKeyboardButton(
-                    text=f"📖 {h.get('name_uk', 'Готель')[:24]}",
-                    url=site_url,
-                )
-            )
         deep_link = h.get("deep_link")
-        if deep_link:
-            buttons.append(
-                InlineKeyboardButton(
-                    text=f"🛒 {h.get('name_uk', 'Тур')[:24]}",
-                    url=deep_link,
-                )
-            )
-        if buttons:
-            rows.append(buttons)
+        if not deep_link:
+            continue
+        # 22-char name cap leaves room for the "🛒 Забронювати · " prefix
+        # in Telegram's ~64-byte button label budget.
+        name = (h.get("name_uk") or "Тур")[:22]
+        rows.append(
+            [InlineKeyboardButton(text=f"🛒 Забронювати · {name}", url=deep_link)]
+        )
     return rows
 
 

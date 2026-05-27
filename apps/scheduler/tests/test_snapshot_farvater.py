@@ -1,5 +1,6 @@
 import importlib
 from datetime import date
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -12,6 +13,8 @@ from src.jobs.snapshot_farvater import (
     _extract_hotel_name,
     _fetch_calendar,
     _fetch_hotel_meta,
+    _mark_unpriced,
+    _refresh_targets,
     _http_client,
     _upsert_hotel,
     _upsert_mapping,
@@ -234,6 +237,76 @@ async def test_snapshot_uses_default_country_cap_when_env_missing(monkeypatch) -
     await snapshot_farvater(max_runtime_minutes=1)
 
     assert captured["max_per_country"] == DEFAULT_MAX_HOTELS_PER_COUNTRY
+
+
+def test_snapshot_has_no_extra_request_sleep_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("FT_FARVATER_REQUEST_DELAY_S", raising=False)
+
+    module = importlib.reload(importlib.import_module("src.jobs.snapshot_farvater"))
+
+    assert module.PER_REQUEST_DELAY_S == 0.0
+
+
+@pytest.mark.asyncio
+async def test_refresh_targets_excludes_inactive_long_tail_hotels() -> None:
+    class _Rows:
+        def all(self):  # type: ignore[no-untyped-def]
+            return [
+                SimpleNamespace(
+                    id=1,
+                    canonical_slug="fv-tr-active-hotel",
+                    country_iso2="TR",
+                    external_id="101",
+                    has_active_prices=True,
+                    last_priced_at=date(2026, 5, 1),
+                ),
+                SimpleNamespace(
+                    id=2,
+                    canonical_slug="fv-tr-no-inventory",
+                    country_iso2="TR",
+                    external_id="102",
+                    has_active_prices=False,
+                    last_priced_at=date(2026, 5, 1),
+                ),
+                SimpleNamespace(
+                    id=3,
+                    canonical_slug="fv-eg-never-priced",
+                    country_iso2="EG",
+                    external_id="103",
+                    has_active_prices=False,
+                    last_priced_at=None,
+                ),
+            ]
+
+    class _FakeSession:
+        async def execute(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return _Rows()
+
+    targets = await _refresh_targets(_FakeSession(), ["TR", "EG"], None)
+
+    assert targets == [
+        ("/uk/hotel/tr/active-hotel/", "TR", 1, "101"),
+        ("/uk/hotel/eg/never-priced/", "EG", 3, "103"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mark_unpriced_removes_stale_active_hotel_from_refresh_cohort() -> None:
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        async def execute(self, sql, params):  # type: ignore[no-untyped-def]
+            self.calls.append((str(sql), params))
+
+    db = _FakeSession()
+
+    await _mark_unpriced(db, 123)
+
+    statement, params = db.calls[0]
+    assert "has_active_prices = FALSE" in statement
+    assert "last_priced_at = NOW()" in statement
+    assert params == {"id": 123}
 
 
 class _FakeResult:

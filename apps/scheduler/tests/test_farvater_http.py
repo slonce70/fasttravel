@@ -22,6 +22,7 @@ from src.infra.farvater_http import (
     _BREAKER_KEY,
     _CONSECUTIVE_BAD_KEY,
     BREAKER_THRESHOLD,
+    DEFAULT_MIN_INTERVAL_S,
     BreakerOpen,
     DailyCapHit,
     FarvaterProdClient,
@@ -63,6 +64,10 @@ def _rate_limited_response(status: int = 429) -> MagicMock:
     resp.json.return_value = {}
     resp.raise_for_status = MagicMock()
     return resp
+
+
+def test_default_throttle_keeps_snapshot_in_production_tempo() -> None:
+    assert DEFAULT_MIN_INTERVAL_S == pytest.approx(0.05)
 
 
 # ── happy path ──────────────────────────────────────────────────────────

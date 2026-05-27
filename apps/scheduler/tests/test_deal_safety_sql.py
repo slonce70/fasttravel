@@ -30,6 +30,7 @@ def test_post_deals_never_selects_zero_discount_or_bucket_only_rows() -> None:
     assert "d.discount_pct >= :min_discount_pct" in sql
     assert "d.detection_method NOT LIKE 'bucket_%'" in sql
     assert "d.detection_method != 'peer_anomaly'" in sql
+    assert "d.detected_at >= NOW() - INTERVAL '6 hours'" in sql
 
 
 def test_post_deals_selects_short_hotel_context_fields() -> None:
@@ -43,20 +44,27 @@ def test_post_deals_selects_short_hotel_context_fields() -> None:
 def test_notify_subscribers_discount_floor() -> None:
     sql = notify_subscribers._MATCH_SQL.text
 
-    assert "d.discount_pct >= 10" in sql
+    assert "d.discount_pct >= 4" in sql
     assert "(f.meal_plan IS NULL OR d.meal_plan = f.meal_plan)" in sql
 
 
 def test_date_dip_branch_detects_same_hotel_date_mispricing() -> None:
-    """date_dip = one calendar date sharply cheaper than the same hotel's
-    own median for that (nights, meal) combo."""
+    """date_dip = one calendar date sharply cheaper than nearby dates for
+    the same hotel + nights + meal combo."""
     sql = detect_deals._DATE_DIP_SQL.text
 
     assert "'calendar_anomaly'" in sql
     assert "PERCENTILE_CONT(0.5)" in sql
-    assert "p50 * 0.90" in sql
-    assert "(hs.p50 - cp.price_uah) >= 1500" in sql
+    assert "local_stats" in sql
+    assert "neighbor.check_in BETWEEN cp.check_in - INTERVAL '14 days'" in sql
+    assert "neighbor.check_in <> cp.check_in" in sql
+    assert "p50 * 0.96" in sql
+    assert "(cp.p50 - cp.price_uah) >= 1500" in sql
     assert "long_cp.nights > short_cp.nights" not in sql
+    # Per-country diversity guard (without it the top-N by % is dominated
+    # by whichever single country has the steepest drops).
+    assert "PARTITION BY country_iso2" in sql
+    assert "country_rank <= :country_cap" in sql
 
 
 def test_all_deal_insert_branches_ignore_daily_natural_key_conflicts() -> None:

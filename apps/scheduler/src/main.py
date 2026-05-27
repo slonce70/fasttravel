@@ -22,6 +22,7 @@ to a minimum.
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 from datetime import UTC, datetime, timedelta
 
@@ -76,6 +77,7 @@ static_tours_sweep = track_job_metrics("static_tours_sweep")(scheduler_jobs.stat
 log = get_logger(__name__)
 
 TIMEZONE = "Europe/Kyiv"
+TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 # Job concurrency is 1 by default — these jobs are idempotent but each
 # touches the same MVs / deals table, so serialising avoids lock noise.
@@ -117,15 +119,16 @@ def _build_scheduler() -> AsyncIOScheduler:
         id="sitemap_long_tail_ingest",
         name="sitemap_long_tail_ingest (weekly Sun 02:00 Kyiv)",
     )
-    scheduler.add_job(
-        sitemap_long_tail_ingest_resilient,
-        DateTrigger(
-            run_date=datetime.now(UTC) + timedelta(seconds=30),
-            timezone=TIMEZONE,
-        ),
-        id="sitemap_long_tail_ingest_startup",
-        name="sitemap_long_tail_ingest (startup one-shot resume, resilient)",
-    )
+    if os.environ.get("FT_SITEMAP_STARTUP_INGEST_ENABLED", "").strip().lower() in TRUE_ENV_VALUES:
+        scheduler.add_job(
+            sitemap_long_tail_ingest_resilient,
+            DateTrigger(
+                run_date=datetime.now(UTC) + timedelta(seconds=30),
+                timezone=TIMEZONE,
+            ),
+            id="sitemap_long_tail_ingest_startup",
+            name="sitemap_long_tail_ingest (startup one-shot resume, resilient)",
+        )
     # Daily fallback at 04:45 so we don't wait a full week to recover if the
     # Sunday run was killed mid-flight or skipped. Idempotent via slug dedup;
     # no local cap: already-ingested slugs are skipped, fresh hotels continue

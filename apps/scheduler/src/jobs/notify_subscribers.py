@@ -83,7 +83,7 @@ _MATCH_SQL = text(
       AND (f.min_stars      IS NULL OR h.stars     >= f.min_stars)
       AND (f.meal_plan IS NULL OR d.meal_plan = f.meal_plan)
       AND d.source IN ('farvater_scrape', 'live_refresh', 'ittour')
-      AND d.discount_pct >= 10
+      AND d.discount_pct >= 4
     -- Tie-break by d.id DESC so the cursor `f.last_notified_deal_id`
     -- advances monotonically even when two deals tie on discount.
     ORDER BY f.id, d.discount_pct DESC, d.id DESC
@@ -127,6 +127,13 @@ def _render(row: Any, public_site_url: str) -> str:
         title = "🔔 *Варіант за вашою підпискою*"
         baseline_line = f"💰 *{price}* · орієнтир схожих {baseline}"
         comparison_line = f"📊 *{discount}% дешевше за схожі готелі*"
+    elif signal.date_anomaly:
+        # baseline = median across neighbouring check-in dates → not a price
+        # the subscriber would otherwise pay for THIS booking, so no
+        # ~strikethrough~ and no "економія" wording.
+        title = "🔔 *Цікава дата за вашою підпискою*"
+        baseline_line = f"💰 *{price}*"
+        comparison_line = f"📉 *На {discount}% дешевше за сусідні дати в цьому готелі*"
     else:
         title = "🔔 *Знижка за вашою підпискою*"
         baseline_line = f"💰 *{price}* ~{baseline}~"

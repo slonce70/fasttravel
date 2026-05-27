@@ -33,6 +33,7 @@ async def _seed_minimal_deal(
     discount_pct: float = 33.0,
     source: str | None = "farvater_scrape",
     detection_method: str = "percentile",
+    nights: int = 7,
 ) -> SeededDeal:
     """Insert one operator + destination + hotel + deal via raw SQL.
 
@@ -90,7 +91,7 @@ async def _seed_minimal_deal(
                 "h": hotel_id,
                 "o": operator_id,
                 "ci": date(2026, 6, 15),
-                "n": 7,
+                "n": nights,
                 "m": "AI",
                 "p": deal_price,
                 "b": baseline_p50,
@@ -215,6 +216,31 @@ async def test_list_deals_preserves_peer_anomaly_detection_method(
     matching = [item for item in body["items"] if item["id"] == seeded.deal_id]
     assert matching, "seeded peer_anomaly deal should be visible in the public feed"
     assert matching[0]["detection_method"] == "peer_anomaly"
+
+
+@pytest.mark.asyncio
+async def test_list_deals_filters_by_nights_range(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    # Three deals across the three buttons we expose in /best: 7n, 9n, 12n.
+    d7 = await _seed_minimal_deal(db_session, nights=7)
+    d9 = await _seed_minimal_deal(db_session, nights=9)
+    d12 = await _seed_minimal_deal(db_session, nights=12)
+
+    # Exact match — only the 9-night deal.
+    resp = await client.get("/api/deals?limit=200&nights_min=9&nights_max=9")
+    assert resp.status_code == 200
+    ids = {item["id"] for item in resp.json()["items"]}
+    assert d9.deal_id in ids
+    assert d7.deal_id not in ids
+    assert d12.deal_id not in ids
+
+    # 10-14 bucket — should include 12n but not 7n / 9n.
+    resp = await client.get("/api/deals?limit=200&nights_min=10&nights_max=14")
+    ids = {item["id"] for item in resp.json()["items"]}
+    assert d12.deal_id in ids
+    assert d7.deal_id not in ids
+    assert d9.deal_id not in ids
 
 
 @pytest.mark.asyncio

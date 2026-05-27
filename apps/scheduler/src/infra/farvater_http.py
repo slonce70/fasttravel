@@ -17,7 +17,7 @@ mimicry via curl_cffi if available, else plain httpx). Both
 Key knobs (defaults — overridable per call site):
 
 - concurrency = 3        (semaphore-gated; matches current snapshot load)
-- min_interval_s = 1.0   (token-bucket between every request)
+- min_interval_s = 0.05  (token-bucket between every request)
 - daily_cap = 0          (disabled; Redis counter is telemetry only)
 - breaker: 5 × {429,403} inside a 15-min window → 1 hour cool-down
 
@@ -51,7 +51,7 @@ log = get_logger(__name__)
 # Defaults — concrete values rather than `None` so the call sites don't
 # have to thread settings through every layer just to override one knob.
 DEFAULT_CONCURRENCY = 3
-DEFAULT_MIN_INTERVAL_S = 1.0
+DEFAULT_MIN_INTERVAL_S = 0.05
 DEFAULT_DAILY_CAP = 0
 DEFAULT_TIMEOUT_S = 30.0
 

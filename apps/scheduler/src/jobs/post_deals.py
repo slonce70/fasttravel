@@ -41,7 +41,8 @@ from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
 
 log = get_logger(__name__)
-MIN_BROADCAST_DISCOUNT_PCT = 10
+MIN_BROADCAST_DISCOUNT_PCT = 4
+HOTEL_DESCRIPTION_MAX_CHARS = 600
 
 
 class _DealRow(Protocol):
@@ -70,15 +71,21 @@ class _DealRow(Protocol):
 # Substitution placeholders use {…} so .format() handles them — they
 # don't conflict with the (escaped) curly braces of the surrounding
 # Telegram syntax (we have none).
+#
+# {headline} and {price_line} are pre-assembled per detection_method
+# because date-anomaly and percentile/promo deals carry different price
+# semantics: date-anomaly's baseline is "median of nearby dates", which
+# isn't a price the user would otherwise pay for THIS booking, so we
+# render it without a "saved X ₴" framing.
 _DEAL_TEMPLATE = (
-    "🔥 *\\-{discount_pct}% · економія {savings_formatted}*\n"
+    "{headline}\n"
     "\n"
     "🏨 *{hotel_name}* {stars_str}\n"
     "📍 {destination}\n"
     "{hotel_context}"
     "📅 {check_in_formatted} · {nights_label} · {meal_plan_label}\n"
     "\n"
-    "💰 *{price_formatted}* {strikethrough}\n"
+    "{price_line}\n"
     "{why_line}"
     "🛒 [Забронювати на {operator_display_name} →]({deep_link})"
 )
@@ -120,6 +127,10 @@ _SELECT_UNPOSTED = text(
     WHERE d.posted_at IS NULL
       AND d.discount_pct >= :min_discount_pct
       AND d.detection_method NOT LIKE 'bucket_%'
+      -- Do not drain old unposted backlog into the public channel. A deal
+      -- is a live price signal; if the bot/channel was down for hours, the
+      -- detector will find fresh candidates on the next tick.
+      AND d.detected_at >= NOW() - INTERVAL '6 hours'
       -- Channel-only filter: peer_anomaly (cold-start) compares the
       -- price to OTHER hotels in the same destination+stars bucket, not
       -- to this hotel's own history. That's a useful UI signal in the
@@ -165,6 +176,15 @@ _MARK_POSTED = text(
 )
 
 
+def _truncate_description(description: str) -> str:
+    if len(description) <= HOTEL_DESCRIPTION_MAX_CHARS:
+        return description
+    clipped = description[: HOTEL_DESCRIPTION_MAX_CHARS - 3].rstrip()
+    if " " in clipped:
+        clipped = clipped.rsplit(" ", 1)[0]
+    return clipped + "..."
+
+
 def _format_hotel_context(row: _DealRow) -> str:
     lines: list[str] = []
     review_score = getattr(row, "review_score", None)
@@ -175,9 +195,7 @@ def _format_hotel_context(row: _DealRow) -> str:
 
     description = " ".join((getattr(row, "description_uk", None) or "").split())
     if description:
-        if len(description) > 140:
-            description = description[:137].rstrip() + "..."
-        lines.append(f"ℹ️ {description}")
+        lines.append(f"ℹ️ {_truncate_description(description)}")
 
     if not lines:
         return ""
@@ -186,23 +204,40 @@ def _format_hotel_context(row: _DealRow) -> str:
 
 def _render_deal(row: _DealRow) -> str:
     """Render a deal row to a MarkdownV2 message. Pure / testable."""
-    # Savings in absolute UAH — the percentage alone doesn't communicate
-    # impact when peer prices vary wildly across categories. baseline_p50
-    # is always >= price_uah by construction (only positive-discount
-    # rows reach this template).
-    savings = max(0, int(row.baseline_p50) - int(row.price_uah))
+    # Savings in absolute UAH — only meaningful when baseline is a price
+    # the user would have otherwise paid for THIS booking (operator promo
+    # red-price, historical p50). For calendar_anomaly the baseline is the
+    # median of NEIGHBOURING check-in dates → using "економія" / strikethrough
+    # would imply "save X by buying now" when in reality the user has to
+    # pick a different date to lose the saving. We render those differently.
+    price_int = int(row.price_uah)
+    baseline_int = int(row.baseline_p50)
+    savings = max(0, baseline_int - price_int)
+    discount_str = escape_markdown_v2(f"{float(row.discount_pct):.0f}")
+    price_fmt = escape_markdown_v2(format_uah(price_int))
+    baseline_fmt = escape_markdown_v2(format_uah(baseline_int))
+    savings_fmt = escape_markdown_v2(format_uah(savings))
     meal_label = format_meal_plan(row.meal_plan)
 
-    strikethrough = (
-        f"~{escape_markdown_v2(format_uah(int(row.baseline_p50)))}~" if savings > 0 else ""
-    )
+    signal = get_deal_signal_copy(getattr(row, "detection_method", None))
 
-    why = get_deal_signal_copy(getattr(row, "detection_method", None)).why_line
-    why_line = f"_{escape_markdown_v2(why)}_\n\n" if why else ""
+    if signal.date_anomaly:
+        # No "економія" — baseline is a calendar median, not a forgone price.
+        headline = f"📉 *На {discount_str}% дешевше за сусідні дати в цьому готелі*"
+        price_line = f"💰 *{price_fmt}*"
+    elif signal.peer_comparison:
+        headline = f"📊 *На {discount_str}% дешевше за схожі готелі*"
+        price_line = f"💰 *{price_fmt}* · орієнтир схожих {baseline_fmt}"
+    else:
+        strikethrough = f"~{baseline_fmt}~" if savings > 0 else ""
+        headline = f"🔥 *\\-{discount_str}% · економія {savings_fmt}*"
+        price_line = f"💰 *{price_fmt}* {strikethrough}".rstrip()
+
+    why_line = f"_{escape_markdown_v2(signal.why_line)}_\n\n" if signal.why_line else ""
 
     return _DEAL_TEMPLATE.format(
-        discount_pct=escape_markdown_v2(f"{float(row.discount_pct):.0f}"),
-        savings_formatted=escape_markdown_v2(format_uah(savings)),
+        headline=headline,
+        price_line=price_line,
         hotel_name=escape_markdown_v2(row.hotel_name),
         stars_str=format_stars(row.stars),
         destination=escape_markdown_v2(
@@ -215,8 +250,6 @@ def _render_deal(row: _DealRow) -> str:
         check_in_formatted=escape_markdown_v2(format_date_full(row.check_in)),
         nights_label=escape_markdown_v2(format_nights(int(row.nights))),
         meal_plan_label=escape_markdown_v2(meal_label),
-        price_formatted=escape_markdown_v2(format_uah(row.price_uah)),
-        strikethrough=strikethrough,
         why_line=why_line,
         operator_display_name=escape_markdown_v2(row.operator_display_name),
         deep_link=(row.deep_link or "https://fasttravel.com.ua")
