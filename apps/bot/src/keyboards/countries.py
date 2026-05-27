@@ -35,9 +35,30 @@ _FLAG_BY_ISO: dict[str, str] = {
     "DO": "🇩🇴",
 }
 
+_NAME_BY_ISO: dict[str, str] = {
+    "TR": "Туреччина",
+    "EG": "Єгипет",
+    "AE": "ОАЕ",
+    "GR": "Греція",
+    "ES": "Іспанія",
+    "BG": "Болгарія",
+    "TH": "Таїланд",
+    "CY": "Кіпр",
+    "HR": "Хорватія",
+    "ME": "Чорногорія",
+    "MV": "Мальдіви",
+    "IT": "Італія",
+    "TN": "Туніс",
+    "DO": "Домінікана",
+}
+
 
 def country_emoji(iso2: str) -> str:
     return _FLAG_BY_ISO.get(iso2.upper(), "📍")
+
+
+def country_name_uk(iso2: str) -> str:
+    return _NAME_BY_ISO.get(iso2.upper(), iso2)
 
 
 def countries_kb(

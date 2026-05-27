@@ -148,6 +148,12 @@ def render_deal(row: dict[str, Any]) -> str:
         headline = f"🔥 *\\-{discount}% · економія {savings_fmt}*\n"
         price_line = f"💰 *{price_fmt}* {strikethrough}".rstrip()
 
+    deep_link = row.get("deep_link")
+    booking_line = ""
+    if deep_link:
+        safe_url = deep_link.replace("\\", "\\\\").replace(")", "\\)")
+        booking_line = f"\n🛒 [Переглянути пропозицію →]({safe_url})"
+
     return (
         headline
         + f"🏨 *{name}* {stars}".rstrip()
@@ -157,4 +163,5 @@ def render_deal(row: dict[str, Any]) -> str:
         + f"📅 {check_in} · {escape_markdown_v2(format_nights(int(nights)))} · {meal}\n"
         + price_line
         + why_block
+        + booking_line
     )
