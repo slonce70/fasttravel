@@ -9,7 +9,7 @@
 # build toolchain and runs as a non-root user with a HEALTHCHECK.
 
 # ---------- Builder stage ----------
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -40,7 +40,7 @@ RUN if [ "$INSTALL_DEV" = "true" ]; then \
     fi
 
 # ---------- Runtime stage ----------
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
