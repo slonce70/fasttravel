@@ -87,9 +87,9 @@ async def test_date_dip_uses_4pct_threshold(patched_orchestrator) -> None:
     await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
 
     executed_sql = patched_orchestrator["executed"]
-    assert any("p50 * 0.96" in sql for sql in executed_sql), (
-        "date_dip should use 4% threshold (p50 * 0.96)"
-    )
+    assert any(
+        "p50 * 0.96" in sql for sql in executed_sql
+    ), "date_dip should use 4% threshold (p50 * 0.96)"
 
 
 @pytest.mark.asyncio

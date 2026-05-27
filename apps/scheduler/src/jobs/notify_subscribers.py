@@ -108,8 +108,7 @@ def _render(row: Any, public_site_url: str) -> str:
     raw_dest = row.destination_name or ""
     raw_country = getattr(row, "country_name", None) or ""
     raw_location = (
-        f"{raw_dest}, {raw_country}" if raw_dest and raw_country
-        else raw_dest or raw_country or ""
+        f"{raw_dest}, {raw_country}" if raw_dest and raw_country else raw_dest or raw_country or ""
     )
     location = escape_markdown_v2(raw_location) if raw_location else ""
     nights = int(row.nights or 7)
@@ -140,8 +139,7 @@ def _render(row: Any, public_site_url: str) -> str:
         comparison_line = f"🔥 *\\-{discount}%* · економія *{savings_fmt}*"
 
     return (
-        f"{title}\n\n"
-        f"🏨 *{name}* {stars}".rstrip()
+        f"{title}\n\n" f"🏨 *{name}* {stars}".rstrip()
         + "\n"
         + (f"📍 {location}\n" if location else "")
         + f"📅 {check_in} · {escape_markdown_v2(format_nights(nights))} · {meal}\n\n"

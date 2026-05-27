@@ -83,9 +83,7 @@ def _result_link_rows(items: list[dict[str, Any]]) -> list[list[InlineKeyboardBu
         # 22-char name cap leaves room for the "🛒 Забронювати · " prefix
         # in Telegram's ~64-byte button label budget.
         name = (h.get("name_uk") or "Тур")[:22]
-        rows.append(
-            [InlineKeyboardButton(text=f"🛒 Забронювати · {name}", url=deep_link)]
-        )
+        rows.append([InlineKeyboardButton(text=f"🛒 Забронювати · {name}", url=deep_link)])
     return rows
 
 

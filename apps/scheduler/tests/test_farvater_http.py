@@ -67,7 +67,7 @@ def _rate_limited_response(status: int = 429) -> MagicMock:
 
 
 def test_default_throttle_keeps_snapshot_in_production_tempo() -> None:
-    assert DEFAULT_MIN_INTERVAL_S == pytest.approx(0.05)
+    assert pytest.approx(0.05) == DEFAULT_MIN_INTERVAL_S
 
 
 # ── happy path ──────────────────────────────────────────────────────────
