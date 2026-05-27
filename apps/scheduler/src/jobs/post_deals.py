@@ -41,7 +41,7 @@ from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
 
 log = get_logger(__name__)
-MIN_BROADCAST_DISCOUNT_PCT = 15
+MIN_BROADCAST_DISCOUNT_PCT = 10
 
 
 class _DealRow(Protocol):

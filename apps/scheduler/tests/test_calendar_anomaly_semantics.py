@@ -1,14 +1,9 @@
-"""Behavioural tests for the calendar_anomaly branch split.
+"""Behavioural tests for the simplified deal detection (date_dip only).
 
-These tests don't hit Postgres — they patch `async_session_factory` and
-`get_redis` so we can assert which SQL objects `detect_deals()` actually
-chooses to execute under each flag combination. Catches regressions like
-"feature flag added but the branch still runs anyway".
-
-Heavyweight integration coverage (real DB + REFRESH MV + assert deal row)
-is deliberately deferred — scheduler tests run with a pure-asyncio
-conftest, and the production live-run after this Stage 1 lands gives the
-same evidence at lower carrying cost.
+The detector now runs a single strategy: date_dip (calendar_anomaly).
+It compares a check-in date's price against the median price for the
+same hotel + nights + meal across all available dates. A date that is
+10%+ below the median is flagged as a deal.
 """
 
 from __future__ import annotations
@@ -18,16 +13,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# `from src.jobs import detect_deals` is broken because src/jobs/__init__.py
-# re-exports the function `detect_deals`, which shadows the submodule when
-# accessed via attribute lookup. importlib gets us the module by string id.
 detect_deals = importlib.import_module("src.jobs.detect_deals")
 
 
 class _FakeResult:
-    """Mimics SQLAlchemy `Result.all()` returning rows the orchestrator
-    expects: objects with `.id`, `.hotel_id`, `.discount_pct` attributes."""
-
     def __init__(self, rows: list[tuple[int, int, float]] | None = None) -> None:
         self._rows = rows or []
 
@@ -44,8 +33,6 @@ class _FakeResult:
 
 
 def _make_db(executed: list) -> AsyncMock:
-    """Build a mock AsyncSession that records every SQL object executed
-    via its `.text` body so tests can assert which branches fired."""
     db = AsyncMock()
 
     async def _execute(sql, _params=None):
@@ -62,8 +49,6 @@ def _make_db(executed: list) -> AsyncMock:
 
 @pytest.fixture
 def patched_orchestrator(monkeypatch):
-    """Patch session factory + redis so detect_deals can run sans infra.
-    Tests configure the returned `flags` dict to control feature toggles."""
     executed: list[str] = []
     db = _make_db(executed)
 
@@ -72,74 +57,46 @@ def patched_orchestrator(monkeypatch):
 
     monkeypatch.setattr(detect_deals, "async_session_factory", _session_factory)
 
-    flags: dict[str, str | None] = {
-        detect_deals.COLD_START_FLAG_KEY: None,
-        detect_deals.STAY_INVERSION_FLAG_KEY: None,
-    }
-
     redis_mock = MagicMock()
 
     async def _get(key: str):
-        return flags.get(key)
+        return None
 
     redis_mock.get = _get
-
     monkeypatch.setattr(detect_deals, "get_redis", lambda: redis_mock)
 
-    return {"executed": executed, "flags": flags}
+    return {"executed": executed}
 
 
 @pytest.mark.asyncio
-async def test_stay_inversion_skipped_when_flag_off(patched_orchestrator) -> None:
-    """With the Redis flag absent (default), the stay_inversion SQL must
-    NOT be executed. date_dip + warm + cold are still expected to run."""
-    patched_orchestrator["flags"][detect_deals.STAY_INVERSION_FLAG_KEY] = None
-
-    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20, force_cold_start=False)
+async def test_only_date_dip_runs(patched_orchestrator) -> None:
+    """Only date_dip strategy should execute — no warm, cold, or bucket."""
+    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
 
     executed_sql = patched_orchestrator["executed"]
-    assert (
-        any("long_cp.nights > short_cp.nights" in sql for sql in executed_sql) is False
-    ), "stay_inversion ran despite flag being OFF"
-    assert any(
-        "PERCENTILE_CONT(0.15)" in sql and "long_cp" not in sql for sql in executed_sql
-    ), "date_dip should always run"
+    assert len(executed_sql) == 1, f"Expected 1 SQL query (date_dip), got {len(executed_sql)}"
+    assert "hotel_stats" in executed_sql[0], "date_dip SQL should use hotel_stats CTE"
 
 
 @pytest.mark.asyncio
-async def test_stay_inversion_runs_when_flag_on(patched_orchestrator) -> None:
-    """Flag = 'true' must enable the stay_inversion branch."""
-    patched_orchestrator["flags"][detect_deals.STAY_INVERSION_FLAG_KEY] = "true"
-
-    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20, force_cold_start=False)
+async def test_date_dip_uses_10pct_threshold(patched_orchestrator) -> None:
+    """The SQL should use 0.90 multiplier (10% discount threshold)."""
+    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
 
     executed_sql = patched_orchestrator["executed"]
-    assert any(
-        "long_cp.nights > short_cp.nights" in sql for sql in executed_sql
-    ), "stay_inversion should run when flag is ON"
+    assert any("p50 * 0.90" in sql for sql in executed_sql), (
+        "date_dip should use 10% threshold (p50 * 0.90)"
+    )
 
 
 @pytest.mark.asyncio
-async def test_redis_outage_defaults_stay_inversion_off(patched_orchestrator, monkeypatch) -> None:
-    """If Redis is unreachable, stay_inversion must default to OFF (safer
-    failure mode — the alternative is silently overfiring deals)."""
-    redis_mock = MagicMock()
-
-    async def _exploding_get(_key: str):
-        raise RuntimeError("redis down")
-
-    redis_mock.get = _exploding_get
-    monkeypatch.setattr(detect_deals, "get_redis", lambda: redis_mock)
-
-    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20, force_cold_start=False)
+async def test_no_warm_cold_bucket_executed(patched_orchestrator) -> None:
+    """Warm, cold, and bucket strategies must not execute."""
+    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
 
     executed_sql = patched_orchestrator["executed"]
-    assert not any(
-        "long_cp.nights > short_cp.nights" in sql for sql in executed_sql
-    ), "stay_inversion must stay OFF when Redis errors"
-
-
-def test_flag_key_constant_is_documented() -> None:
-    """The Redis key name is part of the operational contract — runbooks
-    and dashboards reference it. Pin it down."""
-    assert detect_deals.STAY_INVERSION_FLAG_KEY == "flag:stay_inversion_enabled"
+    for sql in executed_sql:
+        assert "price_baselines" not in sql, "warm strategy should not run"
+        assert "peer_stats" not in sql, "cold strategy should not run"
+        assert "promo_offers" not in sql, "bucket strategy should not run"
+        assert "long_cp.nights > short_cp.nights" not in sql, "stay_inversion should not run"

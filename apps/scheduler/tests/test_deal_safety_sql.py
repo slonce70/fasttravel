@@ -40,12 +40,10 @@ def test_post_deals_selects_short_hotel_context_fields() -> None:
     assert "h.review_count" in sql
 
 
-def test_notify_subscribers_keeps_stricter_peer_anomaly_floor() -> None:
+def test_notify_subscribers_discount_floor() -> None:
     sql = notify_subscribers._MATCH_SQL.text
 
-    assert "d.discount_pct >= 15" in sql
-    assert "d.detection_method != 'peer_anomaly'" in sql
-    assert "d.discount_pct >= 25" in sql
+    assert "d.discount_pct >= 10" in sql
     assert "(f.meal_plan IS NULL OR d.meal_plan = f.meal_plan)" in sql
 
 
@@ -56,37 +54,9 @@ def test_date_dip_branch_detects_same_hotel_date_mispricing() -> None:
 
     assert "'calendar_anomaly'" in sql
     assert "PERCENTILE_CONT(0.5)" in sql
-    assert "PERCENTILE_CONT(0.15)" in sql
-    assert "cp.price_uah < hs.p50 * 0.75" in sql
-    assert "cp.price_uah < hs.p15" in sql
-    assert "(hs.p50 - cp.price_uah) >= 3000" in sql
-    # date_dip must NOT contain the stay-inversion self-join.
+    assert "p50 * 0.90" in sql
+    assert "(hs.p50 - cp.price_uah) >= 1500" in sql
     assert "long_cp.nights > short_cp.nights" not in sql
-
-
-def test_cold_start_branch_tags_peer_anomaly_and_uses_peer_thresholds() -> None:
-    sql = detect_deals._COLD_START_SQL.text
-
-    assert "'peer_anomaly' AS detection_method" in sql
-    assert "WITH peer_stats AS" in sql
-    assert "JOIN peer_stats ps" in sql
-    assert "cp.price_uah < ps.p15" in sql
-    assert "cp.price_uah < ps.p50 * 0.75" in sql
-    assert "(ps.p50 - cp.price_uah) >= 3000" in sql
-
-
-def test_stay_inversion_branch_detects_longer_stay_cheaper() -> None:
-    """stay_inversion = longer-night offer cheaper than a shorter one at
-    the same hotel/check_in/meal."""
-    sql = detect_deals._STAY_INVERSION_SQL.text
-
-    assert "'calendar_anomaly'" in sql
-    assert "long_cp.nights > short_cp.nights" in sql
-    assert "long_cp.price_uah < short_cp.price_uah" in sql
-    assert "long_cp.price_uah < short_cp.price_uah * 0.90" in sql
-    assert "(short_cp.price_uah - long_cp.price_uah) >= 3000" in sql
-    # No PERCENTILE_CONT — this branch compares two rows directly.
-    assert "PERCENTILE_CONT" not in sql
 
 
 def test_all_deal_insert_branches_ignore_daily_natural_key_conflicts() -> None:
