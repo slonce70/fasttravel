@@ -4,7 +4,7 @@
 # are distributed as prebuilt .deb packages by the official PGDG apt repo.
 # Building from source against alpine would require pulling the postgres
 # source tree and recompiling — not worth the complexity for a free-tier MVP.
-FROM postgres:16-bookworm
+FROM postgres:18-bookworm
 
 # hadolint ignore=DL3008
 # DL3008 wants explicit apt-pinned versions; PGDG bumps the deb revision
