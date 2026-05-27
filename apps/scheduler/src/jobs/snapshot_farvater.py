@@ -1202,12 +1202,22 @@ async def snapshot_farvater(
         # (`refresh_baselines`, 04:15 Kyiv). The two MVs left here
         # (current_prices, hotel_calendar_prices) have unique indexes
         # — see migrations 001 / 009.
+        #
+        # Skip MV refresh on partial snapshots — incomplete data would
+        # make the MVs reflect a subset of the catalog. The hourly
+        # refresh_views job (:05) picks up the slack on the next tick.
         from src.infra.db import async_engine as _engine
 
-        async with _engine.connect() as conn:
-            await conn.execution_options(isolation_level="AUTOCOMMIT")
-            for mv in ("current_prices", "hotel_calendar_prices"):
-                await conn.execute(text(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}"))
+        if not partial_due_to_budget:
+            async with _engine.connect() as conn:
+                await conn.execution_options(isolation_level="AUTOCOMMIT")
+                for mv in ("current_prices", "hotel_calendar_prices"):
+                    await conn.execute(text(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}"))
+        else:
+            log.info(
+                "farvater.snapshot.mv_refresh_skipped",
+                reason="partial_snapshot",
+            )
         # Decay moved to its own daily job (`decay_active_prices`, 04:00
         # Kyiv) so a snapshot failure doesn't leave stale hotels in /search.
         # See Sprint 1F in the plan file.

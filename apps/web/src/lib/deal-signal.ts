@@ -14,7 +14,7 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
       return {
         badgeIcon: '📉',
         badgeVariant: 'success',
-        reason: 'Аномально дешева дата у цьому готелі',
+        reason: 'Ця дата значно дешевша за сусідні у цьому готелі',
         baselineLabel: 'інші дати',
         strikeBaseline: true,
       };
@@ -22,7 +22,7 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
       return {
         badgeIcon: '🏷',
         badgeVariant: 'accent',
-        reason: 'Спецціна оператора',
+        reason: 'Спецціна від оператора — обмежена пропозиція',
         baselineLabel: 'ціна оператора до акції',
         strikeBaseline: true,
       };
@@ -30,7 +30,7 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
       return {
         badgeIcon: '📊',
         badgeVariant: 'neutral',
-        reason: 'Дешевше за схожі готелі',
+        reason: 'Дешевше за аналогічні готелі в цьому регіоні',
         baselineLabel: 'орієнтир схожих',
         strikeBaseline: false,
       };
@@ -38,7 +38,7 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
       return {
         badgeIcon: '📊',
         badgeVariant: 'brand',
-        reason: 'Нижче історичної ціни цього готелю',
+        reason: 'Ціна нижча за звичайну для цього готелю',
         baselineLabel: 'зазвичай',
         strikeBaseline: true,
       };
