@@ -25,7 +25,9 @@ from typing import Protocol
 
 from sqlalchemy import text
 
+from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2, make_bot
+from shared.text_uk import format_meal_plan, format_nights, format_reviews
 from src.config import get_settings
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -48,6 +50,9 @@ class _DealRow(Protocol):
     operator_display_name: str
     deep_link: str | None
     detection_method: str | None
+    description_uk: str | None
+    review_score: float | None
+    review_count: int | None
 
 
 # Pre-escaped MarkdownV2 template. Literal punctuation that MarkdownV2
@@ -62,41 +67,13 @@ _DEAL_TEMPLATE = (
     "\n"
     "🏨 *{hotel_name}* {stars_str}\n"
     "📍 {destination}\n"
-    "📅 {check_in_formatted} · {nights} ноч\\. · {meal_plan_label}\n"
+    "{hotel_context}"
+    "📅 {check_in_formatted} · {nights_label} · {meal_plan_label}\n"
     "\n"
     "💰 *{price_formatted}* {strikethrough}\n"
     "{why_line}"
     "🛒 [Забронювати на {operator_display_name} →]({deep_link})"
 )
-
-
-# Short, customer-friendly meal plan names. RO/BB/AI codes are operator
-# jargon — the channel reader cares about whether breakfast is included.
-_MEAL_LABELS = {
-    "AI": "Все включено",
-    "UAI": "Ультра все включено",
-    "HB": "Напівпансіон",
-    "BB": "Сніданок",
-    "FB": "Повний пансіон",
-    "RO": "Без харчування",
-}
-
-
-# Why-this-is-cheap explanation per detection method. Helps the channel
-# reader trust the discount: a 30% drop "vs other dates of the same
-# hotel" reads very differently from "vs peer 4-star hotels in Antalya".
-# Kept short — Telegram channel posts compete with everything else in
-# the user's feed for attention.
-#
-# peer_anomaly is intentionally NOT broadcast to the channel (filtered
-# in _SELECT_UNPOSTED), but the label still appears here because the
-# bot's /deals and /best surfaces re-use this map for their cards.
-_WHY_LINES = {
-    "calendar_anomaly": "📉 Аномально дешева дата у цьому готелі",
-    "promo_discount": "🏷 Спецціна оператора",
-    "percentile": "📊 Нижче історичної ціни цього готелю",
-    "peer_anomaly": "📊 Дешевше за середнє по сусідніх готелях",
-}
 
 
 # Pull all the fields a post needs in one query. Operator + destination
@@ -121,6 +98,9 @@ _SELECT_UNPOSTED = text(
         d.detection_method,
         h.name_uk        AS hotel_name,
         h.stars          AS stars,
+        h.description_uk AS description_uk,
+        h.review_score   AS review_score,
+        h.review_count   AS review_count,
         region.name_uk   AS region_name,
         country.name_uk  AS country_name,
         o.display_name   AS operator_display_name
@@ -204,6 +184,25 @@ def _format_uah(amount: int) -> str:
     return f"{amount:,}".replace(",", " ") + " ₴"
 
 
+def _format_hotel_context(row: _DealRow) -> str:
+    lines: list[str] = []
+    review_score = getattr(row, "review_score", None)
+    review_count = int(getattr(row, "review_count", 0) or 0)
+    if review_score is not None and review_count > 0:
+        score = f"{float(review_score):.1f}/10"
+        lines.append(f"⭐ {score} · {format_reviews(review_count)}")
+
+    description = " ".join((getattr(row, "description_uk", None) or "").split())
+    if description:
+        if len(description) > 140:
+            description = description[:137].rstrip() + "..."
+        lines.append(f"ℹ️ {description}")
+
+    if not lines:
+        return ""
+    return "".join(f"{escape_markdown_v2(line)}\n" for line in lines)
+
+
 def _stars_str(stars: int | None) -> str:
     if not stars:
         return ""
@@ -228,19 +227,16 @@ def _render_deal(row: _DealRow) -> str:
     # is always >= price_uah by construction (only positive-discount
     # rows reach this template).
     savings = max(0, int(row.baseline_p50) - int(row.price_uah))
-    raw_meal = row.meal_plan or ""
-    meal_label = _MEAL_LABELS.get(raw_meal, raw_meal)
+    meal_label = format_meal_plan(row.meal_plan)
 
     # Inline strike-through of the typical price. MarkdownV2 syntax is
     # `~text~`. Escaped braces in the template would interfere with
     # .format(), so we render the strikethrough block here.
     strikethrough = (
-        f"~{escape_markdown_v2(_format_uah(int(row.baseline_p50)))}~"
-        if savings > 0
-        else ""
+        f"~{escape_markdown_v2(_format_uah(int(row.baseline_p50)))}~" if savings > 0 else ""
     )
 
-    why = _WHY_LINES.get((getattr(row, "detection_method", None) or "").lower(), "")
+    why = get_deal_signal_copy(getattr(row, "detection_method", None)).why_line
     why_line = f"_{escape_markdown_v2(why)}_\n\n" if why else ""
 
     # All DB strings get escaped at the boundary. Numbers are safe.
@@ -255,8 +251,9 @@ def _render_deal(row: _DealRow) -> str:
                 getattr(row, "country_name", None),
             )
         ),
+        hotel_context=_format_hotel_context(row),
         check_in_formatted=escape_markdown_v2(_format_check_in(row.check_in)),
-        nights=row.nights,
+        nights_label=escape_markdown_v2(format_nights(int(row.nights))),
         meal_plan_label=escape_markdown_v2(meal_label),
         price_formatted=escape_markdown_v2(_format_uah(row.price_uah)),
         strikethrough=strikethrough,

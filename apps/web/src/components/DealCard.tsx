@@ -3,6 +3,8 @@ import type { Deal } from '@/lib/types';
 import { Card, CardBody, CardFooter } from './ui/Card';
 import { Badge } from './ui/Badge';
 import { formatPrice, formatDateMedium, formatNights, formatMealPlan } from '@/lib/format';
+import { getDealSignalCopy } from '@/lib/deal-signal';
+import { cn } from '@/lib/utils';
 
 export interface DealCardProps {
   deal: Deal;
@@ -12,6 +14,7 @@ export function DealCard({ deal }: DealCardProps) {
   const heading = deal.hotel_name_uk;
   const href = `/hotels/${deal.hotel_slug}`;
   const starsStr = deal.hotel_stars ? '★'.repeat(deal.hotel_stars) : '';
+  const signal = getDealSignalCopy(deal.detection_method);
   return (
     <Card className="flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
       {deal.hotel_photo_url && (
@@ -27,8 +30,8 @@ export function DealCard({ deal }: DealCardProps) {
       )}
       <CardBody className="flex flex-1 flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
-          <Badge variant="accent" size="md">
-            🔥 -{Math.round(deal.discount_pct)}%
+          <Badge variant={signal.badgeVariant} size="md">
+            {signal.badgeIcon} -{Math.round(deal.discount_pct)}%
           </Badge>
           <span className="text-xs text-slate-400">{formatDateMedium(deal.detected_at)}</span>
         </div>
@@ -50,9 +53,17 @@ export function DealCard({ deal }: DealCardProps) {
           </li>
           <li>🍽 {formatMealPlan(deal.meal_plan)}</li>
         </ul>
+        <p className="rounded-md bg-slate-50 px-2.5 py-2 text-xs leading-snug text-slate-600">
+          {signal.reason}
+        </p>
         <div className="mt-auto">
-          <p className="text-xs text-slate-400 line-through">
-            зазвичай {formatPrice(deal.baseline_p50)}
+          <p
+            className={cn(
+              'text-xs text-slate-400',
+              signal.strikeBaseline && 'line-through',
+            )}
+          >
+            {signal.baselineLabel} {formatPrice(deal.baseline_p50)}
           </p>
           <p className="text-2xl font-bold text-brand-800">{formatPrice(deal.price_uah)}</p>
         </div>

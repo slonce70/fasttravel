@@ -164,19 +164,32 @@ def upgrade() -> None:
         """
     )
 
-    # Hand control of partitioning to pg_partman 5.x.
-    # API change vs 4.x:
-    #   - `partman.create_parent` (not `public.create_parent`)
-    #   - p_interval is a string interval like '1 week'
-    #   - p_type defaults to 'range' in 5.x
+    # Hand control of partitioning to pg_partman 5.x when the extension is
+    # available. CI and throwaway developer DBs often run plain postgres
+    # without pg_partman, so create a DEFAULT partition there. Production
+    # bootstraps pg_partman through infra/postgres/init-extensions.sh.
     op.execute(
         """
-        SELECT partman.create_parent(
-            p_parent_table  := 'public.price_observations',
-            p_control       := 'observed_at',
-            p_interval      := '1 week',
-            p_premake       := 4
-        );
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM pg_proc p
+                JOIN pg_namespace n ON n.oid = p.pronamespace
+                WHERE n.nspname = 'partman'
+                  AND p.proname = 'create_parent'
+            ) THEN
+                PERFORM partman.create_parent(
+                    p_parent_table  := 'public.price_observations',
+                    p_control       := 'observed_at',
+                    p_interval      := '1 week',
+                    p_premake       := 4
+                );
+            ELSE
+                CREATE TABLE price_observations_default
+                PARTITION OF price_observations DEFAULT;
+            END IF;
+        END $$;
         """
     )
 
@@ -393,8 +406,24 @@ def downgrade() -> None:
     op.execute("DROP MATERIALIZED VIEW IF EXISTS hotel_calendar_prices")
     op.execute("DROP MATERIALIZED VIEW IF EXISTS current_prices")
 
-    # Detach partman bookkeeping before dropping the parent.
-    op.execute("DELETE FROM partman.part_config WHERE parent_table = 'public.price_observations'")
+    # Detach partman bookkeeping before dropping the parent when pg_partman
+    # exists; CI/dev fallback DBs may only have the DEFAULT partition.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'partman'
+                  AND table_name = 'part_config'
+            ) THEN
+                DELETE FROM partman.part_config
+                WHERE parent_table = 'public.price_observations';
+            END IF;
+        END $$;
+        """
+    )
     op.execute("DROP TABLE IF EXISTS price_observations CASCADE")
 
     op.drop_table("scrape_runs")

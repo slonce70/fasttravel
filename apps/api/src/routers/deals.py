@@ -32,9 +32,7 @@ async def get_deals(
     ),
     session: AsyncSession = Depends(get_db),
 ) -> PaginatedDeals:
-    return await list_deals(
-        session, country_iso2=country, limit=limit, offset=offset, sort=sort
-    )
+    return await list_deals(session, country_iso2=country, limit=limit, offset=offset, sort=sort)
 
 
 @router.get("/{deal_id}", response_model=DealOut)

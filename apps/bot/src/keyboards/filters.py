@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from shared.text_uk import format_nights
+
 
 def _back_row(prefix: str) -> list[InlineKeyboardButton]:
     return [InlineKeyboardButton(text="◀ Назад", callback_data=f"{prefix}:back")]
@@ -24,16 +26,16 @@ def nights_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="7 ноч ⭐", callback_data="n:7"),
-                InlineKeyboardButton(text="8 ноч", callback_data="n:8"),
-                InlineKeyboardButton(text="9 ноч", callback_data="n:9"),
-                InlineKeyboardButton(text="10 ноч", callback_data="n:10"),
+                InlineKeyboardButton(text=f"{format_nights(7)} ⭐", callback_data="n:7"),
+                InlineKeyboardButton(text=format_nights(8), callback_data="n:8"),
+                InlineKeyboardButton(text=format_nights(9), callback_data="n:9"),
+                InlineKeyboardButton(text=format_nights(10), callback_data="n:10"),
             ],
             [
-                InlineKeyboardButton(text="11 ноч", callback_data="n:11"),
-                InlineKeyboardButton(text="12 ноч", callback_data="n:12"),
-                InlineKeyboardButton(text="13 ноч", callback_data="n:13"),
-                InlineKeyboardButton(text="14 ноч", callback_data="n:14"),
+                InlineKeyboardButton(text=format_nights(11), callback_data="n:11"),
+                InlineKeyboardButton(text=format_nights(12), callback_data="n:12"),
+                InlineKeyboardButton(text=format_nights(13), callback_data="n:13"),
+                InlineKeyboardButton(text=format_nights(14), callback_data="n:14"),
             ],
             [InlineKeyboardButton(text="🤷 Будь-яка", callback_data="n:any")],
             _back_row("n"),
@@ -46,11 +48,7 @@ def when_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="🚀 Найближчі тижні", callback_data="w:soon")],
             [InlineKeyboardButton(text="📅 Через місяць", callback_data="w:month")],
-            [
-                InlineKeyboardButton(
-                    text="🌴 Через 2-3 місяці", callback_data="w:season"
-                )
-            ],
+            [InlineKeyboardButton(text="🌴 Через 2-3 місяці", callback_data="w:season")],
             [InlineKeyboardButton(text="🤷 Без різниці", callback_data="w:any")],
             _back_row("w"),
         ]
@@ -119,9 +117,7 @@ def results_actions_kb(
     nav_row: list[InlineKeyboardButton] = []
     if has_prev:
         nav_row.append(InlineKeyboardButton(text="◀", callback_data="res:prev"))
-    nav_row.append(
-        InlineKeyboardButton(text=f"📄 {page}/{total_pages}", callback_data="res:noop")
-    )
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page}/{total_pages}", callback_data="res:noop"))
     if has_next:
         nav_row.append(InlineKeyboardButton(text="▶", callback_data="res:next"))
 
@@ -133,7 +129,7 @@ def results_actions_kb(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="🔔 Підписатись на оновлення",
+                    text="🔔 Алерт за цими фільтрами",
                     callback_data="res:subscribe",
                 )
             ]

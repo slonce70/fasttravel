@@ -32,6 +32,7 @@ async def _seed_minimal_deal(
     baseline_p50: int = 12000,
     discount_pct: float = 33.0,
     source: str | None = "farvater_scrape",
+    detection_method: str = "percentile",
 ) -> SeededDeal:
     """Insert one operator + destination + hotel + deal via raw SQL.
 
@@ -81,8 +82,8 @@ async def _seed_minimal_deal(
             text(
                 "INSERT INTO deals (hotel_id, operator_id, check_in, nights, "
                 "meal_plan, price_uah, baseline_p50, discount_pct, deep_link, "
-                "detected_at, source) "
-                "VALUES (:h, :o, :ci, :n, :m, :p, :b, :d, :dl, :dt, :source) "
+                "detected_at, source, detection_method) "
+                "VALUES (:h, :o, :ci, :n, :m, :p, :b, :d, :dl, :dt, :source, :method) "
                 "RETURNING id"
             ),
             {
@@ -101,6 +102,7 @@ async def _seed_minimal_deal(
                 # deal can override `detected_at` via kwargs.
                 "dt": datetime.now(timezone.utc),
                 "source": source,
+                "method": detection_method,
             },
         )
     ).scalar_one()
@@ -193,6 +195,26 @@ async def test_list_deals_includes_joined_hotel_fields(
     assert "hotel_stars" in first
     assert "hotel_photo_url" in first
     assert "destination_name" in first
+
+
+@pytest.mark.asyncio
+async def test_list_deals_preserves_peer_anomaly_detection_method(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    seeded = await _seed_minimal_deal(
+        db_session,
+        deal_price=120,
+        detection_method="peer_anomaly",
+        discount_pct=99.0,
+    )
+
+    response = await client.get("/api/deals?limit=200")
+
+    assert response.status_code == 200
+    body = response.json()
+    matching = [item for item in body["items"] if item["id"] == seeded.deal_id]
+    assert matching, "seeded peer_anomaly deal should be visible in the public feed"
+    assert matching[0]["detection_method"] == "peer_anomaly"
 
 
 @pytest.mark.asyncio

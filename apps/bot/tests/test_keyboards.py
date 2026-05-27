@@ -30,9 +30,7 @@ from src.keyboards.main_menu import (
 
 
 def _all_callbacks(kb) -> list[str]:
-    return [
-        b.callback_data for row in kb.inline_keyboard for b in row if b.callback_data
-    ]
+    return [b.callback_data for row in kb.inline_keyboard for b in row if b.callback_data]
 
 
 def test_main_menu_layout():
@@ -74,10 +72,33 @@ def test_countries_kb_two_columns_and_skips_zero_count():
     assert "cc:cancel" in cbs
 
 
+def test_countries_kb_pluralizes_hotel_counts():
+    destinations = [
+        {"country_iso2": "TR", "name_uk": "Туреччина", "hotel_count": 1},
+        {"country_iso2": "EG", "name_uk": "Єгипет", "hotel_count": 2},
+        {"country_iso2": "AE", "name_uk": "ОАЕ", "hotel_count": 5},
+    ]
+
+    labels = [b.text for row in countries_kb(destinations).inline_keyboard for b in row]
+
+    assert "🇹🇷 Туреччина (1 готель)" in labels
+    assert "🇪🇬 Єгипет (2 готелі)" in labels
+    assert "🇦🇪 ОАЕ (5 готелів)" in labels
+
+
 def test_nights_kb_callback_shape():
     cbs = _all_callbacks(nights_kb())
     assert {f"n:{n}" for n in range(7, 15)} | {"n:any", "n:back"} <= set(cbs)
     assert {"n:3", "n:5", "n:21"}.isdisjoint(cbs)
+
+
+def test_nights_kb_uses_full_ukrainian_night_labels():
+    labels = [b.text for row in nights_kb().inline_keyboard for b in row]
+
+    assert "7 ночей ⭐" in labels
+    assert "8 ночей" in labels
+    assert "10 ночей" in labels
+    assert all(not label.endswith(" ноч") for label in labels)
 
 
 def test_when_kb_callbacks():
@@ -118,6 +139,7 @@ def test_results_actions_kb_pagination_states():
     assert "res:next" in cbs
     # "Subscribe" appears when subscription_set=False
     assert "res:subscribe" in cbs
+    assert any(b.text == "🔔 Алерт за цими фільтрами" for row in kb.inline_keyboard for b in row)
 
     kb = results_actions_kb(
         has_prev=True, has_next=False, page=3, total_pages=3, subscription_set=True

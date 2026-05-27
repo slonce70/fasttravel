@@ -79,9 +79,7 @@ def _subs_kb(subs: list[dict[str, Any]]) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    rows.append(
-        [InlineKeyboardButton(text="➕ Додати підписку", callback_data="sub:add")]
-    )
+    rows.append([InlineKeyboardButton(text="➕ Додати підписку", callback_data="sub:add")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -94,9 +92,7 @@ async def show_subscriptions(message: Message) -> None:
     chat_id = message.from_user.id if message.from_user else None
     if chat_id is None:
         return
-    await ensure_subscriber(
-        chat_id, message.from_user.username if message.from_user else None
-    )
+    await ensure_subscriber(chat_id, message.from_user.username if message.from_user else None)
     subs = await list_subscriptions(chat_id)
     await message.answer(
         _render_subscriptions(subs),
@@ -217,20 +213,12 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(
-                        text="до 30 000 ₴", callback_data="subb:30000"
-                    ),
-                    InlineKeyboardButton(
-                        text="до 50 000 ₴", callback_data="subb:50000"
-                    ),
+                    InlineKeyboardButton(text="до 30 000 ₴", callback_data="subb:30000"),
+                    InlineKeyboardButton(text="до 50 000 ₴", callback_data="subb:50000"),
                 ],
                 [
-                    InlineKeyboardButton(
-                        text="до 80 000 ₴", callback_data="subb:80000"
-                    ),
-                    InlineKeyboardButton(
-                        text="до 120 000 ₴", callback_data="subb:120000"
-                    ),
+                    InlineKeyboardButton(text="до 80 000 ₴", callback_data="subb:80000"),
+                    InlineKeyboardButton(text="до 120 000 ₴", callback_data="subb:120000"),
                 ],
                 [InlineKeyboardButton(text="Будь-яка ціна", callback_data="subb:any")],
                 [InlineKeyboardButton(text="◀ Назад", callback_data="subb:back")],

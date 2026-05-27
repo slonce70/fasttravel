@@ -21,6 +21,7 @@ class Settings(BaseAppSettings):
     # Bot identity.
     telegram_bot_token: str | None = None
     telegram_channel_id: str | None = None
+    telegram_alerts_chat_id: str | None = None
     public_channel_link: str = "https://t.me/testtyhhh"
 
     # Backend HTTP API. In docker-compose this resolves to the api service;
@@ -54,6 +55,14 @@ class Settings(BaseAppSettings):
             offenders.append("TELEGRAM_BOT_TOKEN")
         if not self.telegram_channel_id:
             offenders.append("TELEGRAM_CHANNEL_ID")
+        if not self.telegram_alerts_chat_id:
+            offenders.append("TELEGRAM_ALERTS_CHAT_ID")
+        if (
+            self.telegram_alerts_chat_id
+            and self.telegram_channel_id
+            and self.telegram_alerts_chat_id == self.telegram_channel_id
+        ):
+            offenders.append("TELEGRAM_ALERTS_CHAT_ID_MUST_DIFFER_FROM_TELEGRAM_CHANNEL_ID")
         # Audit #2 — without this secret the /alerts webhook would silently
         # accept any spoofed AlertManager payload from anyone with network
         # reach. Required in prod; the alert_webhook handler also fail-closes
