@@ -13,10 +13,10 @@ def test_dev_allows_unconfigured_bot() -> None:
     settings.assert_prod_secrets()
 
 
-def test_default_public_channel_link_points_to_live_test_channel() -> None:
+def test_default_public_channel_link_points_to_live_channel() -> None:
     settings = Settings(_env_file=None)
 
-    assert settings.public_channel_link == "https://t.me/testtyhhh"
+    assert settings.public_channel_link == "https://t.me/fasttravel_deals"
 
 
 def test_public_site_url_has_no_unsafe_default() -> None:
