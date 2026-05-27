@@ -344,41 +344,7 @@ _BUCKET_SQL = text(
 # re-detections; `ON CONFLICT DO NOTHING` handles concurrent writers.
 _DATE_DIP_SQL = text(
     """
-    WITH hotel_stats AS (
-        -- Median price per hotel across all available check-in dates
-        -- for the same (nights, meal_plan) combination. A date that is
-        -- 10%+ below this median is a deal worth posting.
-        SELECT
-            cp.hotel_id,
-            cp.operator_id,
-            cp.nights,
-            cp.meal_plan,
-            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY cp.price_uah)::int AS p50,
-            COUNT(*) AS sample_n
-        FROM current_prices cp
-        WHERE cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
-                              AND CURRENT_DATE + INTERVAL '90 days'
-        GROUP BY cp.hotel_id, cp.operator_id, cp.nights, cp.meal_plan
-        HAVING COUNT(*) >= 5
-    )
-    INSERT INTO deals (
-        hotel_id, operator_id, check_in, nights, meal_plan,
-        price_uah, baseline_p50, discount_pct, deep_link,
-        source, detection_method
-    )
-    SELECT DISTINCT ON (cand.hotel_id)
-        cand.hotel_id,
-        cand.operator_id,
-        cand.check_in,
-        cand.nights,
-        cand.meal_plan,
-        cand.price_uah,
-        cand.baseline_p50,
-        cand.discount_pct,
-        cand.deep_link,
-        'farvater_scrape' AS source,
-        'calendar_anomaly' AS detection_method
-    FROM (
+    WITH priced AS (
         SELECT
             cp.hotel_id,
             cp.operator_id,
@@ -386,28 +352,108 @@ _DATE_DIP_SQL = text(
             cp.nights,
             cp.meal_plan,
             cp.price_uah,
-            hs.p50 AS baseline_p50,
-            ROUND(100 * (1 - cp.price_uah::numeric / hs.p50), 2) AS discount_pct,
             cp.deep_link
         FROM current_prices cp
-        JOIN hotel_stats hs
-          ON hs.hotel_id = cp.hotel_id
-         AND hs.operator_id = cp.operator_id
-         AND hs.nights = cp.nights
-         AND hs.meal_plan = cp.meal_plan
-        WHERE cp.price_uah < hs.p50 * 0.90
-          AND (hs.p50 - cp.price_uah) >= 1500
-          AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
+        WHERE cp.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
                               AND CURRENT_DATE + INTERVAL '90 days'
-    ) cand
-    WHERE cand.discount_pct > 0
-      AND NOT EXISTS (
-          SELECT 1
-          FROM deals d
-          WHERE d.hotel_id = cand.hotel_id
-            AND d.detected_at >= NOW() - make_interval(hours => :cooldown_hours)
-      )
-    ORDER BY cand.hotel_id, cand.discount_pct DESC
+    ),
+    local_stats AS (
+        -- Median price across nearby check-in dates for the same hotel,
+        -- nights and meal. This keeps the public "neighboring dates"
+        -- promise honest: early-June offers are not compared to late-July
+        -- high-season prices.
+        SELECT
+            cp.hotel_id,
+            cp.operator_id,
+            cp.check_in,
+            cp.nights,
+            cp.meal_plan,
+            cp.price_uah,
+            cp.deep_link,
+            hs.p50,
+            hs.sample_n
+        FROM priced cp
+        JOIN LATERAL (
+            SELECT
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY neighbor.price_uah)::int AS p50,
+                COUNT(*) AS sample_n
+            FROM current_prices neighbor
+            WHERE neighbor.hotel_id = cp.hotel_id
+              AND neighbor.operator_id = cp.operator_id
+              AND neighbor.nights = cp.nights
+              AND neighbor.meal_plan = cp.meal_plan
+              AND neighbor.check_in BETWEEN cp.check_in - INTERVAL '14 days'
+                                        AND cp.check_in + INTERVAL '14 days'
+              AND neighbor.check_in <> cp.check_in
+        ) hs ON hs.sample_n >= 4
+    )
+    INSERT INTO deals (
+        hotel_id, operator_id, check_in, nights, meal_plan,
+        price_uah, baseline_p50, discount_pct, deep_link,
+        source, detection_method
+    )
+    -- Per-country cap: without it the global ORDER BY discount_pct DESC
+    -- favors whichever country has the steepest % drops (currently EG by
+    -- a wide margin), so the public channel reads as "Egypt + Egypt +
+    -- Egypt". ROW_NUMBER OVER(PARTITION BY country_iso2) limits each
+    -- country to :country_cap entries per tick, then the outer LIMIT
+    -- picks the overall top-N across that diverse pool.
+    SELECT
+        hotel_id, operator_id, check_in, nights, meal_plan,
+        price_uah, baseline_p50, discount_pct, deep_link,
+        source, detection_method
+    FROM (
+        SELECT
+            per_hotel.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY country_iso2 ORDER BY discount_pct DESC, hotel_id
+            ) AS country_rank
+        FROM (
+            -- Best (highest-discount) row per hotel after the cooldown filter.
+            SELECT DISTINCT ON (cand.hotel_id)
+                cand.hotel_id,
+                cand.operator_id,
+                cand.check_in,
+                cand.nights,
+                cand.meal_plan,
+                cand.price_uah,
+                cand.baseline_p50,
+                cand.discount_pct,
+                cand.deep_link,
+                cand.country_iso2,
+                'farvater_scrape' AS source,
+                'calendar_anomaly' AS detection_method
+            FROM (
+                SELECT
+                    cp.hotel_id,
+                    cp.operator_id,
+                    cp.check_in,
+                    cp.nights,
+                    cp.meal_plan,
+                    cp.price_uah,
+                    cp.p50 AS baseline_p50,
+                    ROUND(100 * (1 - cp.price_uah::numeric / cp.p50), 2) AS discount_pct,
+                    cp.deep_link,
+                    dest.country_iso2 AS country_iso2
+                FROM local_stats cp
+                JOIN hotels h ON h.id = cp.hotel_id
+                LEFT JOIN destinations dest ON dest.id = h.destination_id
+                WHERE cp.price_uah < cp.p50 * 0.96
+                  AND (cp.p50 - cp.price_uah) >= 1500
+            ) cand
+            WHERE cand.discount_pct > 0
+              AND cand.country_iso2 IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM deals d
+                  WHERE d.hotel_id = cand.hotel_id
+                    AND d.detected_at >= NOW() - make_interval(hours => :cooldown_hours)
+              )
+            ORDER BY cand.hotel_id, cand.discount_pct DESC
+        ) per_hotel
+    ) ranked
+    WHERE country_rank <= :country_cap
+    ORDER BY discount_pct DESC, hotel_id
     LIMIT :max_per_run
     ON CONFLICT DO NOTHING
     RETURNING id, hotel_id, discount_pct, detection_method
@@ -558,7 +604,7 @@ async def _run_cold_query(db: AsyncSession, cooldown_hours: int, max_per_run: in
 async def detect_deals(
     *,
     cooldown_hours: int = 24,
-    max_per_run: int = 20,
+    max_per_run: int = 50,
     force_cold_start: bool | None = None,
 ) -> int:
     """Insert new deals based on current prices vs. baselines.
@@ -647,10 +693,21 @@ async def _run_bucket_query(db: AsyncSession, cooldown_hours: int, max_per_run: 
     return [(r.id, r.hotel_id, float(r.discount_pct)) for r in rows]
 
 
+_DATE_DIP_COUNTRY_CAP = 5
+"""Per-country cap inside one detect_deals tick. With 11 catalogue countries
+× 5 = 55 candidate slots, the global LIMIT of 50 below keeps the absolute
+top across the whole pool while still surfacing 2-3 different countries
+instead of "all Egypt"."""
+
+
 async def _run_date_dip_query(db: AsyncSession, cooldown_hours: int, max_per_run: int) -> _RowList:
     result = await db.execute(
         _DATE_DIP_SQL,
-        {"cooldown_hours": cooldown_hours, "max_per_run": max_per_run},
+        {
+            "cooldown_hours": cooldown_hours,
+            "max_per_run": max_per_run,
+            "country_cap": _DATE_DIP_COUNTRY_CAP,
+        },
     )
     rows = result.all()
     await db.commit()

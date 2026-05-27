@@ -25,6 +25,8 @@ async def get_deals(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     country: str | None = Query(default=None, min_length=2, max_length=2),
+    nights_min: int | None = Query(default=None, ge=1, le=30),
+    nights_max: int | None = Query(default=None, ge=1, le=30),
     sort: str = Query(
         default="discount",
         pattern="^(discount|newest|price)$",
@@ -32,7 +34,15 @@ async def get_deals(
     ),
     session: AsyncSession = Depends(get_db),
 ) -> PaginatedDeals:
-    return await list_deals(session, country_iso2=country, limit=limit, offset=offset, sort=sort)
+    return await list_deals(
+        session,
+        country_iso2=country,
+        nights_min=nights_min,
+        nights_max=nights_max,
+        limit=limit,
+        offset=offset,
+        sort=sort,
+    )
 
 
 @router.get("/{deal_id}", response_model=DealOut)

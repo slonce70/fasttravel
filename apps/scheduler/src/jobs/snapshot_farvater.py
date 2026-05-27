@@ -58,7 +58,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infra.cache import get_redis
 from src.infra.db import async_session_factory
-from src.infra.farvater_http import FarvaterProdClient, ProdTierConfig
+from src.infra.farvater_http import DEFAULT_MIN_INTERVAL_S, FarvaterProdClient, ProdTierConfig
 from src.infra.logging import get_logger
 from src.jobs._price_validation import parse_check_in, validate_price_row
 
@@ -69,7 +69,7 @@ log = get_logger(__name__)
 USER_AGENT = (
     "FastTravel-Bot/1.0 (+https://fasttravel.com.ua/about; " "snapshot 2x/day; respects robots.txt)"
 )
-PER_REQUEST_DELAY_S = float(os.environ.get("FT_FARVATER_REQUEST_DELAY_S", "1.0"))
+PER_REQUEST_DELAY_S = float(os.environ.get("FT_FARVATER_REQUEST_DELAY_S", "0.0"))
 CONCURRENCY = int(os.environ.get("FT_FARVATER_CONCURRENCY", "3"))
 # One request per hotel from today. Farvater may return sparse dates beyond
 # the nominal shift for some hotels; keep them because they are real offers
@@ -756,6 +756,21 @@ async def _mark_priced(db: AsyncSession, hotel_db_id: int) -> None:
     )
 
 
+async def _mark_unpriced(db: AsyncSession, hotel_db_id: int) -> None:
+    """Record that a live price probe found no current inventory.
+
+    Without this, a hotel that once had prices stays in the active refresh
+    cohort forever even after Farvater stops returning offers for it.
+    """
+    await db.execute(
+        text("""UPDATE hotels
+                SET last_priced_at = NOW(),
+                    has_active_prices = FALSE
+                WHERE id = :id"""),
+        {"id": hotel_db_id},
+    )
+
+
 async def _decay_active_prices(db: AsyncSession, stale_after_days: int = 7) -> int:
     """Flip hotels back to `has_active_prices = FALSE` once their
     `last_priced_at` ages past the threshold. Returns the number of
@@ -930,7 +945,9 @@ async def _http_client() -> AsyncIterator[FarvaterProdClient]:
     redis = await get_redis()
     config = ProdTierConfig(
         concurrency=int(os.environ.get("FT_FARVATER_HTTP_CONCURRENCY", str(CONCURRENCY))),
-        min_interval_s=float(os.environ.get("FT_FARVATER_HTTP_MIN_INTERVAL_S", "1.0")),
+        min_interval_s=float(
+            os.environ.get("FT_FARVATER_HTTP_MIN_INTERVAL_S", str(DEFAULT_MIN_INTERVAL_S))
+        ),
         daily_cap=int(os.environ.get("FT_FARVATER_DAILY_CAP", "0")),
         timeout_s=float(os.environ.get("FT_FARVATER_HTTP_TIMEOUT_S", "30.0")),
     )
@@ -1009,6 +1026,8 @@ async def _process_hotel(
         # A dedup-only pass shouldn't pretend the hotel is fresh-priced.
         if inserted > 0:
             await _mark_priced(db, hotel_db_id)
+        elif not all_prices:
+            await _mark_unpriced(db, hotel_db_id)
         await db.commit()
     log.info(
         "farvater.hotel.done",
@@ -1049,6 +1068,10 @@ _PRICE_REFRESH_TARGETS_SQL = text(
               (SELECT id FROM operators WHERE code = 'farvater')
     WHERE h.is_active
       AND d.country_iso2 = ANY(:iso_filter)
+      AND (
+        h.has_active_prices
+        OR h.last_priced_at IS NULL
+      )
     ORDER BY
       h.has_active_prices DESC NULLS LAST,
       h.last_priced_at NULLS LAST,
@@ -1077,6 +1100,8 @@ async def _refresh_targets(
     per_country: dict[str, int] = {}
     for row in rows:
         iso2 = (row.country_iso2 or "").upper()
+        if not row.has_active_prices and row.last_priced_at is not None:
+            continue
         if max_per_country is not None and per_country.get(iso2, 0) >= max_per_country:
             continue
         path = _path_from_slug(row.canonical_slug)

@@ -1,9 +1,9 @@
 """Behavioural tests for the simplified deal detection (date_dip only).
 
 The detector now runs a single strategy: date_dip (calendar_anomaly).
-It compares a check-in date's price against the median price for the
-same hotel + nights + meal across all available dates. A date that is
-10%+ below the median is flagged as a deal.
+It compares a check-in date's price against nearby dates for the same
+hotel + nights + meal. A date that is 4%+ below the local median (and
+at least 1500 UAH cheaper in absolute terms) is flagged as a deal.
 """
 
 from __future__ import annotations
@@ -32,11 +32,13 @@ class _FakeResult:
         return out
 
 
-def _make_db(executed: list) -> AsyncMock:
+def _make_db(executed: list, executed_params: list | None = None) -> AsyncMock:
     db = AsyncMock()
 
     async def _execute(sql, _params=None):
         executed.append(sql.text)
+        if executed_params is not None:
+            executed_params.append(dict(_params) if _params else {})
         return _FakeResult()
 
     db.execute = _execute
@@ -50,7 +52,8 @@ def _make_db(executed: list) -> AsyncMock:
 @pytest.fixture
 def patched_orchestrator(monkeypatch):
     executed: list[str] = []
-    db = _make_db(executed)
+    executed_params: list[dict] = []
+    db = _make_db(executed, executed_params)
 
     def _session_factory():
         return db
@@ -65,7 +68,7 @@ def patched_orchestrator(monkeypatch):
     redis_mock.get = _get
     monkeypatch.setattr(detect_deals, "get_redis", lambda: redis_mock)
 
-    return {"executed": executed}
+    return {"executed": executed, "params": executed_params}
 
 
 @pytest.mark.asyncio
@@ -75,18 +78,60 @@ async def test_only_date_dip_runs(patched_orchestrator) -> None:
 
     executed_sql = patched_orchestrator["executed"]
     assert len(executed_sql) == 1, f"Expected 1 SQL query (date_dip), got {len(executed_sql)}"
-    assert "hotel_stats" in executed_sql[0], "date_dip SQL should use hotel_stats CTE"
+    assert "local_stats" in executed_sql[0], "date_dip SQL should use local_stats CTE"
 
 
 @pytest.mark.asyncio
-async def test_date_dip_uses_10pct_threshold(patched_orchestrator) -> None:
-    """The SQL should use 0.90 multiplier (10% discount threshold)."""
+async def test_date_dip_uses_4pct_threshold(patched_orchestrator) -> None:
+    """The SQL should use 0.96 multiplier (4% discount threshold)."""
     await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
 
     executed_sql = patched_orchestrator["executed"]
-    assert any("p50 * 0.90" in sql for sql in executed_sql), (
-        "date_dip should use 10% threshold (p50 * 0.90)"
-    )
+    assert any(
+        "p50 * 0.96" in sql for sql in executed_sql
+    ), "date_dip should use 4% threshold (p50 * 0.96)"
+
+
+@pytest.mark.asyncio
+async def test_date_dip_uses_nearby_dates_not_whole_season(patched_orchestrator) -> None:
+    """The public copy says neighboring dates, so the SQL must not compare
+    an early-June price to late-July high-season prices for the same hotel."""
+    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
+
+    sql = patched_orchestrator["executed"][0]
+
+    assert "neighbor.check_in BETWEEN cp.check_in - INTERVAL '14 days'" in sql
+    assert "neighbor.check_in <> cp.check_in" in sql
+    assert "JOIN LATERAL" in sql
+    assert "hs.sample_n >= 4" in sql
+
+
+@pytest.mark.asyncio
+async def test_date_dip_caps_per_country(patched_orchestrator) -> None:
+    """Without a cap the global ORDER BY % shoves whichever country has the
+    steepest drops to the top; channel ends up "all Egypt". Per-country
+    ROW_NUMBER ensures no single country eats more than country_cap slots."""
+    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=50)
+
+    sql = patched_orchestrator["executed"][0]
+
+    assert "PARTITION BY country_iso2" in sql
+    assert "ROW_NUMBER()" in sql
+    assert "country_rank <= :country_cap" in sql
+    # destination JOIN so the partition key can be projected.
+    assert "JOIN hotels h ON h.id = cp.hotel_id" in sql
+    assert "LEFT JOIN destinations dest ON dest.id = h.destination_id" in sql
+
+
+@pytest.mark.asyncio
+async def test_date_dip_passes_country_cap_param(patched_orchestrator) -> None:
+    """Runner must bind country_cap so PostgreSQL gets a value instead of
+    failing with 'no value for bind parameter'."""
+    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=50)
+
+    params = patched_orchestrator["params"][0]
+    assert params.get("country_cap") == detect_deals._DATE_DIP_COUNTRY_CAP
+    assert params.get("max_per_run") == 50
 
 
 @pytest.mark.asyncio

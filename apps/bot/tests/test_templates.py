@@ -133,6 +133,28 @@ def test_render_deal_handles_missing_destination():
     assert "📍" not in out
 
 
+def test_render_deal_calendar_anomaly_drops_savings_and_strikethrough():
+    row = {
+        "discount_pct": 19,
+        "hotel_name_uk": "Albatros Dana Beach Resort",
+        "hotel_stars": 5,
+        "destination_name": "Єгипет",
+        "check_in": "2026-06-01",
+        "nights": 9,
+        "meal_plan": "AI",
+        "price_uah": 104678,
+        "baseline_p50": 128602,
+        "detection_method": "calendar_anomaly",
+    }
+
+    out = render_deal(row)
+
+    assert "📉" in out
+    assert "дешевше за сусідні дати в цьому готелі" in out
+    assert "економія" not in out
+    assert "~128 602 ₴~" not in out
+
+
 def test_render_deal_peer_anomaly_names_peer_baseline_without_savings_claim():
     row = {
         "discount_pct": 29,
@@ -175,6 +197,35 @@ def test_render_deal_includes_optional_short_hotel_context():
 
     assert "⭐ 8\\.6/10 · 2 відгуки" in out
     assert "Пляжний готель \\(центр\\) \\- family\\_friendly\\!" in out
+
+
+def test_render_deal_keeps_long_hotel_description_useful():
+    description = (
+        "Готель розташований на першій лінії біля моря з приватним пляжем, "
+        "великим басейном, сучасним спа-центром та просторими номерами. "
+        "До центру курорту можна дістатися за кілька хвилин, поруч є набережна, "
+        "ресторани та зони для вечірніх прогулянок. "
+        "Гості часто відзначають уважний сервіс, якісні сніданки, чисту територію "
+        "та спокійну атмосферу для відпочинку з родиною. "
+        "Важливий маркер опису після старого ліміту."
+    )
+    row = {
+        "discount_pct": 38,
+        "hotel_name_uk": "Belport Beach Hotel",
+        "hotel_stars": 4,
+        "destination_name": "Туреччина",
+        "check_in": "2026-06-14",
+        "nights": 7,
+        "meal_plan": "AI",
+        "price_uah": 32200,
+        "baseline_p50": 51500,
+        "description_uk": description,
+    }
+
+    out = render_deal(row)
+
+    assert "Важливий маркер опису після старого ліміту" in out
+    assert len(out) < 4096
 
 
 def test_render_deal_expands_raw_and_cyrillic_meal_codes():

@@ -102,6 +102,8 @@ async def get_deals(
     offset: int = 0,
     country: str | None = None,
     sort: str | None = None,
+    nights_min: int | None = None,
+    nights_max: int | None = None,
 ) -> dict[str, Any]:
     """`/api/deals` paginated.
 
@@ -110,12 +112,17 @@ async def get_deals(
         country: optional ISO2 country filter.
         sort: ``discount`` (default upstream — biggest %), ``newest``,
             or ``price``. Passing ``None`` defers to the API's default.
+        nights_min/nights_max: optional inclusive bounds on stay length.
     """
     params: dict[str, Any] = {"limit": limit, "offset": offset}
     if country:
         params["country"] = country
     if sort:
         params["sort"] = sort
+    if nights_min is not None:
+        params["nights_min"] = nights_min
+    if nights_max is not None:
+        params["nights_max"] = nights_max
     try:
         r = await get_client().get("/api/deals", params=params)
         r.raise_for_status()

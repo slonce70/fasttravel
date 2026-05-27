@@ -95,6 +95,8 @@ _VALID_SORTS = ("discount", "newest", "price")
 async def list_deals(
     session: AsyncSession,
     country_iso2: str | None = None,
+    nights_min: int | None = None,
+    nights_max: int | None = None,
     limit: int = 50,
     offset: int = 0,
     sort: str = "discount",
@@ -120,6 +122,10 @@ async def list_deals(
         # When filtering by country we need destination to exist + match,
         # so promote the outerjoin condition to a WHERE that excludes NULLs.
         base = base.where(Destination.country_iso2 == country_iso2.upper())
+    if nights_min is not None:
+        base = base.where(Deal.nights >= nights_min)
+    if nights_max is not None:
+        base = base.where(Deal.nights <= nights_max)
 
     # Product default is "biggest steal first". `newest` was the legacy
     # default but it buried 40% promos under fresh 15% ones; the product
