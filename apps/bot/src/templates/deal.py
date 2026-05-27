@@ -13,16 +13,7 @@ from typing import Any
 
 from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import escape_markdown_v2
-from shared.text_uk import format_nights, format_reviews
-
-_MEAL_LABELS = {
-    "AI": "Все включено",
-    "UAI": "Ультра все включено",
-    "HB": "Напівпансіон",
-    "BB": "Сніданок",
-    "FB": "Повний пансіон",
-    "RO": "Без харчування",
-}
+from shared.text_uk import format_meal_plan, format_nights, format_reviews
 
 
 def _stars_str(stars: int | None) -> str:
@@ -137,8 +128,7 @@ def render_deal(row: dict[str, Any]) -> str:
     destination = escape_markdown_v2(row.get("destination_name") or "")
     check_in = escape_markdown_v2(_format_date(row.get("check_in")))
     nights = row.get("nights") or 7
-    raw_meal = row.get("meal_plan") or ""
-    meal = escape_markdown_v2(_MEAL_LABELS.get(raw_meal, raw_meal))
+    meal = escape_markdown_v2(format_meal_plan(row.get("meal_plan")))
     price_int = int(row.get("price_uah") or 0)
     baseline_int = int(row.get("baseline_p50") or 0)
     savings = max(0, baseline_int - price_int)

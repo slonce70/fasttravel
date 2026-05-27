@@ -175,3 +175,37 @@ def test_render_deal_includes_optional_short_hotel_context():
 
     assert "⭐ 8\\.6/10 · 2 відгуки" in out
     assert "Пляжний готель \\(центр\\) \\- family\\_friendly\\!" in out
+
+
+def test_render_deal_expands_raw_and_cyrillic_meal_codes():
+    cyrillic_code = render_deal(
+        {
+            "discount_pct": 20,
+            "hotel_name_uk": "Breakfast Hotel",
+            "hotel_stars": 4,
+            "destination_name": "Туреччина",
+            "check_in": "2026-06-14",
+            "nights": 7,
+            "meal_plan": "ВВ",
+            "price_uah": 30000,
+            "baseline_p50": 38000,
+        }
+    )
+    raw_label = render_deal(
+        {
+            "discount_pct": 20,
+            "hotel_name_uk": "Breakfast Hotel",
+            "hotel_stars": 4,
+            "destination_name": "Туреччина",
+            "check_in": "2026-06-14",
+            "nights": 7,
+            "meal_plan": "Сніданок (BB)",
+            "price_uah": 30000,
+            "baseline_p50": 38000,
+        }
+    )
+
+    assert "7 ночей · Сніданок" in cyrillic_code
+    assert "ВВ" not in cyrillic_code
+    assert "7 ночей · Сніданок" in raw_label
+    assert "\\(BB\\)" not in raw_label

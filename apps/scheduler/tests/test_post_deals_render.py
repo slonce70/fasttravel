@@ -48,3 +48,11 @@ def test_render_deal_escapes_short_hotel_context_markdown_v2() -> None:
 
     assert "⭐ 9\\.0/10 · 1 відгук" in out
     assert "Тихий готель \\(центр\\) \\- family\\_friendly\\!" in out
+
+
+def test_render_deal_expands_cyrillic_bb_meal_code() -> None:
+    out = _render_deal(_row(meal_plan="ВВ"))
+
+    assert "7 ночей · Сніданок" in out
+    assert "ВВ" not in out
+    assert "BB" not in out
