@@ -1,8 +1,10 @@
 # `apps/web/` — FastTravel Next.js frontend
 
-Next.js 15 (App Router) + TypeScript + Tailwind v3 + TanStack Query v5, deployed to **Cloudflare Workers** via `@opennextjs/cloudflare`. Single locale (`uk`), dark mode out of scope on MVP.
+Next.js 15 (App Router) + React **19.2 stable** + TypeScript + Tailwind v3 + TanStack Query v5, deployed to **Cloudflare Workers** via `@opennextjs/cloudflare`. Single locale (`uk`), dark mode out of scope on MVP.
 
 The moat component is `src/components/PriceCalendar.tsx` — a `react-day-picker` v9 calendar with a custom `DayButton` that paints each cell with a HSL heatmap color (cheap = green, expensive = red) derived from the visible window's price percentile.
+
+Security headers (CSP / HSTS / Referrer-Policy / Permissions-Policy / X-Frame-Options) are wired in `next.config.mjs` via the `headers()` block (audit Quarter #18).
 
 ---
 
@@ -92,8 +94,25 @@ For one-off deploys from your laptop: `pnpm cf:deploy`. Preview Worker deploys u
 
 - Hotel calendars accept `?meal_plan=` / `?meal=` and the backend filters the
   heatmap through `hotel_calendar_prices.meal_plan`.
-- Tailwind v3 and the `react-day-picker` v9 `DayButton` override are recorded
-  in `docs/DECISIONS.md` as ADR-015 and ADR-016.
+- `Deal` type carries `detection_method` so the card can render the
+  per-method explanation (`📉 Аномально дешева дата у цьому готелі`,
+  `🏷 Спецціна оператора`, etc).
+- `/api/deals` default sort is now `discount` (biggest %). Pass
+  `?sort=newest` for chronological, `?sort=price` for cheapest first.
+
+## Testing
+
+Component tests (Vitest + React Testing Library):
+
+```bash
+pnpm test        # CI mode — runs once, exits
+pnpm test:watch  # dev mode
+```
+
+Current coverage: `DealCard.test.tsx` (5 cases — headline %, savings,
+strike-through, sponsored-link disclosure, missing-field resilience).
+Add more under `src/**/*.test.tsx` — vitest config matches both
+`.test.ts` and `.test.tsx`.
 
 ---
 

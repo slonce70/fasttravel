@@ -26,7 +26,7 @@ assignees: []
 
 ## Архітектурний вплив
 
-<!-- Чи треба ADR в docs/DECISIONS.md? Чи зачіпає public API / DB schema / cron jobs? -->
+<!-- Чи треба spec у docs/superpowers/specs/? Чи зачіпає public API / DB schema / cron jobs? -->
 
 ## Додатковий контекст
 

@@ -1,7 +1,8 @@
 """Full farvater.travel ingest — discovers all hotels in all supported
 countries and snapshots their price calendars.
 
-Pattern (discovered via tools/explore/):
+URL / payload pattern (reverse-engineered against the production
+farvater.travel HTML+XHR surface):
 
   catalog page:  GET  /uk/hotelscatalog/strana-{slug}/
                        → HTML containing /uk/hotel/{iso2}/{slug}/ links
@@ -19,7 +20,7 @@ Pattern (discovered via tools/explore/):
                                                               priceUAH, meal,
                                                               room, systemKey}]}}]}}
 
-How this differs from the one-shot tools/explore/fetch_farvater_prices.py:
+Operational invariants:
   * runs as an APScheduler job inside the scheduler container
   * INSERTs are idempotent — re-running the snapshot only writes new
     observations (dedup by (hotel_id, operator_id, check_in, nights,
@@ -858,8 +859,7 @@ async def _insert_prices(
             "cur": "USD",
             "fx": fx,
             # `?q=<systemKey>` is farvater's internal booking-preselect
-            # param — discovered via tools/explore/explore_price_grid.py:
-            # every price cell in farvater's own grid is
+            # param: every price cell in farvater's own grid renders as
             # `<a href=".../?q=2m...c25">`. We previously used `?systemKey=`
             # which farvater silently ignored, leaving the user on the
             # generic hotel page instead of the per-operator offer.

@@ -41,7 +41,9 @@ def test_missing_paths_flags_wrong_type() -> None:
 def test_har_calendar_response_satisfies_required_paths() -> None:
     """The required-paths list must validate against the HAR snapshot
     or the canary will false-positive on a perfectly valid response.
-    Mirrors the calendar response shape from docs/farvater-har-report.md.
+    Mirrors the calendar response shape captured during the original HAR
+    investigation against the Farvater production endpoint
+    (`/uk/tour/stat/low-price-calendar/auto`).
     """
     har_snapshot = {
         "statusCode": 200,

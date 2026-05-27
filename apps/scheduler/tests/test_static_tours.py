@@ -2,7 +2,7 @@
 
 The cassette `tests/cassettes/static_tours_gorjashhie_tury.json` is the
 verbatim response captured during the 2026-05-25 HAR investigation
-(see docs/farvater-har-report.md) for
+against the Farvater `static-tours` POST endpoint with
 `slugTypes=["gorjashhie-tury"], countryId=-1, pageSize=50`. Parsing
 against the real wire format is the only reliable schema canary.
 """
