@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 import pytest
 from aiogram.types import Chat, Message, User
+
 from src.infra.middleware import ThrottleMiddleware
 
 

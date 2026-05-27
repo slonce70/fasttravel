@@ -1,0 +1,46 @@
+# Vector config — tails docker container logs from the fasttravel
+# project and ships them to Loki. Activated by:
+#   docker compose --profile observability up -d
+#
+# We intentionally read /var/lib/docker/containers (read-only mount)
+# rather than the Docker Engine API; that path avoids the privileged
+# socket access Vector would otherwise need for the `docker_logs` source.
+# Tradeoff: container labels aren't auto-discovered, so we filter by the
+# `com.docker.compose.project` label inside the parsing step.
+
+data_dir: /var/lib/vector
+
+sources:
+  docker_logs:
+    type: docker_logs
+    docker_host: unix:///var/run/docker.sock
+    # Only ship logs from this project; ignores neighbouring stacks on
+    # the same host.
+    include_labels:
+      - "com.docker.compose.project=fasttravel"
+
+transforms:
+  # Stash the docker labels in fields Loki can index without exploding
+  # the cardinality (don't index container_id — it changes every restart).
+  enrich:
+    type: remap
+    inputs: [docker_logs]
+    source: |
+      .service = .container_name
+      .compose_service = .label."com.docker.compose.service"
+      del(.container_id)
+      del(.container_created_at)
+
+sinks:
+  loki:
+    type: loki
+    inputs: [enrich]
+    endpoint: http://loki:3100
+    encoding:
+      codec: json
+    # Indexed labels stay small (cardinality control); the rest of the
+    # event ships as the log body and is queryable via |~ in Grafana.
+    labels:
+      service: "{{ compose_service }}"
+      project: "fasttravel"
+    out_of_order_action: rewrite_timestamp

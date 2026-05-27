@@ -1,0 +1,77 @@
+# Pre-commit hooks — audit quarter #21.
+#
+# Install once per clone:
+#   pip install pre-commit
+#   pre-commit install
+#
+# After install, every `git commit` runs the hooks below on the staged
+# files. CI still re-runs the full lint/typecheck suite as a safety net
+# (these hooks are advisory — fast feedback for the dev, not authoritative).
+#
+# Tip: `pre-commit run --all-files` re-checks the whole repo.
+
+# Pinned SHAs (not just `rev: v0.7.4`) for the same supply-chain reason
+# we pin GitHub Actions to SHAs (see .github/dependabot.yml). Dependabot
+# tracks the `pre-commit` ecosystem too — bumps will appear as PRs.
+
+default_language_version:
+  python: python3.12
+  node: '20'
+
+repos:
+  # Generic hygiene — fast, no install cost.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.(svg|drawio)$'
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']  # block accidental binary commits
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # Python — ruff is fast enough for every commit.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # Frontend — prettier on JS/TS/JSON/Markdown.
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        files: 'apps/web/.*\.(ts|tsx|js|jsx|json|md|mjs|cjs)$'
+        # Use the project's pinned prettier from package.json so the
+        # formatter matches CI exactly.
+        additional_dependencies:
+          - prettier@3.6.0
+
+  # Shell — catch obvious bash errors.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: [-x, --severity=warning]
+
+  # Dockerfile lint — catches the DL3008 / DL3018 patterns the audit
+  # already flagged.
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.13.0-beta
+    hooks:
+      - id: hadolint-docker
+        # Match the same ignore list the project uses in CI.
+        args: [--ignore=DL3008, --ignore=DL3013]
+
+# Hooks NOT included here (intentionally):
+#   - mypy:   too slow for per-commit; runs in CI with strict=true.
+#   - pytest: same — full suite belongs in CI, not commit-time.
+#   - gitleaks: it scans .git history every run; once is enough in CI.

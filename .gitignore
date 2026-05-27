@@ -78,3 +78,12 @@ public/robots.txt.cached
 *~
 .Trash-*
 infra/prometheus/.webhook_secret
+
+# Stray tooling artifacts. Project uses Poetry, but contributors who
+# experiment with uv resolver leave uv.lock files behind. Ignored to
+# prevent accidental commits — switching to uv would need an
+# intentional PR.
+apps/*/uv.lock
+# Misc temp files some editors / agents leave in the tree.
+_tmp_*
+apps/*/_tmp_*

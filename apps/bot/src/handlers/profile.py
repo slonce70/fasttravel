@@ -16,8 +16,8 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-from shared.publishers.broadcast import escape_markdown_v2
 
+from shared.publishers.broadcast import escape_markdown_v2
 from src.infra.db import delete_all_user_data, ensure_subscriber, list_subscriptions
 
 router = Router(name="profile")

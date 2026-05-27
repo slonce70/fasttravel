@@ -28,6 +28,11 @@ class DealOut(BaseModel):
     deep_link: str | None = None
     detected_at: datetime
     posted_at: datetime | None = None
+    # Why detect_deals flagged this row — the frontend uses this label to
+    # explain the deal to the user ("аномально дешева дата" vs "знижка
+    # оператора"). See apps/scheduler/src/jobs/detect_deals.py for the
+    # full set of values.
+    detection_method: str = "percentile"
 
     # Joined hotel fields (always present — deals.hotel_id FK is NOT NULL).
     hotel_slug: str

@@ -18,6 +18,15 @@
 #   R2_ACCESS_KEY_ID         — R2 API token (S3 access key)
 #   R2_SECRET_ACCESS_KEY     — R2 API token (S3 secret)
 #   R2_BUCKET                — Bucket name (e.g. fasttravel-backups)
+#   BACKUP_AGE_RECIPIENT     — age public key (`age1...`) used to encrypt
+#                              dumps before upload. Generate locally with
+#                              `age-keygen` and keep the private key
+#                              OFFLINE in a password manager / Yubikey.
+#                              Audit P0 #5: R2 server-side encryption uses
+#                              Cloudflare-managed keys, so a leaked R2
+#                              token would yield plaintext dumps. age makes
+#                              the R2 ciphertext useless without the
+#                              private key.
 #
 # Graceful skip: while we're in local-first phase (no VPS/R2 yet), the workflow
 # checks the full backup secret contract and no-ops if any required value is
@@ -49,6 +58,7 @@ jobs:
       R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
 
     steps:
       - name: Gate — skip when VPS / R2 secrets missing (local-first phase)
@@ -57,7 +67,8 @@ jobs:
           missing=()
           for name in \
             BACKUP_SSH_HOST BACKUP_SSH_USER BACKUP_SSH_KEY R2_ACCOUNT_ID \
-            R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET
+            R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET \
+            BACKUP_AGE_RECIPIENT
           do
             if [ -z "${!name}" ]; then
               missing+=("$name")
@@ -73,27 +84,37 @@ jobs:
 
       - name: Checkout
         if: steps.gate.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Configure SSH
         if: steps.gate.outputs.skip != 'true'
+        env:
+          BACKUP_SSH_KNOWN_HOSTS: ${{ secrets.BACKUP_SSH_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "${BACKUP_SSH_KEY}" > ~/.ssh/id_backup
           chmod 600 ~/.ssh/id_backup
-          if [ -n "${{ secrets.BACKUP_SSH_KNOWN_HOSTS }}" ]; then
-            echo "${{ secrets.BACKUP_SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
-          else
-            # Fallback: keyscan at runtime. Less secure (TOFU), but unblocks setup.
-            ssh-keyscan -H "${BACKUP_SSH_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+          # Audit 2.4 Low — fail-loud if known_hosts isn't pre-seeded.
+          # ssh-keyscan TOFU was MITM-able on first run and sticky after.
+          if [ -z "${BACKUP_SSH_KNOWN_HOSTS}" ]; then
+            echo "ERROR: BACKUP_SSH_KNOWN_HOSTS secret is required."
+            echo "Capture it once with: ssh-keyscan -H <vps_host>"
+            exit 1
           fi
+          echo "${BACKUP_SSH_KNOWN_HOSTS}" >> ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Install rclone
+      - name: Install rclone + age
         if: steps.gate.outputs.skip != 'true'
         run: |
           curl -fsSL https://rclone.org/install.sh | sudo bash
+          # age is in apt as of Ubuntu 22.04; ubuntu-latest is 24.04 so
+          # this is a one-liner. Version pin not strictly required —
+          # age has a hard backward-compat policy.
+          sudo apt-get update -y -qq
+          sudo apt-get install -y -qq age
+          age --version
 
       - name: Configure rclone for Cloudflare R2
         if: steps.gate.outputs.skip != 'true'
@@ -116,14 +137,19 @@ jobs:
         run: |
           set -euo pipefail
           STAMP=$(date -u +%F-%H%M%S)
-          REMOTE_PATH="/tmp/fasttravel-backup-${STAMP}.sql.gz"
+          # Audit 4.2 Medium "pg_dump у plain SQL format (не -Fc)" —
+          # custom format ships compressed AND can be restored with
+          # `pg_restore -j N` for parallel I/O. Plain-SQL restore is
+          # single-threaded; for a multi-GB DB that meant a 30-60 min
+          # RTO. -Fc cuts restore wall-clock to ~5 min on 4 vCPU.
+          REMOTE_PATH="/tmp/fasttravel-backup-${STAMP}.dump"
           echo "stamp=${STAMP}" >> "$GITHUB_OUTPUT"
           echo "remote_path=${REMOTE_PATH}" >> "$GITHUB_OUTPUT"
 
           ssh -i ~/.ssh/id_backup -o BatchMode=yes "${BACKUP_SSH_USER}@${BACKUP_SSH_HOST}" \
             "cd /opt/fasttravel && docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T postgres \
-              sh -c 'pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" --no-owner --clean --if-exists' \
-              | gzip -9 > ${REMOTE_PATH} && ls -lh ${REMOTE_PATH}"
+              pg_dump -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -Fc --compress=9 --no-owner --clean --if-exists \
+              > ${REMOTE_PATH} && ls -lh ${REMOTE_PATH}"
 
       - name: Pull dump to runner
         if: steps.gate.outputs.skip != 'true'
@@ -137,8 +163,13 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          test -s "./backups/$(basename '${{ steps.dump.outputs.remote_path }}')"
-          gzip -t "./backups/$(basename '${{ steps.dump.outputs.remote_path }}')"
+          DUMP="./backups/$(basename '${{ steps.dump.outputs.remote_path }}')"
+          test -s "${DUMP}"
+          # -Fc dumps start with "PGDMP" magic bytes; `pg_restore --list`
+          # parses the TOC without applying anything — fast structural
+          # validation that catches truncation/corruption.
+          docker run --rm -v "$(pwd)/backups:/backups:ro" postgres:16-alpine \
+            pg_restore --list "/backups/$(basename "${DUMP}")" | head -5
 
       - name: Restore drill
         if: steps.gate.outputs.skip != 'true'
@@ -147,7 +178,25 @@ jobs:
           ./infra/scripts/backup-restore-drill.sh \
             "./backups/$(basename '${{ steps.dump.outputs.remote_path }}')"
 
-      - name: Upload to R2
+      - name: Encrypt dump with age (BEFORE upload)
+        if: steps.gate.outputs.skip != 'true'
+        id: encrypt
+        run: |
+          set -euo pipefail
+          PLAIN="./backups/$(basename '${{ steps.dump.outputs.remote_path }}')"
+          CIPHER="${PLAIN}.age"
+          # age encrypts to one or more recipients; the BACKUP_AGE_RECIPIENT
+          # secret is the public key (`age1...`). Only holders of the
+          # corresponding private key can decrypt — Cloudflare can't
+          # (their R2 server-side encryption uses Cloudflare-managed keys).
+          age -r "${BACKUP_AGE_RECIPIENT}" -o "${CIPHER}" "${PLAIN}"
+          # Wipe the plaintext from the runner so the upload step can
+          # only see ciphertext.
+          rm -f "${PLAIN}"
+          ls -lh "${CIPHER}"
+          echo "cipher=$(basename "${CIPHER}")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to R2 (ciphertext only)
         if: steps.gate.outputs.skip != 'true'
         run: |
           rclone copy ./backups/ "r2:${R2_BUCKET}/postgres/" \
@@ -164,7 +213,11 @@ jobs:
         if: steps.gate.outputs.skip != 'true'
         run: |
           # List all backups newest-first, skip the 30 newest, delete the rest.
+          # Filter to .age only so any legacy unencrypted .sql.gz survives
+          # until an operator audits + removes them by hand. New uploads
+          # are always .age after the encryption step above.
           rclone lsf "r2:${R2_BUCKET}/postgres/" --files-only \
+            | grep -E '\.age$' \
             | sort -r \
             | tail -n +31 \
             | while read -r f; do

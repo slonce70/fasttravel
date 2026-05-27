@@ -1,0 +1,76 @@
+# Single source of truth for the bot's Python deps. Audit #8 sprint —
+# previously the pins lived in bot/Dockerfile AND in .github/workflows/ci.yml
+# (`pip install aiogram==3.13.1 …`), so any version bump risked drift.
+# Now Dockerfile + CI both `poetry install`, lockfile pins transitively.
+[tool.poetry]
+name = "fasttravel-bot"
+version = "0.1.0"
+description = "FastTravel Telegram bot — aiogram 3 polling + AlertManager webhook receiver"
+authors = ["FastTravel <hi@fasttravel.com.ua>"]
+readme = "../../README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+# aiogram 3.x caps Python <3.15; the bot also runs on python:3.12-slim so
+# the lower bound is meaningless in practice — keep it explicit anyway.
+python = ">=3.12,<3.15"
+# Audit #4 — aiogram 3.25 opens aiohttp <3.14 (closes 19 CVEs in 3.10).
+# Hard-pin so the bot and scheduler that share apps/shared/publishers/
+# resolve identical aiogram surface (prevents subtle MarkdownV2 /
+# DefaultBotProperties drift between processes).
+aiogram = "3.25.0"
+aiohttp = "^3.13.5"
+structlog = "^24.4.0"
+pydantic = "^2.9.2"
+pydantic-settings = "^2.6.0"
+httpx = {extras = ["http2"], version = "^0.27.2"}
+redis = "^5.2.0"
+prometheus-client = "^0.21.0"
+sentry-sdk = "^2.18.0"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.36"}
+asyncpg = "^0.30.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.3"
+pytest-asyncio = "^0.24.0"
+pytest-cov = "^6.0.0"
+fakeredis = "^2.26.1"
+ruff = "^0.7.4"
+mypy = "^1.13.0"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = [".", "../shared"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Same selection / ignores as the other services so a developer who
+# `cd apps/bot && ruff check` gets the same enforcement as in CI.
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "RUF100",
+    "SIM105",
+    "UP017",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+# Audit Sprint #7 — shared.{infra,publishers}.* live in apps/shared/.
+mypy_path = ["..", "../shared"]
+explicit_package_bases = true
+namespace_packages = true
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

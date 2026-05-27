@@ -6,10 +6,17 @@
 # source tree and recompiling — not worth the complexity for a free-tier MVP.
 FROM postgres:16-bookworm
 
+# hadolint ignore=DL3008
+# DL3008 wants explicit apt-pinned versions; PGDG bumps the deb revision
+# on every Postgres security release and uses arch-specific suffixes,
+# which makes the pinned name unstable. Tracking the base image bump
+# via Dependabot's docker ecosystem (.github/dependabot.yml) already
+# enforces upstream-current packages. See audit "Hadolint findings (5)".
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         postgresql-16-partman \
         postgresql-16-cron \
+        postgresql-16-postgis-3 \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

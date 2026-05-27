@@ -99,6 +99,10 @@ export interface Deal {
   deep_link: string | null;
   detected_at: string;
   posted_at: string | null;
+  // Why detect_deals flagged this row — used by the UI to render an
+  // explanation badge ("аномально дешева дата", "знижка оператора").
+  // Defaults to "percentile" on legacy rows.
+  detection_method: string;
   // Added in backend-fixes follow-up — JOIN with hotels + destinations
   // so the card can render a real name + clickable slug instead of "Готель #42".
   hotel_slug: string;

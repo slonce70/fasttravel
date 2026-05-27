@@ -51,6 +51,7 @@ def _select_deal_columns() -> tuple[Any, ...]:
         Deal.deep_link,
         Deal.detected_at,
         Deal.posted_at,
+        Deal.detection_method,
         Hotel.canonical_slug.label("hotel_slug"),
         Hotel.name_uk.label("hotel_name_uk"),
         Hotel.stars.label("hotel_stars"),
@@ -73,6 +74,7 @@ def _row_to_dealout(row) -> DealOut:  # type: ignore[no-untyped-def]
         deep_link=row.deep_link,
         detected_at=row.detected_at,
         posted_at=row.posted_at,
+        detection_method=row.detection_method,
         hotel_slug=row.hotel_slug,
         hotel_name_uk=row.hotel_name_uk,
         hotel_stars=row.hotel_stars,
@@ -87,11 +89,15 @@ def _row_to_dealout(row) -> DealOut:  # type: ignore[no-untyped-def]
 _REAL_DEAL_SOURCES = ("farvater_scrape", "live_refresh", "ittour")
 
 
+_VALID_SORTS = ("discount", "newest", "price")
+
+
 async def list_deals(
     session: AsyncSession,
     country_iso2: str | None = None,
     limit: int = 50,
     offset: int = 0,
+    sort: str = "discount",
 ) -> PaginatedDeals:
     base = (
         select(*_select_deal_columns())
@@ -115,7 +121,17 @@ async def list_deals(
         # so promote the outerjoin condition to a WHERE that excludes NULLs.
         base = base.where(Destination.country_iso2 == country_iso2.upper())
 
-    base = base.order_by(Deal.detected_at.desc())
+    # Product default is "biggest steal first". `newest` was the legacy
+    # default but it buried 40% promos under fresh 15% ones; the product
+    # claim is "we find the deals", so the deal goes first.
+    if sort == "newest":
+        base = base.order_by(Deal.detected_at.desc())
+    elif sort == "price":
+        base = base.order_by(Deal.price_uah.asc(), Deal.discount_pct.desc())
+    else:
+        # "discount" + tie-break by freshness so the same deal isn't
+        # always at the top while a newer matching deal exists.
+        base = base.order_by(Deal.discount_pct.desc(), Deal.detected_at.desc())
 
     # COUNT over the same JOIN topology so filters apply uniformly.
     total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0

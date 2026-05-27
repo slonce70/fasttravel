@@ -21,19 +21,40 @@ terraform {
     }
   }
 
-  # Local backend for first apply. Once R2 bucket exists, uncomment the
-  # block below and run `terraform init -migrate-state`.
+  # Audit Quarter #19 — remote state on Cloudflare R2.
+  # The previous comment-only block left local-only state ("bus factor = 1").
+  # R2's S3-compatible API works with Terraform's `s3` backend; we lose
+  # native locking (DynamoDB is AWS-only), but adding `use_lockfile = true`
+  # (Terraform 1.10+) provides best-effort S3-side lock files.
   #
-  # backend "s3" {
-  #   bucket                      = "fasttravel-tfstate"
-  #   key                         = "oracle/terraform.tfstate"
-  #   region                      = "auto"
-  #   endpoint                    = "https://<account_id>.r2.cloudflarestorage.com"
-  #   skip_credentials_validation = true
-  #   skip_metadata_api_check     = true
-  #   skip_region_validation      = true
-  #   force_path_style            = true
-  # }
+  # Operator one-time setup:
+  #   1. Create an R2 bucket `fasttravel-tfstate` (private, no public list).
+  #   2. Mint an R2 token with Read/Write on that bucket.
+  #   3. Export the credentials before `terraform init`:
+  #         export AWS_ACCESS_KEY_ID=<r2 token id>
+  #         export AWS_SECRET_ACCESS_KEY=<r2 token secret>
+  #   4. Set var.r2_account_id and var.r2_state_bucket in terraform.tfvars,
+  #      then `terraform init -migrate-state`.
+  #
+  # Until configured, the backend stays local so first-apply on a fresh
+  # checkout still works.
+  backend "s3" {
+    # Required values are filled in via `terraform init -backend-config`:
+    #   terraform init -migrate-state \
+    #     -backend-config="bucket=fasttravel-tfstate" \
+    #     -backend-config="key=oracle/terraform.tfstate" \
+    #     -backend-config="endpoints={s3=\"https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com\"}"
+    # When the env vars aren't set, init prompts interactively.
+    region                      = "auto"
+    skip_credentials_validation = true
+    skip_metadata_api_check     = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    skip_s3_checksum            = true
+    use_path_style              = true
+    # Best-effort lock via S3-side state file (Terraform 1.10+).
+    use_lockfile = true
+  }
 }
 
 provider "oci" {

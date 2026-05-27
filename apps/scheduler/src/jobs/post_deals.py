@@ -47,6 +47,7 @@ class _DealRow(Protocol):
     baseline_p50: int
     operator_display_name: str
     deep_link: str | None
+    detection_method: str | None
 
 
 # Pre-escaped MarkdownV2 template. Literal punctuation that MarkdownV2
@@ -57,15 +58,45 @@ class _DealRow(Protocol):
 # don't conflict with the (escaped) curly braces of the surrounding
 # Telegram syntax (we have none).
 _DEAL_TEMPLATE = (
-    "🔥 *ГАРЯЧА ЗНИЖКА \\-{discount_pct}%*\n"
+    "🔥 *\\-{discount_pct}% · економія {savings_formatted}*\n"
     "\n"
     "🏨 *{hotel_name}* {stars_str}\n"
     "📍 {destination}\n"
-    "📅 {check_in_formatted} \\({nights} ноч\\) \\| {meal_plan} \\| 2 дорослих\n"
+    "📅 {check_in_formatted} · {nights} ноч\\. · {meal_plan_label}\n"
     "\n"
-    "💰 *{price_formatted}* \\(зазвичай {baseline_formatted}\\)\n"
-    "🛒 [Купити на {operator_display_name} →]({deep_link})"
+    "💰 *{price_formatted}* {strikethrough}\n"
+    "{why_line}"
+    "🛒 [Забронювати на {operator_display_name} →]({deep_link})"
 )
+
+
+# Short, customer-friendly meal plan names. RO/BB/AI codes are operator
+# jargon — the channel reader cares about whether breakfast is included.
+_MEAL_LABELS = {
+    "AI": "Все включено",
+    "UAI": "Ультра все включено",
+    "HB": "Напівпансіон",
+    "BB": "Сніданок",
+    "FB": "Повний пансіон",
+    "RO": "Без харчування",
+}
+
+
+# Why-this-is-cheap explanation per detection method. Helps the channel
+# reader trust the discount: a 30% drop "vs other dates of the same
+# hotel" reads very differently from "vs peer 4-star hotels in Antalya".
+# Kept short — Telegram channel posts compete with everything else in
+# the user's feed for attention.
+#
+# peer_anomaly is intentionally NOT broadcast to the channel (filtered
+# in _SELECT_UNPOSTED), but the label still appears here because the
+# bot's /deals and /best surfaces re-use this map for their cards.
+_WHY_LINES = {
+    "calendar_anomaly": "📉 Аномально дешева дата у цьому готелі",
+    "promo_discount": "🏷 Спецціна оператора",
+    "percentile": "📊 Нижче історичної ціни цього готелю",
+    "peer_anomaly": "📊 Дешевше за середнє по сусідніх готелях",
+}
 
 
 # Pull all the fields a post needs in one query. Operator + destination
@@ -87,6 +118,7 @@ _SELECT_UNPOSTED = text(
         d.nights,
         d.meal_plan,
         d.deep_link,
+        d.detection_method,
         h.name_uk        AS hotel_name,
         h.stars          AS stars,
         region.name_uk   AS region_name,
@@ -100,6 +132,15 @@ _SELECT_UNPOSTED = text(
     WHERE d.posted_at IS NULL
       AND d.discount_pct >= :min_discount_pct
       AND d.detection_method NOT LIKE 'bucket_%'
+      -- Channel-only filter: peer_anomaly (cold-start) compares the
+      -- price to OTHER hotels in the same destination+stars bucket, not
+      -- to this hotel's own history. That's a useful UI signal in the
+      -- /api/deals feed (where users can see the method), but in the
+      -- channel post the phrasing "знижка" implies "vs this hotel's
+      -- normal price" — which peer-comparison doesn't actually prove.
+      -- Keep cold-start in the UI feed and personal alerts (with a
+      -- higher discount floor), but not in the public channel.
+      AND d.detection_method != 'peer_anomaly'
       -- migration 004 added `source`. Legacy/imported rows without source
       -- must NEVER be broadcast because they cannot prove a live price
       -- origin. Real ingest paths set source explicitly:
@@ -108,7 +149,12 @@ _SELECT_UNPOSTED = text(
       --   'ittour'           — direct partner API (future)
       AND d.source IS NOT NULL
       AND d.source IN ('farvater_scrape', 'live_refresh', 'ittour')
-    ORDER BY d.detected_at DESC
+    -- Channel content rule: the biggest savings always lead, with the
+    -- newest detection as the tie-break. Pre-audit this was
+    -- `ORDER BY detected_at DESC` — fresh first — but that buried
+    -- 40% promos under 15% ones whenever a tick caught both. The
+    -- product is "we find the steals", so the steal goes first.
+    ORDER BY d.discount_pct DESC, d.detected_at DESC
     LIMIT :lim
     """
 )
@@ -177,9 +223,30 @@ def _format_location(region: str | None, country: str | None) -> str:
 
 def _render_deal(row: _DealRow) -> str:
     """Render a deal row to a MarkdownV2 message. Pure / testable."""
+    # Savings in absolute UAH — the percentage alone doesn't communicate
+    # impact when peer prices vary wildly across categories. baseline_p50
+    # is always >= price_uah by construction (only positive-discount
+    # rows reach this template).
+    savings = max(0, int(row.baseline_p50) - int(row.price_uah))
+    raw_meal = row.meal_plan or ""
+    meal_label = _MEAL_LABELS.get(raw_meal, raw_meal)
+
+    # Inline strike-through of the typical price. MarkdownV2 syntax is
+    # `~text~`. Escaped braces in the template would interfere with
+    # .format(), so we render the strikethrough block here.
+    strikethrough = (
+        f"~{escape_markdown_v2(_format_uah(int(row.baseline_p50)))}~"
+        if savings > 0
+        else ""
+    )
+
+    why = _WHY_LINES.get((getattr(row, "detection_method", None) or "").lower(), "")
+    why_line = f"_{escape_markdown_v2(why)}_\n\n" if why else ""
+
     # All DB strings get escaped at the boundary. Numbers are safe.
     return _DEAL_TEMPLATE.format(
         discount_pct=escape_markdown_v2(f"{float(row.discount_pct):.0f}"),
+        savings_formatted=escape_markdown_v2(_format_uah(savings)),
         hotel_name=escape_markdown_v2(row.hotel_name),
         stars_str=_stars_str(row.stars),
         destination=escape_markdown_v2(
@@ -190,9 +257,10 @@ def _render_deal(row: _DealRow) -> str:
         ),
         check_in_formatted=escape_markdown_v2(_format_check_in(row.check_in)),
         nights=row.nights,
-        meal_plan=escape_markdown_v2(row.meal_plan),
+        meal_plan_label=escape_markdown_v2(meal_label),
         price_formatted=escape_markdown_v2(_format_uah(row.price_uah)),
-        baseline_formatted=escape_markdown_v2(_format_uah(row.baseline_p50)),
+        strikethrough=strikethrough,
+        why_line=why_line,
         operator_display_name=escape_markdown_v2(row.operator_display_name),
         # deep_link goes inside Markdown link parens — `(...)` already
         # escaped in template, but `)` literally in URL would break out.

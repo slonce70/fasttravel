@@ -22,8 +22,8 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-from shared.publishers.broadcast import escape_markdown_v2
 
+from shared.publishers.broadcast import escape_markdown_v2
 from src.infra.api_client import ApiError, get_destinations
 from src.infra.db import (
     add_subscription,

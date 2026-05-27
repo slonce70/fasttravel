@@ -192,6 +192,12 @@ export interface DealsParams {
   limit?: number;
   offset?: number;
   country?: string;
+  /**
+   * Default upstream is "discount" (biggest %) — matches the product
+   * promise of surfacing the steals. Pass "newest" if the page wants
+   * to show a chronological detection log instead.
+   */
+  sort?: 'discount' | 'newest' | 'price';
 }
 
 export async function fetchDeals(
@@ -202,6 +208,7 @@ export async function fetchDeals(
   if (params.limit !== undefined) qs.set('limit', String(params.limit));
   if (params.offset !== undefined) qs.set('offset', String(params.offset));
   if (params.country) qs.set('country', params.country);
+  if (params.sort) qs.set('sort', params.sort);
   const path = qs.toString() ? `/api/deals?${qs.toString()}` : '/api/deals';
   return apiFetch<PaginatedDeals>(path, opts);
 }

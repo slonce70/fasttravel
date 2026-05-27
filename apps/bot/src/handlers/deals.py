@@ -35,6 +35,7 @@ log = get_logger(__name__)
 
 _PAGE_SIZE = 5
 _MAX_FETCH = 50  # one /api/deals call covers up to 10 pages
+_BEST_COUNT = 10  # `/best` shows the top 10 by discount in a single message
 
 
 def _build_keyboard(
@@ -133,6 +134,89 @@ async def show_deals(message: Message) -> None:
 @router.message(Command("deals"))
 async def cmd_deals(message: Message) -> None:
     await show_deals(message)
+
+
+async def _best_keyboard(deals: list[dict[str, Any]]) -> InlineKeyboardMarkup:
+    settings = get_settings()
+    rows: list[list[InlineKeyboardButton]] = []
+    for d in deals[:5]:
+        # Only the top-5 get individual booking buttons so the message
+        # doesn't blow past Telegram's 100-button-per-message cap when
+        # the feed surfaces lots of hotels.
+        slug = d.get("hotel_slug")
+        deep_link = d.get("deep_link")
+        discount = int(round(float(d.get("discount_pct") or 0)))
+        hotel_name = (d.get("hotel_name_uk") or "Готель")[:22]
+        url = deep_link
+        if not url and slug and settings.public_site_url:
+            url = (
+                f"{settings.public_site_url.rstrip('/')}/hotels/{slug}"
+                "?utm_source=tg_bot&utm_medium=best"
+            )
+        if url:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"−{discount}% · {hotel_name}", url=url
+                    )
+                ]
+            )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="🔔 Підписатись на знижки", callback_data="best:subscribe"
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(Command("best"))
+async def cmd_best(message: Message) -> None:
+    """Top-N current deals — single message, deepest discount first.
+
+    `/deals` paginates the full feed; `/best` is the "show me the
+    headlines" command. Useful when a channel-shy user wants a quick
+    snapshot in DM.
+    """
+    try:
+        payload = await get_deals(limit=_BEST_COUNT, offset=0, sort="discount")
+    except ApiError:
+        await message.answer(
+            "Сервіс знижок тимчасово недоступний\\. Спробуйте за хвилину\\.",
+            reply_markup=main_menu_kb(),
+        )
+        return
+
+    items: list[dict[str, Any]] = payload.get("items", [])
+    if not items:
+        await message.answer(
+            "Зараз немає активних знижок\\. Підпишіться на канал — там кожна нова з'являється першою\\.",
+            reply_markup=main_menu_kb(),
+        )
+        return
+
+    header = "🏆 *Топ\\-знижки зараз*"
+    body = "\n\n— · — · —\n\n".join(render_deal(d) for d in items)
+    text = f"{header}\n\n{body}"
+    kb = await _best_keyboard(items)
+
+    await message.answer(
+        text,
+        parse_mode=ParseMode.MARKDOWN_V2,
+        disable_web_page_preview=True,
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data == "best:subscribe")
+async def cb_best_subscribe(query: CallbackQuery) -> None:
+    # Late import — same circular-dep dodge the F.text dispatcher uses.
+    from src.handlers.subscribe import show_subscriptions
+
+    if query.message is not None:
+        await show_subscriptions(query.message)
+    await query.answer()
 
 
 @router.callback_query(F.data.startswith("d:page:"))

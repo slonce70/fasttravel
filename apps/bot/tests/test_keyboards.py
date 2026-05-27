@@ -18,6 +18,7 @@ from src.keyboards.filters import (
     when_kb,
 )
 from src.keyboards.main_menu import (
+    BEST,
     DEALS,
     DESTINATIONS,
     HELP,
@@ -34,10 +35,14 @@ def _all_callbacks(kb) -> list[str]:
     ]
 
 
-def test_main_menu_has_six_labels_in_three_rows():
+def test_main_menu_layout():
+    """BEST first because the product's main job is 'show me steals' —
+    matches the channel post style and the /best command. Other labels
+    keep their broad position (browse, account)."""
     kb = main_menu_kb()
     assert len(kb.keyboard) == 3
     assert [b.text for row in kb.keyboard for b in row] == [
+        BEST,
         SEARCH,
         DEALS,
         DESTINATIONS,

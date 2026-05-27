@@ -1,9 +1,9 @@
 """MarkdownV2 renderers for search results, deals, and hotel summaries.
 
-Mirrors the scheduler's `_render_deal` shape so users see the same
-visual format whether the post arrives via channel broadcast, /deals
-list, search results, or personal alert. Every DB-supplied field is
-piped through `escape_markdown_v2` — same defence as the broadcast path.
+Visual format stays in sync with the scheduler's `post_deals._render_deal`
+on purpose — a user should see the same shape whether the post arrives
+via channel broadcast, /deals list, search results, or personal alert.
+Every DB-supplied field is piped through `escape_markdown_v2`.
 """
 
 from __future__ import annotations
@@ -20,6 +20,18 @@ _MEAL_LABELS = {
     "BB": "Сніданок",
     "FB": "Повний пансіон",
     "RO": "Без харчування",
+}
+
+
+# Mirrors apps/scheduler/src/jobs/post_deals.py:_WHY_LINES. Kept here so
+# the bot can render the same explanatory subtitle for any deal payload
+# (channel post, /deals page, /best feed, personal alert) without
+# importing from the scheduler package.
+_WHY_LINES = {
+    "calendar_anomaly": "📉 Аномально дешева дата у цьому готелі",
+    "promo_discount": "🏷 Спецціна оператора",
+    "percentile": "📊 Нижче історичної ціни цього готелю",
+    "peer_anomaly": "📊 Дешевше за середнє по сусідніх готелях",
 }
 
 
@@ -101,23 +113,47 @@ def render_search_hit(hit: dict[str, Any]) -> str:
 
 def render_deal(row: dict[str, Any]) -> str:
     """One deal card — same shape used by the scheduler post_deals job
-    (kept visually consistent on purpose). Renders DealOut JSON."""
+    (kept visually consistent on purpose). Renders DealOut JSON.
+
+    Layout:
+        🔥 *-37% · економія 12 500 ₴*
+        🏨 *Hotel Name* ⭐⭐⭐⭐
+        📍 Antalya
+        📅 14 черв. · 7 ноч. · Все включено
+        💰 *21 000 ₴* ~33 500 ₴~
+        _📉 Аномально дешева дата у цьому готелі_
+
+    All four blocks (headline, identity, dates, price) sit on their own
+    rows so the card scans in <2 seconds even on a phone — the channel
+    user's attention budget is small.
+    """
     discount = _format_pct(row.get("discount_pct"))
     name = escape_markdown_v2(row.get("hotel_name_uk") or "Готель")
     stars = _stars_str(row.get("hotel_stars"))
     destination = escape_markdown_v2(row.get("destination_name") or "")
     check_in = escape_markdown_v2(_format_date(row.get("check_in")))
     nights = row.get("nights") or 7
-    meal = escape_markdown_v2(
-        _MEAL_LABELS.get(row.get("meal_plan") or "", row.get("meal_plan") or "")
-    )
-    price = escape_markdown_v2(_format_uah(row.get("price_uah")))
-    baseline = escape_markdown_v2(_format_uah(row.get("baseline_p50")))
+    raw_meal = row.get("meal_plan") or ""
+    meal = escape_markdown_v2(_MEAL_LABELS.get(raw_meal, raw_meal))
+    price_int = int(row.get("price_uah") or 0)
+    baseline_int = int(row.get("baseline_p50") or 0)
+    savings = max(0, baseline_int - price_int)
+    price_fmt = escape_markdown_v2(_format_uah(price_int))
+    baseline_fmt = escape_markdown_v2(_format_uah(baseline_int))
+    savings_fmt = escape_markdown_v2(_format_uah(savings))
+
+    strikethrough = f"~{baseline_fmt}~" if savings > 0 else ""
+
+    method = (row.get("detection_method") or "").lower()
+    why = _WHY_LINES.get(method, "")
+    why_block = f"\n_{escape_markdown_v2(why)}_" if why else ""
 
     return (
-        f"🔥 *\\-{discount}%*  *{name}* {stars}".rstrip()
+        f"🔥 *\\-{discount}% · економія {savings_fmt}*\n"
+        f"🏨 *{name}* {stars}".rstrip()
         + "\n"
         + (f"📍 {destination}\n" if destination else "")
         + f"📅 {check_in} · {nights} ноч\\. · {meal}\n"
-        + f"💰 *{price}* \\(зазвичай {baseline}\\)"
+        + f"💰 *{price_fmt}* {strikethrough}".rstrip()
+        + why_block
     )

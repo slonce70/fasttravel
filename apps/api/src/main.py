@@ -33,6 +33,7 @@ from src.infra.cache import close_redis
 from src.infra.db import dispose_engine
 from src.infra.limiter import limiter
 from src.infra.logging import configure_logging, get_logger
+from src.infra.middleware import AmpQueryParamMiddleware
 from src.infra.sentry import configure_sentry
 from src.routers import deals as deals_router
 from src.routers import destinations as destinations_router
@@ -127,6 +128,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(CorrelationIdMiddleware)
+    # Audit #1.3 High — rewrite `?amp;param=…` to `?param=…` before
+    # routes see the query string. Replaces the per-router duplicate
+    # `amp_param` Query() definitions that polluted OpenAPI.
+    app.add_middleware(AmpQueryParamMiddleware)
 
     # Routers
     app.include_router(health_router.router)
