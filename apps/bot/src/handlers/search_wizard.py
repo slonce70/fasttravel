@@ -25,12 +25,13 @@ from aiogram.types import (
     Message,
 )
 
+from shared.publishers.broadcast import escape_markdown_v2
 from shared.text_uk import plural_uk
 from src.config import get_settings
 from src.infra.api_client import ApiError, get_destinations, search_hotels
 from src.infra.db import add_subscription, ensure_subscriber
 from src.infra.logging import get_logger
-from src.keyboards.countries import countries_kb, country_emoji
+from src.keyboards.countries import countries_kb, country_emoji, country_name_uk
 from src.keyboards.filters import (
     budget_kb,
     meal_kb,
@@ -133,10 +134,11 @@ async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
         await query.answer()
         return
 
-    await state.update_data(country=iso, country_emoji=country_emoji(iso))
+    name = country_name_uk(iso)
+    await state.update_data(country=iso, country_emoji=country_emoji(iso), country_name=name)
     await state.set_state(SearchState.choosing_nights)
     await query.message.edit_text(
-        f"{country_emoji(iso)} _{iso}_ · *скільки ночей\\?* 🌙",
+        f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · скільки ночей\\? 🌙",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=nights_kb(),
     )

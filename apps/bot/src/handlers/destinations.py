@@ -25,11 +25,12 @@ from aiogram.types import (
     Message,
 )
 
+from shared.publishers.broadcast import escape_markdown_v2
 from shared.text_uk import format_hotels
 from src.config import get_settings
 from src.infra.api_client import ApiError, get_deals, get_destinations
 from src.infra.logging import get_logger
-from src.keyboards.countries import country_emoji
+from src.keyboards.countries import country_emoji, country_name_uk
 from src.keyboards.main_menu import main_menu_kb
 from src.states.search import SearchState
 from src.templates.deal import render_deal
@@ -140,12 +141,13 @@ async def cb_search_in_country(query: CallbackQuery, state: FSMContext) -> None:
     iso = (query.data or "").split(":", 2)[2]
     # Hand off to the wizard with country pre-filled (skip choosing_country step)
     await state.clear()
-    await state.update_data(country=iso, country_emoji=country_emoji(iso))
+    name = country_name_uk(iso)
+    await state.update_data(country=iso, country_emoji=country_emoji(iso), country_name=name)
     await state.set_state(SearchState.choosing_nights)
     from src.keyboards.filters import nights_kb
 
     await query.message.edit_text(
-        f"{country_emoji(iso)} _{iso}_ · *скільки ночей\\?* 🌙",
+        f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · скільки ночей\\? 🌙",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=nights_kb(),
     )
@@ -165,7 +167,7 @@ async def cb_country_drill(query: CallbackQuery) -> None:
         return
 
     items: list[dict[str, Any]] = deals_payload.get("items", [])
-    header = f"{country_emoji(iso)} *{iso}* · топ знижок"
+    header = f"{country_emoji(iso)} *{escape_markdown_v2(country_name_uk(iso))}* · топ знижок"
     if not items:
         body = "_Зараз немає активних знижок у цій країні\\._\nСпробуйте «🔍 Знайти тури» нижче\\."
     else:
