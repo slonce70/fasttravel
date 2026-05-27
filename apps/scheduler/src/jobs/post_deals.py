@@ -27,7 +27,7 @@ from sqlalchemy import text
 
 from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2, make_bot
-from shared.text_uk import format_nights, format_reviews
+from shared.text_uk import format_meal_plan, format_nights, format_reviews
 from src.config import get_settings
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -74,18 +74,6 @@ _DEAL_TEMPLATE = (
     "{why_line}"
     "🛒 [Забронювати на {operator_display_name} →]({deep_link})"
 )
-
-
-# Short, customer-friendly meal plan names. RO/BB/AI codes are operator
-# jargon — the channel reader cares about whether breakfast is included.
-_MEAL_LABELS = {
-    "AI": "Все включено",
-    "UAI": "Ультра все включено",
-    "HB": "Напівпансіон",
-    "BB": "Сніданок",
-    "FB": "Повний пансіон",
-    "RO": "Без харчування",
-}
 
 
 # Pull all the fields a post needs in one query. Operator + destination
@@ -239,8 +227,7 @@ def _render_deal(row: _DealRow) -> str:
     # is always >= price_uah by construction (only positive-discount
     # rows reach this template).
     savings = max(0, int(row.baseline_p50) - int(row.price_uah))
-    raw_meal = row.meal_plan or ""
-    meal_label = _MEAL_LABELS.get(raw_meal, raw_meal)
+    meal_label = format_meal_plan(row.meal_plan)
 
     # Inline strike-through of the typical price. MarkdownV2 syntax is
     # `~text~`. Escaped braces in the template would interfere with

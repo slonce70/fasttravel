@@ -25,7 +25,7 @@ from sqlalchemy import text
 
 from shared.deal_signals import get_deal_signal_copy
 from shared.publishers.broadcast import escape_markdown_v2, make_bot
-from shared.text_uk import format_nights
+from shared.text_uk import format_meal_plan, format_nights
 from src.config import get_settings
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -113,24 +113,13 @@ def _stars_str(stars: int | None) -> str:
     return "⭐" * int(stars)
 
 
-_MEAL_LABELS = {
-    "AI": "Все включено",
-    "UAI": "Ультра все включено",
-    "HB": "Напівпансіон",
-    "BB": "Сніданок",
-    "FB": "Повний пансіон",
-    "RO": "Без харчування",
-}
-
-
 def _render(row: Any, public_site_url: str) -> str:
     discount = int(round(float(row.discount_pct or 0)))
     name = escape_markdown_v2(row.hotel_name_uk or "Готель")
     stars = _stars_str(row.hotel_stars)
     dest = escape_markdown_v2(row.destination_name or "")
     nights = int(row.nights or 7)
-    raw_meal = row.meal_plan or ""
-    meal = escape_markdown_v2(_MEAL_LABELS.get(raw_meal, raw_meal))
+    meal = escape_markdown_v2(format_meal_plan(row.meal_plan))
     price = escape_markdown_v2(_format_uah(row.price_uah))
     baseline_int = int(row.baseline_p50 or 0)
     savings = max(0, baseline_int - int(row.price_uah or 0))
