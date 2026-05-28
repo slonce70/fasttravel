@@ -29,14 +29,12 @@
     "next": "15.5.18",
     "react": "^19.0.0",
     "react-day-picker": "^9.4.0",
-    "react-dom": "^19.0.0",
-    "recharts": "^2.13.3"
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",
     "@opennextjs/cloudflare": "^1.19.11",
     "@playwright/test": "^1.60.0",
-    "@tanstack/react-query-devtools": "^5.59.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.2",

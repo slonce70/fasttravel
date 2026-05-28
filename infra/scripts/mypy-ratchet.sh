@@ -15,7 +15,7 @@
 # more errors than baseline must fix existing ones or come down again.
 #
 # Usage in CI:
-#   ./infra/scripts/mypy-ratchet.sh api scheduler ingest bot
+#   ./infra/scripts/mypy-ratchet.sh api scheduler bot
 #
 # To regenerate the baseline after a deliberate cleanup:
 #   ./infra/scripts/mypy-ratchet.sh --refresh-baseline api
@@ -24,7 +24,6 @@
 #   api 17
 #   bot 9
 #   scheduler 42
-#   ingest 4
 #
 # Lines starting with `#` are comments, ignored. Order doesn't matter.
 

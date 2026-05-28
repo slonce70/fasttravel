@@ -87,7 +87,6 @@ fasttravel/
 │   ├── api/         FastAPI HTTP сервіс (Python 3.12)
 │   ├── bot/         Telegram bot (aiogram 3) + AlertManager webhook
 │   ├── scheduler/   APScheduler — snapshot, detect_deals, post_deals, notify
-│   ├── ingest/      Бібліотека парсерів / нормалізаторів (імпортується scheduler)
 │   ├── shared/      Спільний код:
 │   │   ├── infra/       BaseAppSettings, configure_logging, configure_sentry
 │   │   └── publishers/  Telegram broadcast helper
@@ -157,19 +156,19 @@ cd apps/web && pnpm test
 ### Lint + typecheck + mypy ratchet
 
 ```bash
-# Ruff (4 сервіси, всі мають бути clean)
-for svc in api scheduler ingest bot; do
+# Ruff (3 сервіси, всі мають бути clean)
+for svc in api scheduler bot; do
   (cd apps/$svc && ../api/.venv/bin/ruff check src tests)
 done
 
 # Mypy ratchet — provavily fail CI якщо помилок > baseline
-./infra/scripts/mypy-ratchet.sh api scheduler ingest bot
+./infra/scripts/mypy-ratchet.sh api scheduler bot
 
 # Web typecheck + lint
 cd apps/web && pnpm typecheck && pnpm lint
 ```
 
-Поточний mypy baseline: `api=0`, `scheduler=0`, `ingest=0`, `bot=70` (legacy aiogram type-narrowing — окремий cleanup PR).
+Поточний mypy baseline: `api=0`, `scheduler=0`, `bot=70` (legacy aiogram type-narrowing — окремий cleanup PR).
 
 ### Pre-commit hooks
 
