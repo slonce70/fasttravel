@@ -24,6 +24,7 @@ from shared.refresh_queue import (
     RefreshQueueUnavailableError,
     push_refresh_job_with_cap,
 )
+
 from src.infra.logging import get_logger
 
 log = get_logger(__name__)

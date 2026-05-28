@@ -15,7 +15,6 @@ from __future__ import annotations
 from functools import cached_property, lru_cache
 
 from pydantic import Field
-
 from shared.infra.base_settings import DEV_DEFAULT_MARKERS, BaseAppSettings
 
 
