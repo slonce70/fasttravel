@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useMemo, useState, type FormEvent } from 'react';
 import { Button } from './ui/Button';
 import { PaxPicker, paxFromSearchParams, paxToSearchParams, type PaxValue } from './PaxPicker';
+import { toApiSearchParams, type RouteSearchParams } from '@/lib/search-params';
 import { DEFAULT_SEARCH_SORT, normalizeSearchSort } from '@/lib/search-sort';
 import { PRECOMPUTED_NIGHTS, type CountryOut } from '@/lib/types';
 
@@ -43,9 +44,25 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
   const router = useRouter();
   const params = useSearchParams();
   const selectableCountries = useMemo(() => uniqueCountriesByIso(countries), [countries]);
+  const sanitizedInitial = useMemo(
+    () =>
+      toApiSearchParams({
+        country: readSearchParam(params, 'country') ?? undefined,
+        check_in: readSearchParam(params, 'check_in') ?? undefined,
+        check_in_min: readSearchParam(params, 'check_in_min') ?? undefined,
+        nights: readSearchParam(params, 'nights') ?? undefined,
+        meal_plan: readSearchParam(params, 'meal_plan') ?? undefined,
+        price_max: readSearchParam(params, 'price_max') ?? undefined,
+        stars_min: readSearchParam(params, 'stars_min') ?? undefined,
+        adults: readSearchParam(params, 'adults') ?? undefined,
+        kids: readSearchParam(params, 'kids') ?? undefined,
+        sort: readSearchParam(params, 'sort') ?? undefined,
+      }),
+    [params],
+  );
 
   // URL ?country wins over the prop default — keeps state across refresh.
-  const initialCountry = (readSearchParam(params, 'country') ?? defaultCountry ?? '').toUpperCase();
+  const initialCountry = (sanitizedInitial.country ?? defaultCountry ?? '').toUpperCase();
 
   const [country, setCountry] = useState(initialCountry);
   // Phase 2 P0-1 collapsed the old date range (check_in_min/max) into a
@@ -53,13 +70,17 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
   // INNER JOIN on hotel_calendar_prices(hotel_id, check_in). Read either
   // the new `check_in` param or the legacy `check_in_min` to preserve
   // bookmarks while old URLs cycle out.
-  const [checkIn, setCheckIn] = useState(
-    readSearchParam(params, 'check_in') ?? readSearchParam(params, 'check_in_min') ?? '',
+  const [checkIn, setCheckIn] = useState(sanitizedInitial.check_in ?? '');
+  const [nights, setNights] = useState(
+    sanitizedInitial.nights !== undefined ? String(sanitizedInitial.nights) : '',
   );
-  const [nights, setNights] = useState(readSearchParam(params, 'nights') ?? '');
-  const [mealPlan, setMealPlan] = useState(readSearchParam(params, 'meal_plan') ?? '');
-  const [priceMax, setPriceMax] = useState(readSearchParam(params, 'price_max') ?? '');
-  const [starsMin, setStarsMin] = useState(readSearchParam(params, 'stars_min') ?? '');
+  const [mealPlan, setMealPlan] = useState(sanitizedInitial.meal_plan ?? '');
+  const [priceMax, setPriceMax] = useState(
+    sanitizedInitial.price_max !== undefined ? String(sanitizedInitial.price_max) : '',
+  );
+  const [starsMin, setStarsMin] = useState(
+    sanitizedInitial.stars_min !== undefined ? String(sanitizedInitial.stars_min) : '',
+  );
   const [pax, setPax] = useState<PaxValue>(() =>
     paxFromSearchParams((k) => readSearchParam(params, k)),
   );
@@ -77,14 +98,29 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
     e.preventDefault();
     const qs = new URLSearchParams();
     const currentSort = normalizeSearchSort(readSearchParam(params, 'sort'));
-    if (country) qs.set('country', country);
-    if (checkIn) qs.set('check_in', checkIn);
-    if (nights) qs.set('nights', nights);
-    if (mealPlan) qs.set('meal_plan', mealPlan);
-    if (priceMax) qs.set('price_max', priceMax);
-    if (starsMin) qs.set('stars_min', starsMin);
-    if (currentSort !== DEFAULT_SEARCH_SORT) qs.set('sort', currentSort);
-    paxToSearchParams(qs, pax);
+    const raw: RouteSearchParams = {
+      country,
+      check_in: checkIn,
+      nights,
+      meal_plan: mealPlan,
+      price_max: priceMax,
+      stars_min: starsMin,
+      adults: String(pax.adults),
+      kids: pax.kids.length > 0 ? pax.kids.join(',') : undefined,
+      sort: currentSort,
+    };
+    const sanitized = toApiSearchParams(raw);
+    if (sanitized.country) qs.set('country', sanitized.country);
+    if (sanitized.check_in) qs.set('check_in', sanitized.check_in);
+    if (sanitized.nights !== undefined) qs.set('nights', String(sanitized.nights));
+    if (sanitized.meal_plan) qs.set('meal_plan', sanitized.meal_plan);
+    if (sanitized.price_max !== undefined) qs.set('price_max', String(sanitized.price_max));
+    if (sanitized.stars_min !== undefined) qs.set('stars_min', String(sanitized.stars_min));
+    if (sanitized.sort && sanitized.sort !== DEFAULT_SEARCH_SORT) qs.set('sort', sanitized.sort);
+    paxToSearchParams(qs, {
+      adults: sanitized.adults ?? pax.adults,
+      kids: sanitized.kids ?? [],
+    });
     const query = qs.toString();
     router.push(query ? `/search?${query}` : '/search');
   }

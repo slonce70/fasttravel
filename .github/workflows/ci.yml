@@ -8,8 +8,8 @@
 # Notes for maintainers:
 #   - Python services use committed Poetry locks; the frontend uses the
 #     committed pnpm lockfile with a frozen install.
-#   - mypy runs with continue-on-error because pyproject has strict=true but
-#     the codebase isn't fully typed yet. Tighten this gate when ready.
+#   - mypy is enforced for all Python services; keep local `poetry run mypy src`
+#     green before opening a PR.
 
 name: CI
 
@@ -101,15 +101,12 @@ jobs:
         run: poetry install --no-root --with dev
 
       - name: Lint (ruff check)
-        run: poetry run ruff check src/ tests/
+        run: poetry run ruff check src/ tests/ ../shared/
 
       - name: Format check (ruff format)
-        run: poetry run ruff format --check src/ tests/
+        run: poetry run ruff format --check src/ tests/ ../shared/
 
       - name: Type check (mypy)
-        # pyproject.toml has strict=true but the codebase isn't fully typed.
-        # Keep this informational until we drop strict or finish typing.
-        continue-on-error: true
         run: poetry run mypy src/
 
       - name: Run migrations
@@ -137,8 +134,8 @@ jobs:
 
     # Audit Sprint #12 — scheduler tests for detect_deals / post_deals
     # were heavy-mocked because there were no Postgres/Redis services.
-    # Adding them mirrors the API job's services block so future
-    # integration tests (tests/integration/test_detect_deals_sql.py)
+    # Adding them mirrors the API job's services block so DB-backed
+    # integration tests (tests/integration/test_deal_selection_sql.py)
     # can run against real engines instead of fakeredis + mocked sessions.
     services:
       postgres:
@@ -167,6 +164,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
+      DATABASE_URL_SYNC: postgresql+psycopg://test:test@localhost:5432/test
       REDIS_URL: redis://localhost:6379/0
       ENVIRONMENT: dev
       LOG_LEVEL: WARNING
@@ -200,15 +198,24 @@ jobs:
       - name: Install dependencies
         run: poetry install --no-root --with dev
 
+      - name: Install API migration dependencies
+        working-directory: apps/api
+        run: poetry install --no-root --with dev
+
+      - name: Prepare scheduler integration database
+        working-directory: apps/api
+        env:
+          PYTHONPATH: .:..
+        run: poetry run alembic upgrade head
+
       - name: Lint (ruff check)
-        run: poetry run ruff check src/ tests/
+        run: poetry run ruff check src/ tests/ ../shared/
 
       - name: Format check (ruff format)
-        run: poetry run ruff format --check src/ tests/
+        run: poetry run ruff format --check src/ tests/ ../shared/
 
       - name: Type check (mypy)
-        continue-on-error: true
-        run: poetry run mypy src/ || true
+        run: poetry run mypy src/
 
       - name: Run tests with coverage (if tests/ exists)
         env:
@@ -264,8 +271,7 @@ jobs:
         run: poetry run ruff format --check src/ tests/
 
       - name: Type check (mypy)
-        continue-on-error: true
-        run: poetry run mypy src/ || true
+        run: poetry run mypy src/
 
       - name: Run tests with coverage
         run: poetry run pytest --cov=src --cov-report=xml --cov-report=term
@@ -306,10 +312,15 @@ jobs:
         run: poetry install --no-root --with dev
 
       - name: Lint (ruff check)
-        run: poetry run ruff check src/ tests/
+        run: poetry run ruff check src/ tests/ ../shared/
 
       - name: Format check (ruff format)
-        run: poetry run ruff format --check src/ tests/
+        run: poetry run ruff format --check src/ tests/ ../shared/
+
+      - name: Type check (mypy)
+        env:
+          PYTHONPATH: .:..
+        run: poetry run mypy src/
 
       - name: Run tests with coverage
         env:
@@ -351,7 +362,7 @@ jobs:
       - name: Security audit (production dependencies)
         run: pnpm audit --prod --audit-level moderate
 
-      - name: Lint (eslint via next lint)
+      - name: Lint (ESLint CLI)
         run: pnpm lint
 
       - name: Typecheck (tsc --noEmit)
@@ -501,10 +512,6 @@ jobs:
         run: docker compose config --quiet
 
       - name: Validate docker-compose.test.yml overlay
-        # The test overlay flips INSTALL_DEV=true; we just validate the
-        # overlay merges cleanly with the base. Running `pytest` against
-        # this overlay happens via the language-specific jobs above, which
-        # are faster than building images.
         run: docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet
 
       - name: Install preflight tools
@@ -516,3 +523,8 @@ jobs:
       - name: Build images
         # We deliberately do NOT push. Just confirms every Dockerfile builds.
         run: docker compose build --pull
+
+      - name: Build test images
+        # The test overlay flips INSTALL_DEV=true; build it too so local
+        # verification targets cannot drift from CI unnoticed.
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml build --pull api-test scheduler-test bot-test

@@ -26,15 +26,16 @@ Spec / ADR (optional):
 ```bash
 # приклад:
 docker compose up -d postgres redis
-cd apps/api && poetry run pytest
-poetry run alembic upgrade head
+docker compose -f docker-compose.yml -f docker-compose.test.yml build api-test
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test pytest -q
+docker compose run --rm api alembic upgrade head
 curl -fsS http://localhost:8000/health
 ```
 
 ## Checklist
 
-- [ ] `ruff check` + `ruff format` пройшли (`cd apps/api && poetry run ruff check src/ tests/`)
-- [ ] Тести зелені (`poetry run pytest`)
+- [ ] `ruff check` + `ruff format` пройшли для змінених сервісів
+- [ ] Тести зелені (для API: `docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test pytest -q`)
 - [ ] Якщо змінена схема БД — додано міграцію Alembic (`alembic revision --autogenerate -m "..."`)
 - [ ] Якщо архітектурне рішення — додано spec у `docs/superpowers/specs/` (або inline ADR у тілі PR)
 - [ ] Якщо змінений публічний API — оновлено відповідний `apps/<service>/README.md`

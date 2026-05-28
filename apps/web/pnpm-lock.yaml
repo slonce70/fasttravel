@@ -33,6 +33,9 @@ importers:
         specifier: ^2.13.3
         version: 2.15.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
     devDependencies:
+      '@eslint/eslintrc':
+        specifier: ^3.3.5
+        version: 3.3.5
       '@opennextjs/cloudflare':
         specifier: ^1.19.11
         version: 1.19.11(next@15.5.18(@playwright/test@1.60.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6))(wrangler@4.94.0)

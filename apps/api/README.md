@@ -33,7 +33,7 @@ apps/api/
       sentry.py             thin wrapper over shared.infra.sentry (adds FastApiIntegration)
       limiter.py            slowapi per-IP keying (CF-Connecting-IP → XFF → client.host)
       middleware.py         AmpQueryParamMiddleware (rewrites ?amp;param=)
-  migrations/versions/      Alembic; latest = 018_hotels_coords_postgis.py
+  migrations/versions/      Alembic; latest = 021_current_prices_room_family.py
   tests/                    pytest + httpx + pytest-asyncio
   alembic.ini
   pyproject.toml
@@ -104,10 +104,16 @@ Write these by hand using `op.execute(...)`.
 
 ## Tests
 
-Tests assume `postgres` and `redis` from docker-compose are up.
+Tests that touch the DB should run through the test overlay. The normal
+`api` image intentionally installs only runtime dependencies; `api-test`
+sets `INSTALL_DEV=true` so `pytest` and `pytest-asyncio` are available
+without bloating production.
 
 ```bash
-docker compose run --rm api pytest -q
+docker compose -f docker-compose.yml -f docker-compose.test.yml build api-test
+docker compose up -d postgres redis
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test alembic upgrade head
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test pytest -q
 ```
 
 `tests/conftest.py` wraps every test in a connection-scoped SAVEPOINT and

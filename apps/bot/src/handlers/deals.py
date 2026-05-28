@@ -12,7 +12,7 @@ their place.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from aiogram import F, Router
 from aiogram.enums import ParseMode
@@ -24,8 +24,11 @@ from aiogram.types import (
     Message,
 )
 
+from shared.site_urls import public_hotel_url
+from shared.text_uk import format_nights
 from src.config import get_settings
 from src.infra.api_client import ApiError, get_deals
+from src.infra.callbacks import callback_int_tail, callback_message, callback_tail
 from src.infra.logging import get_logger
 from src.keyboards.main_menu import main_menu_kb
 from src.templates.deal import render_deal
@@ -60,11 +63,8 @@ def _build_keyboard(
         deep_link = d.get("deep_link")
         hotel_name = (d.get("hotel_name_uk") or "Готель")[:24]
         url = deep_link
-        if not url and slug and settings.public_site_url:
-            url = (
-                f"{settings.public_site_url.rstrip('/')}/hotels/{slug}"
-                "?utm_source=tg_bot&utm_medium=deals"
-            )
+        if not url:
+            url = public_hotel_url(settings.public_site_url, slug, medium="deals")
         if url:
             rows.append([InlineKeyboardButton(text=f"📖 {hotel_name}", url=url)])
 
@@ -79,7 +79,7 @@ def _build_keyboard(
 
 
 def _render_page(deals: list[dict[str, Any]], page: int, total_pages: int) -> str:
-    header = f"🔥 *Гарячі знижки* · сторінка *{page}/{total_pages}*"
+    header = f"🔥 *Гарячі варіанти* · сторінка *{page}/{total_pages}*"
     body = "\n\n— · — · —\n\n".join(render_deal(d) for d in deals)
     return f"{header}\n\n{body}"
 
@@ -94,16 +94,16 @@ async def _send_page(
         payload = await get_deals(limit=_MAX_FETCH, offset=0)
     except ApiError:
         await message.answer(
-            "Сервіс знижок тимчасово недоступний\\. Спробуйте за хвилину\\.",
+            "Сервіс варіантів тимчасово недоступний\\. Спробуйте за хвилину\\.",
             reply_markup=main_menu_kb(),
         )
         return
 
     items: list[dict[str, Any]] = payload.get("items", [])
     if not items:
-        text = "Зараз немає активних знижок\\. Завітайте пізніше або підпишіться на канал\\."
+        text = "Зараз немає активних варіантів\\. Завітайте пізніше або підпишіться на канал\\."
         if edit:
-            await message.edit_text(text, reply_markup=main_menu_kb())
+            await message.edit_text(text)
         else:
             await message.answer(text, reply_markup=main_menu_kb())
         return
@@ -176,25 +176,44 @@ async def _best_keyboard(
         discount = int(round(float(d.get("discount_pct") or 0)))
         hotel_name = (d.get("hotel_name_uk") or "Готель")[:22]
         url = deep_link
-        if not url and slug and settings.public_site_url:
-            url = (
-                f"{settings.public_site_url.rstrip('/')}/hotels/{slug}"
-                "?utm_source=tg_bot&utm_medium=best"
-            )
+        if not url:
+            url = public_hotel_url(settings.public_site_url, slug, medium="best")
         if url:
             rows.append([InlineKeyboardButton(text=f"−{discount}% · {hotel_name}", url=url)])
     rows.append(
-        [InlineKeyboardButton(text="🔔 Підписатись на знижки", callback_data="best:subscribe")]
+        [
+            InlineKeyboardButton(
+                text="🔔 Підписатись на цікаві варіанти",
+                callback_data="best:subscribe",
+            )
+        ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _best_header(active: tuple[int, int] | None) -> str:
     if active is None:
-        return "🏆 *Топ\\-знижки зараз*"
+        return "🏆 *Топ\\-варіанти зараз*"
     lo, hi = active
-    label = f"{lo}\\-{hi}" if lo != hi else str(lo)
-    return f"🏆 *Топ\\-знижки зараз* · {label} ноч\\."
+    label = f"{lo}\\-{hi} ночей" if lo != hi else format_nights(lo)
+    return f"🏆 *Топ\\-варіанти зараз* · {label}"
+
+
+def _parse_best_nights_filter(data: str | None) -> tuple[int, int] | None | Literal[False]:
+    payload = callback_tail(data, "best:nights:")
+    if payload is None:
+        return False
+    if payload == "all":
+        return None
+    try:
+        lo_s, hi_s = payload.split(":", 1)
+        lo = int(lo_s)
+        hi = int(hi_s)
+    except ValueError:
+        return False
+    if lo < 1 or hi < lo:
+        return False
+    return (lo, hi)
 
 
 async def _send_best(
@@ -213,9 +232,9 @@ async def _send_best(
             nights_max=nights_max,
         )
     except ApiError:
-        text = "Сервіс знижок тимчасово недоступний\\. Спробуйте за хвилину\\."
+        text = "Сервіс варіантів тимчасово недоступний\\. Спробуйте за хвилину\\."
         if edit:
-            await message.edit_text(text, reply_markup=main_menu_kb())
+            await message.edit_text(text)
         else:
             await message.answer(text, reply_markup=main_menu_kb())
         return
@@ -225,9 +244,9 @@ async def _send_best(
         # Empty-after-filter must still keep the filter row so the user can
         # widen or reset without re-typing /best.
         empty_text = (
-            "За вибраною тривалістю наразі немає знижок\\. Спробуйте іншу тривалість\\."
+            "За вибраною тривалістю наразі немає варіантів\\. Спробуйте іншу тривалість\\."
             if nights_filter is not None
-            else "Зараз немає активних знижок\\. Підпишіться на канал — "
+            else "Зараз немає активних варіантів\\. Підпишіться на канал — "
             "там кожна нова з'являється першою\\."
         )
         empty_kb = InlineKeyboardMarkup(inline_keyboard=[_nights_filter_row(nights_filter)])
@@ -277,37 +296,39 @@ async def cb_best_subscribe(query: CallbackQuery) -> None:
     # Late import — same circular-dep dodge the F.text dispatcher uses.
     from src.handlers.subscribe import show_subscriptions
 
-    if query.message is not None:
-        await show_subscriptions(query.message)
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
+    await show_subscriptions(message)
     await query.answer()
 
 
 @router.callback_query(F.data.startswith("best:nights:"))
 async def cb_best_nights(query: CallbackQuery) -> None:
-    payload = (query.data or "").removeprefix("best:nights:")
-    nights_filter: tuple[int, int] | None
-    if payload == "all":
-        nights_filter = None
-    else:
-        try:
-            lo_s, hi_s = payload.split(":", 1)
-            nights_filter = (int(lo_s), int(hi_s))
-        except (ValueError, AttributeError):
-            await query.answer()
-            return
-    if query.message is not None:
-        await _send_best(query.message, nights_filter=nights_filter, edit=True)
+    nights_filter = _parse_best_nights_filter(query.data)
+    if nights_filter is False:
+        await query.answer()
+        return
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
+    await _send_best(message, nights_filter=nights_filter, edit=True)
     await query.answer()
 
 
 @router.callback_query(F.data.startswith("d:page:"))
 async def cb_page(query: CallbackQuery) -> None:
-    try:
-        page = int((query.data or "").split(":")[2])
-    except (IndexError, ValueError):
+    page = callback_int_tail(query.data, "d:page:")
+    if page is None:
         await query.answer()
         return
-    await _send_page(query.message, page=page, edit=True)
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
+    await _send_page(message, page=page, edit=True)
     await query.answer()
 
 

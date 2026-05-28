@@ -9,10 +9,10 @@ every `/search`, `/calendar`, and `/deals` request for the duration
 
 Splitting it into its own off-peak job — 04:15 Kyiv, right after
 `decay_active_prices` (04:00) and before `cleanup_partitions` (04:30)
-— keeps the locked window outside business hours. The MV doesn't
-need to refresh more than once a day for detect_deals to stay
-accurate: the percentile baselines are a 60-day rolling window so a
-single late-night refresh is enough.
+— keeps the locked window outside business hours. The MV is now a legacy /
+analysis compatibility surface; active `detect_deals` reads same-hotel
+nearby-date stats from `current_prices`, so percentile baselines no longer
+drive Telegram deal detection.
 
 `current_prices` and `hotel_calendar_prices` stay in snapshot_farvater
 (they have unique indexes → CONCURRENTLY refresh, no lock).
@@ -26,6 +26,7 @@ from sqlalchemy import text
 
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
+from src.services.scrape_runs import record_scrape_run
 
 log = get_logger(__name__)
 
@@ -33,14 +34,13 @@ log = get_logger(__name__)
 async def _record_run(started_at: datetime, status: str, error: str = "") -> None:
     try:
         async with async_session_factory() as db:
-            await db.execute(
-                text(
-                    """INSERT INTO scrape_runs
-                         (started_at, finished_at, source, status,
-                          rows_inserted, error_text)
-                       VALUES (:s, NOW(), 'refresh_baselines', :st, 0, :e)"""
-                ),
-                {"s": started_at, "st": status, "e": error[:500]},
+            await record_scrape_run(
+                db,
+                source="refresh_baselines",
+                status=status,
+                rows_inserted=0,
+                error=error,
+                started_at=started_at,
             )
             await db.commit()
     except Exception as exc:  # noqa: BLE001

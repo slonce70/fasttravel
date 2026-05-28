@@ -111,12 +111,9 @@ PROMOS_INGESTED = Counter(
 )
 
 
-# Per-branch visibility for detect_deals. `detection_method` mirrors the
-# DB column (`percentile`, `promo_discount`, `calendar_anomaly`). `reason`
-# is the sub-branch: `warm`/`cold` for percentile, `date_dip`/`stay_inversion`
-# for calendar_anomaly, `bucket` for promo_discount. Needed to detect
-# overfiring (e.g. stay_inversion dominating the channel) without grepping
-# the deals table.
+# Per-branch visibility for detect_deals. The active detector emits
+# `calendar_anomaly` with `reason=date_dip`; unexpected inactive reasons are
+# labelled as `unknown` instead of pretending removed branches are active.
 DEALS_INSERTED = Counter(
     "fasttravel_deals_inserted_total",
     "New deals inserted by detect_deals, by method + sub-reason.",
@@ -125,19 +122,11 @@ DEALS_INSERTED = Counter(
 )
 
 
-# Stage 3 (post-audit). Counts (hotel, operator, check_in, nights, meal)
+# Room-level diagnostic. Counts (hotel, operator, check_in, nights, meal)
 # tuples in price_observations that have >1 distinct room_category in the
-# last 24h. These tuples are the ones where current_prices DISTINCT ON
-# silently picks one room — making downstream p50/p15 (used by the
-# calendar_anomaly detector) wobble whenever the picked room changes
-# between snapshots.
-#
-# We don't fix the schema here (would require uq_price_obs_natural rebuild
-# + DISTINCT ON change in current_prices). Instead we surface the
-# magnitude. Alert threshold (loose): page when this stays >5 % of the
-# total priced-hotel count for 24h+, indicating the deferred fix is
-# starting to bite. See /Users/trend/.claude/plans/mutable-hopping-barto.md
-# Stage 3.
+# last 24h. Before migration 020 current_prices silently collapsed these;
+# after 020 they represent preserved room variety that detectors can compare
+# like-for-like.
 ROOMS_COLLAPSED_LAST_REFRESH = Gauge(
     "fasttravel_rooms_collapsed_last_refresh",
     "Count of (hotel, op, check_in, nights, meal) tuples with >1 room in 24h.",

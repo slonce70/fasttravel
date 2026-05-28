@@ -31,32 +31,17 @@ Public surface
 
 from __future__ import annotations
 
-# Raw operator code → canonical product key. Keep keys upper-cased so the
-# caller can normalize case with ``.upper()`` without a second lookup.
-MEAL_CANONICAL: dict[str, str] = {
-    "AI": "all_inclusive",
-    "UAI": "all_inclusive",
-    "HB": "half_board",
-    "BB": "breakfast",
-    "RO": "room_only",
-    "FB": "full_board",
-}
+from shared.meal_plans import CANONICAL_LABELS_UK, RAW_TO_CANONICAL, canonical_to_raw
+
+MEAL_CANONICAL = RAW_TO_CANONICAL
 
 # Reverse index, built once at import. Used by :func:`raw_codes_for` to
 # expand a canonical key into the set of raw codes stored in the MV.
-_CANONICAL_TO_RAW: dict[str, list[str]] = {}
-for _raw, _canon in MEAL_CANONICAL.items():
-    _CANONICAL_TO_RAW.setdefault(_canon, []).append(_raw)
+_CANONICAL_TO_RAW = canonical_to_raw()
 
 # Canonical key → Ukrainian label. Used by the API contract test and any
 # future ``GET /api/meta/meal-plans`` discovery endpoint.
-MEAL_LABELS_UK: dict[str, str] = {
-    "all_inclusive": "All Inclusive",
-    "half_board": "Напівпансіон",
-    "breakfast": "Сніданок",
-    "room_only": "Без харчування",
-    "full_board": "Повний пансіон",
-}
+MEAL_LABELS_UK = CANONICAL_LABELS_UK
 
 
 def canonical(raw: str) -> str:

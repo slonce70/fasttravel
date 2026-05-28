@@ -22,6 +22,34 @@ import pytest
 from src.jobs import sitemap_long_tail as sl
 
 
+class _FakeSession:
+    async def commit(self) -> None:
+        return None
+
+
+class _FakeSessionFactory:
+    async def __aenter__(self) -> _FakeSession:
+        return _FakeSession()
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+
+class _FakeClientContext:
+    async def __aenter__(self) -> object:
+        return object()
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+
+def test_sitemap_long_tail_uses_catalog_slug_helper_directly() -> None:
+    from src.clients import farvater_catalog
+
+    assert sl.make_slug is farvater_catalog.make_slug
+    assert not hasattr(sl, "_make_slug")
+
+
 @pytest.fixture(autouse=True)
 def _fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     """Collapse exponential backoff to zero — tests should run in ms not
@@ -181,3 +209,59 @@ def test_already_ingested_only_skips_completed_price_probes() -> None:
     sql = str(sl._ALREADY_INGESTED_SQL)
 
     assert "last_priced_at IS NOT NULL" in sql
+
+
+async def test_main_skips_mv_refresh_when_country_inserts_no_prices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refresh_views = AsyncMock()
+
+    async def list_hotels(_client: object, iso2_filter: set[str]) -> dict[str, list[str]]:
+        assert iso2_filter == {"TR"}
+        return {"TR": ["/uk/hotel/tr/demo-hotel/"]}
+
+    async def process_hotel(*_args: object) -> tuple[int, int]:
+        return (1, 0)
+
+    monkeypatch.setattr(sl, "CATALOG_COUNTRIES", [("Turkey", "TR")])
+    monkeypatch.setattr(sl, "async_session_factory", lambda: _FakeSessionFactory())
+    monkeypatch.setattr(sl, "ensure_operator", AsyncMock(return_value=18))
+    monkeypatch.setattr(sl, "country_dest_id", AsyncMock(return_value=7))
+    monkeypatch.setattr(sl, "open_farvater_client", lambda: _FakeClientContext())
+    monkeypatch.setattr(sl, "list_sitemap_hotels", list_hotels)
+    monkeypatch.setattr(sl, "_already_ingested", AsyncMock(return_value=set()))
+    monkeypatch.setattr(sl, "_process_hotel", process_hotel)
+    monkeypatch.setattr(sl, "_refresh_views", refresh_views)
+
+    result = await sl.main(cap=1)
+
+    assert result == 1
+    refresh_views.assert_not_awaited()
+
+
+async def test_main_refreshes_mv_once_when_country_inserts_prices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refresh_views = AsyncMock()
+
+    async def list_hotels(_client: object, *, iso2_filter: set[str]) -> dict[str, list[str]]:
+        assert iso2_filter == {"TR"}
+        return {"TR": ["/uk/hotel/tr/demo-hotel/"]}
+
+    async def process_hotel(*_args: object) -> tuple[int, int]:
+        return (1, 3)
+
+    monkeypatch.setattr(sl, "CATALOG_COUNTRIES", [("Turkey", "TR")])
+    monkeypatch.setattr(sl, "async_session_factory", lambda: _FakeSessionFactory())
+    monkeypatch.setattr(sl, "ensure_operator", AsyncMock(return_value=18))
+    monkeypatch.setattr(sl, "country_dest_id", AsyncMock(return_value=7))
+    monkeypatch.setattr(sl, "open_farvater_client", lambda: _FakeClientContext())
+    monkeypatch.setattr(sl, "list_sitemap_hotels", list_hotels)
+    monkeypatch.setattr(sl, "_already_ingested", AsyncMock(return_value=set()))
+    monkeypatch.setattr(sl, "_process_hotel", process_hotel)
+    monkeypatch.setattr(sl, "_refresh_views", refresh_views)
+
+    result = await sl.main(cap=1)
+
+    assert result == 1
+    refresh_views.assert_awaited_once_with()

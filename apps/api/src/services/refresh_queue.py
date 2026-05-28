@@ -17,6 +17,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from shared.refresh_queue import (
+    REFRESH_QUEUE_KEY,
+    REFRESH_QUEUE_MAX_LEN,
+    RefreshQueueFullError,
+    RefreshQueueUnavailableError,
+    push_refresh_job_with_cap,
+)
 from src.infra.logging import get_logger
 
 log = get_logger(__name__)
@@ -27,17 +34,13 @@ log = get_logger(__name__)
 # a flash crowd, and keeps response time predictable.
 REFRESH_MIN_INTERVAL_S = 300  # 5 min
 
-# Persistent refresh queue. `POST /refresh` LPUSHes here; the scheduler's
-# `refresh_worker_loop` BRPOPs. Survives API restarts (which FastAPI's
-# `BackgroundTasks` did not).
-REFRESH_QUEUE_KEY = "refresh:queue"
-
-# Hard cap on the persistent queue so an attacker iterating hotel_ids can't
+# Hard cap on the persistent queue so an attacker iterating hotel_ids cannot
 # fill Redis (the queue is appendonly → persisted to disk). 200 is roughly
 # 2× the size of a realistic burst from `snapshot_hot` (50 hot hotels)
 # plus a small user trickle. Beyond that, reject 503 so the upstream rate
 # limiter / human notices.
-REFRESH_QUEUE_MAX_LEN = 200
+# The actual constant/script live in `shared.refresh_queue` because scheduler
+# hot-priority jobs push into the same Redis list.
 
 
 async def _await_if_needed(value: Awaitable[Any] | Any) -> Any:
@@ -62,6 +65,13 @@ class QueueFullError(RuntimeError):
 class QueueUnavailableError(RuntimeError):
     """Raised when Redis is unreachable AFTER lock acquisition succeeded
     — caller drops the lock so the user can retry."""
+
+
+async def _delete_refresh_lock(redis: Any, cache_key: str) -> None:
+    try:
+        await _await_if_needed(redis.delete(cache_key))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("refresh.lock_release_failed", key=cache_key, error=str(exc))
 
 
 async def enqueue_refresh(
@@ -121,15 +131,30 @@ async def enqueue_refresh(
     }
     if requested_nights is not None:
         job["requested_nights"] = [requested_nights]
+    job_json = json.dumps(job)
 
     try:
-        await _await_if_needed(redis.lpush(REFRESH_QUEUE_KEY, json.dumps(job)))
+        await push_refresh_job_with_cap(redis, job_json)
+    except RefreshQueueFullError as exc:
+        log.warning("refresh.queue_full", current=exc.current, cap=exc.cap)
+        await _delete_refresh_lock(redis, cache_key)
+        raise QueueFullError(str(exc)) from exc
+    except RefreshQueueUnavailableError as exc:
+        await _delete_refresh_lock(redis, cache_key)
+        raise QueueUnavailableError("refresh queue unavailable") from exc
     except Exception as exc:  # noqa: BLE001 — drop lock so user can retry
         log.error("refresh.enqueue_failed", hotel_id=hotel_id, error=str(exc))
-        try:
-            await _await_if_needed(redis.delete(cache_key))
-        except Exception:  # noqa: BLE001
-            pass
+        await _delete_refresh_lock(redis, cache_key)
         raise QueueUnavailableError("refresh queue unavailable") from exc
 
     return EnqueueResult(queued=True, eta_seconds=10)
+
+
+__all__ = [
+    "REFRESH_QUEUE_KEY",
+    "REFRESH_QUEUE_MAX_LEN",
+    "EnqueueResult",
+    "QueueFullError",
+    "QueueUnavailableError",
+    "enqueue_refresh",
+]

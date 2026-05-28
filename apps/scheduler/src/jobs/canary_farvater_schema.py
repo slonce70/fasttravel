@@ -22,8 +22,6 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import text
-
 from src.clients.static_tours import (
     STATIC_TOURS_URL,
     build_request_body,
@@ -32,6 +30,7 @@ from src.infra.cache import get_redis
 from src.infra.db import async_session_factory
 from src.infra.farvater_http import FarvaterProdClient
 from src.infra.logging import get_logger
+from src.services.scrape_runs import record_scrape_run
 
 log = get_logger(__name__)
 
@@ -171,14 +170,13 @@ async def _probe_static_tours(client: FarvaterProdClient) -> tuple[bool, list[st
 async def _record_run(started_at: datetime, status: str, error: str = "") -> None:
     try:
         async with async_session_factory() as db:
-            await db.execute(
-                text(
-                    """INSERT INTO scrape_runs
-                         (started_at, finished_at, source, status,
-                          rows_inserted, error_text)
-                       VALUES (:s, NOW(), 'canary_farvater_schema', :st, 0, :e)"""
-                ),
-                {"s": started_at, "st": status, "e": error[:500]},
+            await record_scrape_run(
+                db,
+                source="canary_farvater_schema",
+                status=status,
+                rows_inserted=0,
+                error=error,
+                started_at=started_at,
             )
             await db.commit()
     except Exception as exc:  # noqa: BLE001

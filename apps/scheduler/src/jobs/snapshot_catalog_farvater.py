@@ -34,20 +34,18 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import text
-
+from src.clients.farvater_catalog import list_country_hotels
+from src.clients.farvater_hotel_page import fetch_hotel_meta
+from src.clients.farvater_runtime import CATALOG_COUNTRIES, open_farvater_client
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
-from src.jobs.snapshot_farvater import (
-    CATALOG_COUNTRIES,
-    _country_dest_id,
-    _ensure_operator,
-    _fetch_hotel_meta,
-    _http_client,
-    _list_country_hotels,
-    _upsert_hotel,
-    _upsert_mapping,
+from src.services.hotel_upsert import (
+    country_dest_id,
+    ensure_operator,
+    upsert_hotel,
+    upsert_mapping,
 )
+from src.services.scrape_runs import record_scrape_run
 
 log = get_logger(__name__)
 
@@ -68,13 +66,13 @@ async def _process_catalog_hotel(
     """Fetch a single hotel HTML page and upsert it. Returns 1 on success."""
     async with semaphore:
         await asyncio.sleep(PER_REQUEST_DELAY_S)
-        meta = await _fetch_hotel_meta(client, url_path, iso2)
+        meta = await fetch_hotel_meta(client, url_path, iso2)
     if meta is None:
         return 0
 
     async with async_session_factory() as db:
-        hotel_db_id = await _upsert_hotel(db, meta, dest_id, operator_id)
-        await _upsert_mapping(db, hotel_db_id, operator_id, meta)
+        hotel_db_id = await upsert_hotel(db, meta, dest_id, operator_id)
+        await upsert_mapping(db, hotel_db_id, operator_id, meta)
         await db.commit()
     log.info(
         "farvater.catalog.hotel.done",
@@ -94,21 +92,14 @@ async def _record_run(
     started_at: datetime | None = None,
 ) -> None:
     """Mirror of snapshot_farvater._record_run but tagged with our source."""
-    await db.execute(
-        text(
-            """INSERT INTO scrape_runs
-                  (started_at, finished_at, operator_id, source, status,
-                   rows_inserted, error_text)
-                VALUES (:s, NOW(), :op, :src, :st, :n, :e)"""
-        ),
-        {
-            "s": started_at or datetime.now(UTC),
-            "op": operator_id,
-            "src": SCRAPE_SOURCE,
-            "st": status,
-            "n": rows_inserted,
-            "e": error[:500],
-        },
+    await record_scrape_run(
+        db,
+        source=SCRAPE_SOURCE,
+        status=status,
+        rows_inserted=rows_inserted,
+        error=error,
+        started_at=started_at,
+        operator_id=operator_id,
     )
 
 
@@ -129,17 +120,17 @@ async def snapshot_catalog_farvater(*, max_per_country: int | None = None) -> in
     total_seen = 0
 
     async with async_session_factory() as db:
-        operator_id = await _ensure_operator(db)
+        operator_id = await ensure_operator(db)
         await db.commit()
 
     try:
-        async with _http_client() as client:
+        async with open_farvater_client() as client:
             for country_slug, iso2 in CATALOG_COUNTRIES:
                 async with async_session_factory() as db:
-                    dest_id = await _country_dest_id(db, iso2)
+                    dest_id = await country_dest_id(db, iso2)
 
                 try:
-                    hotel_paths = await _list_country_hotels(client, country_slug)
+                    hotel_paths = await list_country_hotels(client, country_slug)
                 except Exception as exc:  # noqa: BLE001 — catalog skip is non-fatal
                     log.error(
                         "farvater.catalog.country_failed",

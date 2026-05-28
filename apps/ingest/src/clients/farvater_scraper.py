@@ -33,6 +33,7 @@ from src.exceptions import (
     BootstrapDailyCapHit,
     ForbiddenByUpstream,
     RateLimitExceeded,
+    UnsupportedGenericFarvaterIngest,
 )
 from src.settings import get_settings
 
@@ -57,7 +58,7 @@ class FarvaterScraper:
         self._semaphore = asyncio.Semaphore(1)
         self._rate_lock = asyncio.Lock()
         self._last_request_at: float = 0.0
-        self._session: cffi_requests.AsyncSession | None = None
+        self._session: Any | None = None
 
     # ---------- lifecycle ----------
 
@@ -100,13 +101,10 @@ class FarvaterScraper:
         """Unsupported generic calendar endpoint for Farvater.
 
         Scheduler snapshots own the real Farvater price path. This method
-        raises NotImplementedError so the generic ingest pipeline records an
-        explicit skipped run instead of pretending calendar prices were read.
+        raises a domain exception so callers do not mistake this for a TODO
+        inside the generic ingest layer.
         """
-        raise NotImplementedError(
-            f"{self.source}: calendar XHR endpoint unknown — "
-            "run a manual HAR capture and update fetch_calendar_xhr()"
-        )
+        raise UnsupportedGenericFarvaterIngest()
 
     # ---------- private ----------
 

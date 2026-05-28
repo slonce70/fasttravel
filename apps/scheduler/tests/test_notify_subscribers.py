@@ -31,7 +31,7 @@ def test_render_peer_anomaly_uses_neighboring_hotels_copy_without_savings_claim(
 
 
 def test_render_calendar_anomaly_drops_savings_and_strikethrough() -> None:
-    # date_dip baseline is the median of neighbouring check-in dates, not a
+    # date_dip baseline is a trimmed neighbouring-date comparison, not a
     # price the subscriber would otherwise pay for THIS booking. "економія X"
     # + ~strikethrough~ would imply "save by buying now" — fix renders honest
     # comparison wording instead.
@@ -56,3 +56,75 @@ def test_render_calendar_anomaly_drops_savings_and_strikethrough() -> None:
     assert "дешевше за сусідні дати" in out
     assert "економія" not in out
     assert "~128 602 ₴~" not in out
+
+
+def test_render_percentile_uses_same_hotel_baseline_without_savings_claim() -> None:
+    row = SimpleNamespace(
+        discount_pct=18,
+        hotel_name_uk="Historical Resort",
+        hotel_stars=4,
+        destination_name="Анталія",
+        country_name="Туреччина",
+        check_in=date(2026, 7, 10),
+        nights=7,
+        meal_plan="AI",
+        price_uah=32000,
+        baseline_p50=39000,
+        detection_method="percentile",
+        country_iso2="TR",
+    )
+
+    out = _render(row, "https://fasttravel.test")
+
+    assert "нижча за звичайну" in out
+    assert "орієнтир" in out
+    assert "економія" not in out
+    assert "~39 000 ₴~" not in out
+
+
+def test_render_promo_discount_uses_operator_savings_claim() -> None:
+    row = SimpleNamespace(
+        discount_pct=37,
+        hotel_name_uk="Promo Resort",
+        hotel_stars=4,
+        destination_name="Анталія",
+        country_name="Туреччина",
+        check_in=date(2026, 7, 10),
+        nights=7,
+        meal_plan="AI",
+        price_uah=21000,
+        baseline_p50=33500,
+        detection_method="promo_discount",
+        country_iso2="TR",
+    )
+
+    out = _render(row, "https://fasttravel.test")
+
+    assert "Знижка за вашою підпискою" in out
+    assert "економія 12 500 ₴" in out
+    assert "~33 500 ₴~" in out
+    assert "Спецціна від оператора" in out
+
+
+def test_render_unknown_method_uses_neutral_baseline_without_savings_claim() -> None:
+    row = SimpleNamespace(
+        discount_pct=18,
+        hotel_name_uk="Mystery Resort",
+        hotel_stars=4,
+        destination_name="Анталія",
+        country_name="Туреччина",
+        check_in=date(2026, 7, 10),
+        nights=7,
+        meal_plan="AI",
+        price_uah=32000,
+        baseline_p50=39000,
+        detection_method="legacy_experiment",
+        country_iso2="TR",
+    )
+
+    out = _render(row, "https://fasttravel.test")
+
+    assert "орієнтир" in out
+    assert "економія" not in out
+    assert "~39 000 ₴~" not in out
+    assert "нижча за звичайну" not in out

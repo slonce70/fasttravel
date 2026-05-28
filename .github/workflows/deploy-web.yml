@@ -170,6 +170,7 @@ jobs:
         if: steps.gate.outputs.deploy == 'true' && steps.gate.outputs.smoke == 'true'
         env:
           WEB_E2E_BASE_URL: ${{ steps.gate.outputs.smoke_url }}
+          NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ steps.gate.outputs.public_telegram_url }}
         run: pnpm test:e2e
 
       - name: Upload deployed smoke artifacts

@@ -74,3 +74,25 @@ def test_scheduler_does_not_register_placeholder_jobs():
 
     job_ids = {job.id for job in scheduler.get_jobs()}
     assert "snapshot_stub" not in job_ids
+
+
+def test_post_deals_job_cannot_overlap_itself():
+    """A slow Telegram tick must not race itself and double-send a deal."""
+    from src import main
+
+    scheduler = main._build_scheduler()
+    job = scheduler.get_job("post_deals")
+
+    assert job.max_instances == 1
+    assert job.coalesce is True
+
+
+def test_notify_subscribers_job_cannot_overlap_itself():
+    """A slow personal-alert tick must not race itself and duplicate alerts."""
+    from src import main
+
+    scheduler = main._build_scheduler()
+    job = scheduler.get_job("notify_subscribers")
+
+    assert job.max_instances == 1
+    assert job.coalesce is True

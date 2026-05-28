@@ -38,6 +38,7 @@ same 0-price / empty-systemKey guard as calendar rows.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
@@ -97,7 +98,11 @@ def _canonical_meal(raw: str | None) -> str:
     if not raw:
         return "OTHER"
     key = raw.strip().lower()
-    return _MEAL_CANON.get(key, "OTHER")[:16]
+    exact = _MEAL_CANON.get(key)
+    if exact:
+        return exact[:16]
+    match = re.search(r"\b(UAI|AI|HB|BB|FB|RO)\b", key.upper())
+    return match.group(1) if match else "OTHER"
 
 
 def _parse_iso(raw: str | None) -> datetime | None:

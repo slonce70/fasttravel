@@ -47,6 +47,9 @@ class Deal(Base):
     )
     posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     telegram_msg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    telegram_claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # Provenance — added in migration 004. Used by the public /api/deals
     # endpoint and the Telegram broadcaster to hide synthetic / demo rows.
@@ -56,10 +59,10 @@ class Deal(Base):
 
     # Why detect_deals flagged this row — orthogonal to `source` which
     # is the upstream pipeline. Added in migration 013.
-    # Values: 'percentile' (same-hotel history),
-    #         'promo_discount' (promo_offers with real strike-through),
-    #         'calendar_anomaly' (same-hotel date-dip / gated stay inversion),
-    #         'peer_anomaly' (cold-start peer comparison).
+    # Values: 'calendar_anomaly' (active same-hotel date-dip detector),
+    #         'promo_discount' (historical/imported real strike-through),
+    #         'percentile' (historical same-hotel history),
+    #         'peer_anomaly' (historical/imported peer comparison).
     # NOT NULL with server_default='percentile' so historical rows get
     # the right value retroactively.
     detection_method: Mapped[str] = mapped_column(

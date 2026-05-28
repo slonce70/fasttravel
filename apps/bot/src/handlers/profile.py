@@ -18,6 +18,7 @@ from aiogram.types import (
 )
 
 from shared.publishers.broadcast import escape_markdown_v2
+from src.infra.callbacks import callback_message
 from src.infra.db import delete_all_user_data, ensure_subscriber, list_subscriptions
 
 router = Router(name="profile")
@@ -73,13 +74,21 @@ async def cb_subs(query: CallbackQuery) -> None:
     # Hand off to the subscribe handler so user sees the same UX
     from src.handlers.subscribe import show_subscriptions
 
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     await query.answer()
-    await show_subscriptions(query.message)
+    await show_subscriptions(message)
 
 
 @router.callback_query(F.data == "prof:delete")
 async def cb_delete_confirm(query: CallbackQuery) -> None:
-    await query.message.edit_text(
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
+    await message.edit_text(
         "🗑 *Видалити всі дані\\?*\n\n" "Це безповоротно видалить ваш профіль і всі підписки\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=_confirm_delete_kb(),
@@ -89,7 +98,11 @@ async def cb_delete_confirm(query: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "prof:delete:no")
 async def cb_delete_no(query: CallbackQuery) -> None:
-    await query.message.edit_text(
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
+    await message.edit_text(
         "Скасовано\\. Дані не зачіпали\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
     )
@@ -99,8 +112,10 @@ async def cb_delete_no(query: CallbackQuery) -> None:
 @router.callback_query(F.data == "prof:delete:yes")
 async def cb_delete_yes(query: CallbackQuery) -> None:
     await delete_all_user_data(query.from_user.id)
-    await query.message.edit_text(
-        "✅ Всі дані видалено\\. Дякуємо, що були з нами\\!",
-        parse_mode=ParseMode.MARKDOWN_V2,
-    )
+    message = callback_message(query)
+    if message is not None:
+        await message.edit_text(
+            "✅ Всі дані видалено\\. Дякуємо, що були з нами\\!",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
     await query.answer("Готово")

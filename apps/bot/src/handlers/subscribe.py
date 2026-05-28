@@ -25,6 +25,7 @@ from aiogram.types import (
 
 from shared.publishers.broadcast import escape_markdown_v2
 from src.infra.api_client import ApiError, get_destinations
+from src.infra.callbacks import callback_int_tail, callback_message, callback_tail
 from src.infra.db import (
     add_subscription,
     delete_subscription,
@@ -54,12 +55,12 @@ def _format_stars(value: int | None) -> str:
 def _render_subscriptions(subs: list[dict[str, Any]]) -> str:
     if not subs:
         return (
-            "🔔 *Підписки на знижки*\n\n"
+            "🔔 *Підписки на варіанти*\n\n"
             "_У вас ще немає активних підписок\\._\n\n"
             "Натисніть «➕ Додати підписку», щоб отримувати персональні "
             "сповіщення про падіння цін за вашими критеріями\\."
         )
-    lines = ["🔔 *Підписки на знижки*", ""]
+    lines = ["🔔 *Підписки на варіанти*", ""]
     for i, sub in enumerate(subs, 1):
         iso = sub["country_iso2"]
         flag = country_emoji(iso)
@@ -117,13 +118,17 @@ async def cmd_subscribe(message: Message) -> None:
 @router.callback_query(F.data == "sub:add")
 async def cb_add(query: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     try:
         destinations = await get_destinations()
     except ApiError:
         await query.answer("Сервіс недоступний", show_alert=False)
         return
     await state.set_state(SubscribeState.country)
-    await query.message.edit_text(
+    await message.edit_text(
         "*🔔 Нова підписка*\n\nКраїна\\?",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=countries_kb(destinations, callback_prefix="subc"),
@@ -133,10 +138,14 @@ async def cb_add(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("subc:"), SubscribeState.country)
 async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
-    iso = (query.data or "").split(":", 1)[1]
+    iso = callback_tail(query.data, "subc:") or ""
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     if iso == "cancel":
         await state.clear()
-        await query.message.edit_text("Скасовано\\.")
+        await message.edit_text("Скасовано\\.")
         await query.answer()
         return
     name = country_name_uk(iso)
@@ -157,7 +166,7 @@ async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
             [InlineKeyboardButton(text="◀ Назад", callback_data="subb:back")],
         ]
     )
-    await query.message.edit_text(
+    await message.edit_text(
         f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · максимальний бюджет\\? 💰",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=kb,
@@ -167,7 +176,11 @@ async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("subb:"), SubscribeState.budget)
 async def cb_budget(query: CallbackQuery, state: FSMContext) -> None:
-    value = (query.data or "").split(":", 1)[1]
+    value = callback_tail(query.data, "subb:") or ""
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     if value == "back":
         try:
             destinations = await get_destinations()
@@ -175,7 +188,7 @@ async def cb_budget(query: CallbackQuery, state: FSMContext) -> None:
             await query.answer("Сервіс недоступний")
             return
         await state.set_state(SubscribeState.country)
-        await query.message.edit_text(
+        await message.edit_text(
             "*🔔 Нова підписка*\n\nКраїна\\?",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=countries_kb(destinations, callback_prefix="subc"),
@@ -183,7 +196,10 @@ async def cb_budget(query: CallbackQuery, state: FSMContext) -> None:
         await query.answer()
         return
 
-    max_price: int | None = None if value == "any" else int(value)
+    max_price = None if value == "any" else callback_int_tail(query.data, "subb:")
+    if value != "any" and max_price is None:
+        await query.answer()
+        return
     await state.update_data(max_price_uah=max_price)
     await state.set_state(SubscribeState.stars)
     kb = InlineKeyboardMarkup(
@@ -197,7 +213,7 @@ async def cb_budget(query: CallbackQuery, state: FSMContext) -> None:
             [InlineKeyboardButton(text="◀ Назад", callback_data="subs:back")],
         ]
     )
-    await query.message.edit_text(
+    await message.edit_text(
         "*Мінімальна зірковість\\?* ⭐",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=kb,
@@ -207,7 +223,11 @@ async def cb_budget(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("subs:"), SubscribeState.stars)
 async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
-    value = (query.data or "").split(":", 1)[1]
+    value = callback_tail(query.data, "subs:") or ""
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     if value == "back":
         data = await state.get_data()
         iso = data.get("country", "")
@@ -227,7 +247,7 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
                 [InlineKeyboardButton(text="◀ Назад", callback_data="subb:back")],
             ]
         )
-        await query.message.edit_text(
+        await message.edit_text(
             f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · максимальний бюджет\\? 💰",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=kb,
@@ -235,7 +255,10 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
         await query.answer()
         return
 
-    min_stars: int | None = None if value == "any" else int(value)
+    min_stars = None if value == "any" else callback_int_tail(query.data, "subs:")
+    if value != "any" and min_stars is None:
+        await query.answer()
+        return
     data = await state.get_data()
     chat_id = query.from_user.id
 
@@ -250,7 +273,7 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
 
     subs = await list_subscriptions(chat_id)
-    await query.message.edit_text(
+    await message.edit_text(
         "✅ *Підписку створено\\!*\n\n"
         "Ми надішлемо вам особисте повідомлення, коли знайдемо тур, що "
         "відповідає цим критеріям \\(і не настирливі сповіщення\\)\\.\n\n"
@@ -268,20 +291,21 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("sub:del:"))
 async def cb_delete(query: CallbackQuery) -> None:
-    try:
-        sub_id = int((query.data or "").split(":", 2)[2])
-    except (IndexError, ValueError):
+    sub_id = callback_int_tail(query.data, "sub:del:")
+    if sub_id is None:
         await query.answer()
         return
     chat_id = query.from_user.id
     ok = await delete_subscription(chat_id, sub_id)
     if ok:
         subs = await list_subscriptions(chat_id)
-        await query.message.edit_text(
-            _render_subscriptions(subs),
-            parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=_subs_kb(subs),
-        )
+        message = callback_message(query)
+        if message is not None:
+            await message.edit_text(
+                _render_subscriptions(subs),
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=_subs_kb(subs),
+            )
         await query.answer("Підписку видалено")
     else:
         await query.answer("Не знайдено")

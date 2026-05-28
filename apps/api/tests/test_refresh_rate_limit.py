@@ -7,7 +7,9 @@ client can fill at most 10 queue slots per hour.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from collections.abc import Iterator
 
 import pytest
 from httpx import AsyncClient
@@ -16,6 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infra.limiter import limiter
 from src.routers import hotels as hotels_router
+from src.services.refresh_queue import (
+    REFRESH_QUEUE_KEY,
+    REFRESH_QUEUE_MAX_LEN,
+    QueueFullError,
+    enqueue_refresh,
+)
 
 
 class _FakeRedis:
@@ -38,10 +46,38 @@ class _FakeRedis:
         self.lists.setdefault(key, []).insert(0, value)
         return len(self.lists[key])
 
+    async def eval(self, _script: str, _numkeys: int, key: str, cap: str, value: str) -> list[int]:
+        queue = self.lists.setdefault(key, [])
+        if len(queue) >= int(cap):
+            return [0, len(queue)]
+        queue.insert(0, value)
+        return [1, len(queue)]
+
     async def delete(self, key: str) -> int:
         existed = key in self.keys
         self.keys.pop(key, None)
         return int(existed)
+
+
+class _RacingCapRedis(_FakeRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self.lists[REFRESH_QUEUE_KEY] = ["existing"] * (REFRESH_QUEUE_MAX_LEN - 1)
+        self._eval_lock = asyncio.Lock()
+        self.deleted_keys: list[str] = []
+
+    async def llen(self, key: str) -> int:
+        if key == REFRESH_QUEUE_KEY:
+            return REFRESH_QUEUE_MAX_LEN - 1
+        return await super().llen(key)
+
+    async def eval(self, _script: str, _numkeys: int, key: str, cap: str, value: str) -> list[int]:
+        async with self._eval_lock:
+            return await super().eval(_script, _numkeys, key, cap, value)
+
+    async def delete(self, key: str) -> int:
+        self.deleted_keys.append(key)
+        return await super().delete(key)
 
 
 class _FakeRefreshResult:
@@ -50,12 +86,12 @@ class _FakeRefreshResult:
 
 
 class _FakeRefreshSession:
-    async def execute(self, *_args, **_kwargs) -> _FakeRefreshResult:
+    async def execute(self, *_args: object, **_kwargs: object) -> _FakeRefreshResult:
         return _FakeRefreshResult()
 
 
 @pytest.fixture(autouse=True)
-def _reset_limiter():
+def _reset_limiter() -> Iterator[None]:
     """Each test gets a clean slowapi storage so the 10/hour bucket starts
     empty. slowapi's in-memory backend persists state across the FastAPI
     app instance otherwise, leaking 429s between tests."""
@@ -167,3 +203,27 @@ async def test_refresh_custom_nights_queues_exact_duration_with_separate_lock(
     payloads = [json.loads(item) for item in redis.lists[hotels_router.REFRESH_QUEUE_KEY]]
     assert payloads[0]["requested_nights"] == [15]
     assert "requested_nights" not in payloads[1]
+
+
+@pytest.mark.asyncio
+async def test_refresh_queue_cap_is_enforced_atomically_under_concurrency() -> None:
+    redis = _RacingCapRedis()
+
+    async def enqueue(hotel_id: int) -> bool:
+        try:
+            await enqueue_refresh(
+                redis,
+                hotel_id=hotel_id,
+                farvater_key=str(800000 + hotel_id),
+                trigger="test",
+            )
+        except QueueFullError:
+            return False
+        return True
+
+    results = await asyncio.gather(enqueue(101), enqueue(102))
+
+    assert results.count(True) == 1
+    assert results.count(False) == 1
+    assert len(redis.lists[REFRESH_QUEUE_KEY]) == REFRESH_QUEUE_MAX_LEN
+    assert len(redis.deleted_keys) == 1

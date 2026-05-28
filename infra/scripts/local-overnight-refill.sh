@@ -92,8 +92,9 @@ run_stage "refresh baselines" \
   docker compose run --rm --no-deps scheduler \
   python -c 'import asyncio; from src.jobs.refresh_baselines import refresh_baselines; print(asyncio.run(refresh_baselines()))'
 
-run_stage "cold-start deal detection without Telegram posting" \
-  bash -lc "docker compose exec -T redis redis-cli SET flag:cold_start true && docker compose run --rm --no-deps scheduler python -c 'import asyncio; from src.jobs.detect_deals import detect_deals; print(asyncio.run(detect_deals()))'"
+run_stage "date-dip deal detection without Telegram posting" \
+  docker compose run --rm --no-deps scheduler \
+  python -c 'import asyncio; from src.jobs.detect_deals import detect_deals; print(asyncio.run(detect_deals()))'
 
 run_stage "final counts" \
   docker compose exec -T postgres psql -U fasttravel -d fasttravel -c \

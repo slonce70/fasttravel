@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+const telegramChannelUrl = process.env.NEXT_PUBLIC_TELEGRAM_CHANNEL_URL ?? 'https://t.me/testtyhhh';
 const browserErrorsByPage = new WeakMap<object, string[]>();
 
 test.beforeAll(async ({ request }) => {
@@ -28,8 +29,8 @@ test.afterEach(async ({ page }) => {
 test('Telegram page links to the configured public channel', async ({ page }) => {
   await page.goto('/telegram');
 
-  await expect(page).toHaveTitle(/Telegram-канал з гарячими знижками/);
-  await expect(page.locator('a[href="https://t.me/testtyhhh"]')).toHaveCount(1);
+  await expect(page).toHaveTitle(/Telegram-канал з цікавими датами/);
+  await expect(page.locator(`a[href="${telegramChannelUrl}"]`)).toHaveCount(1);
 });
 
 test('search results navigate to a real hotel detail page with a price calendar', async ({

@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 from datetime import date
 from types import SimpleNamespace
@@ -27,6 +28,78 @@ def test_clean_title_uses_slug_fallback_for_farvater_boilerplate() -> None:
         _clean_title("ᐉ - Farvater Travel", "/uk/hotel/eg/golf-villas-by-rixos/")
         == "Golf Villas By Rixos"
     )
+
+
+def test_snapshot_farvater_keeps_legacy_catalog_helper_imports_compatible() -> None:
+    from src.clients import farvater_catalog as catalog
+
+    legacy = importlib.import_module("src.jobs.snapshot_farvater")
+
+    assert legacy._clean_title is catalog.clean_title
+    assert legacy._extract_hotel_name is catalog.extract_hotel_name
+    assert legacy._make_slug is catalog.make_slug
+    assert legacy._list_country_hotels is catalog.list_country_hotels
+    assert legacy._list_sitemap_hotels is catalog.list_sitemap_hotels
+
+
+def test_snapshot_farvater_keeps_legacy_hotel_upsert_imports_compatible() -> None:
+    from src.services import hotel_upsert
+
+    legacy = importlib.import_module("src.jobs.snapshot_farvater")
+
+    assert legacy.HotelMeta is hotel_upsert.HotelMeta
+    assert legacy._ensure_operator is hotel_upsert.ensure_operator
+    assert legacy._country_dest_id is hotel_upsert.country_dest_id
+    assert legacy._upsert_hotel is hotel_upsert.upsert_hotel
+    assert legacy._upsert_mapping is hotel_upsert.upsert_mapping
+
+
+def test_snapshot_farvater_keeps_legacy_price_insert_imports_compatible() -> None:
+    from src.services import price_insert
+
+    legacy = importlib.import_module("src.jobs.snapshot_farvater")
+
+    assert legacy.PriceRow is price_insert.PriceRow
+    assert legacy._dedup_existing is price_insert.dedup_existing
+    assert legacy._insert_prices is price_insert.insert_prices
+
+
+def test_snapshot_farvater_keeps_legacy_price_state_imports_compatible() -> None:
+    from src.services import price_state
+
+    legacy = importlib.import_module("src.jobs.snapshot_farvater")
+
+    assert legacy._mark_priced is price_state.mark_priced
+    assert legacy._mark_unpriced is price_state.mark_unpriced
+    assert legacy._decay_active_prices is price_state.decay_active_prices
+
+
+def test_snapshot_farvater_keeps_legacy_calendar_imports_compatible() -> None:
+    from src.clients import farvater_calendar
+
+    legacy = importlib.import_module("src.jobs.snapshot_farvater")
+
+    assert legacy.CALENDAR_DATE_SHIFT_DAYS == farvater_calendar.CALENDAR_DATE_SHIFT_DAYS
+    assert legacy.NIGHTS == farvater_calendar.NIGHTS
+    assert legacy._fetch_calendar is farvater_calendar.fetch_calendar
+
+
+def test_snapshot_farvater_keeps_legacy_hotel_page_imports_compatible() -> None:
+    from src.clients import farvater_hotel_page
+
+    legacy = importlib.import_module("src.jobs.snapshot_farvater")
+
+    assert legacy._fetch_hotel_meta is farvater_hotel_page.fetch_hotel_meta
+
+
+def test_snapshot_farvater_keeps_legacy_target_imports_compatible() -> None:
+    from src.services import snapshot_targets
+
+    legacy = importlib.import_module("src.jobs.snapshot_farvater")
+
+    assert legacy._PRICE_REFRESH_TARGETS_SQL is snapshot_targets.PRICE_REFRESH_TARGETS_SQL
+    assert legacy._path_from_slug is snapshot_targets.path_from_slug
+    assert legacy._refresh_targets is snapshot_targets.refresh_targets
 
 
 def test_snapshot_collects_expanded_scheduled_nights() -> None:
@@ -164,7 +237,7 @@ async def test_fetch_hotel_meta_treats_404_as_expected_stale_url(monkeypatch) ->
         def warning(self, event: str, **kwargs):  # type: ignore[no-untyped-def]
             events.append((event, kwargs))
 
-    module = importlib.import_module("src.jobs.snapshot_farvater")
+    module = importlib.import_module("src.clients.farvater_hotel_page")
     monkeypatch.setattr(module, "log", _FakeLog())
 
     result = await _fetch_hotel_meta(_NotFoundClient(), "/uk/hotel/tr/stale/", "TR")
@@ -208,22 +281,8 @@ async def test_snapshot_uses_default_country_cap_when_env_missing(monkeypatch) -
         async def commit(self) -> None:
             return None
 
-    class _FakeConn:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_exc: object) -> None:
-            return None
-
-        async def execution_options(self, **_kwargs):  # type: ignore[no-untyped-def]
-            return self
-
-        async def execute(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
-            return None
-
-    class _FakeEngine:
-        def connect(self):
-            return _FakeConn()
+    async def fake_refresh_price_views(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return {"current_prices": "concurrent", "hotel_calendar_prices": "concurrent"}
 
     module = importlib.import_module("src.jobs.snapshot_farvater")
     monkeypatch.delenv("FT_SNAPSHOT_MAX_HOTELS_PER_COUNTRY", raising=False)
@@ -232,11 +291,85 @@ async def test_snapshot_uses_default_country_cap_when_env_missing(monkeypatch) -
     monkeypatch.setattr(module, "_refresh_targets", fake_refresh_targets)
     monkeypatch.setattr(module, "_http_client", lambda: _FakeClient())
     monkeypatch.setattr(module, "_record_run", fake_record_run)
-    monkeypatch.setattr("src.infra.db.async_engine", _FakeEngine())
+    monkeypatch.setattr(module, "refresh_price_views", fake_refresh_price_views)
 
     await snapshot_farvater(max_runtime_minutes=1)
 
     assert captured["max_per_country"] == DEFAULT_MAX_HOTELS_PER_COUNTRY
+
+
+@pytest.mark.asyncio
+async def test_snapshot_marks_run_partial_when_hotel_tasks_error(monkeypatch) -> None:
+    module = importlib.import_module("src.jobs.snapshot_farvater")
+    recorded: list[tuple[str, int, str]] = []
+    refresh_calls = 0
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+        async def execute(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(scalar=lambda: 0)
+
+    async def fake_ensure_operator(_db):  # type: ignore[no-untyped-def]
+        return 18
+
+    async def fake_refresh_targets(_db, _iso_filter, _max_per_country):  # type: ignore[no-untyped-def]
+        return [
+            ("/uk/hotel/tr/live-one/", "TR", 101, "45175"),
+            ("/uk/hotel/tr/live-two/", "TR", 102, "45176"),
+        ]
+
+    async def fake_country_dest_id(_db, _iso2):  # type: ignore[no-untyped-def]
+        return 7
+
+    async def fake_process_hotel(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("transient Farvater calendar fetch failed")
+
+    async def fake_refresh_price_views(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return {"current_prices": "concurrent", "hotel_calendar_prices": "concurrent"}
+
+    async def fake_record_run(
+        _db,
+        _operator_id,
+        status,
+        rows_inserted,
+        *,
+        error="",
+        started_at=None,
+    ):  # type: ignore[no-untyped-def]
+        recorded.append((status, rows_inserted, error))
+
+    monkeypatch.setattr(module, "CATALOG_COUNTRIES", [("Turkey", "TR")])
+    monkeypatch.setattr(module, "async_session_factory", lambda: _FakeSession())
+    monkeypatch.setattr(module, "_ensure_operator", fake_ensure_operator)
+    monkeypatch.setattr(module, "_refresh_targets", fake_refresh_targets)
+    monkeypatch.setattr(module, "_country_dest_id", fake_country_dest_id)
+    monkeypatch.setattr(module, "_process_hotel", fake_process_hotel)
+    monkeypatch.setattr(module, "_http_client", lambda: _FakeClient())
+    monkeypatch.setattr(module, "refresh_price_views", fake_refresh_price_views)
+    monkeypatch.setattr(module, "_record_run", fake_record_run)
+
+    inserted = await snapshot_farvater(max_hotels_per_country=2)
+
+    assert inserted == 0
+    assert recorded == [("partial", 0, "hotel_task_errors=2")]
+    assert refresh_calls == 0
 
 
 def test_snapshot_has_no_extra_request_sleep_by_default(monkeypatch) -> None:
@@ -286,12 +419,56 @@ async def test_refresh_targets_excludes_inactive_long_tail_hotels() -> None:
 
     assert targets == [
         ("/uk/hotel/tr/active-hotel/", "TR", 1, "101"),
+        ("/uk/hotel/tr/no-inventory/", "TR", 2, "102"),
         ("/uk/hotel/eg/never-priced/", "EG", 3, "103"),
     ]
 
 
 @pytest.mark.asyncio
-async def test_mark_unpriced_removes_stale_active_hotel_from_refresh_cohort() -> None:
+async def test_process_hotel_stamps_dead_hotel_page_as_unpriced(monkeypatch) -> None:
+    module = importlib.import_module("src.jobs.snapshot_farvater")
+    stamped: list[int] = []
+    commits = 0
+
+    class _FakeSession:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            nonlocal commits
+            commits += 1
+
+    async def fake_fetch_hotel_meta(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return None
+
+    async def fake_mark_unpriced(_db, hotel_db_id):  # type: ignore[no-untyped-def]
+        stamped.append(hotel_db_id)
+
+    monkeypatch.setattr(module, "PER_REQUEST_DELAY_S", 0)
+    monkeypatch.setattr(module, "_fetch_hotel_meta", fake_fetch_hotel_meta)
+    monkeypatch.setattr(module, "_mark_unpriced", fake_mark_unpriced)
+    monkeypatch.setattr(module, "async_session_factory", lambda: _FakeSession())
+
+    inserted = await module._process_hotel(
+        object(),
+        "/uk/hotel/tr/dead-url/",
+        "TR",
+        18,
+        None,
+        asyncio.Semaphore(1),
+        hotel_db_id=123,
+    )
+
+    assert inserted == 0
+    assert stamped == [123]
+    assert commits == 1
+
+
+@pytest.mark.asyncio
+async def test_mark_unpriced_records_probe_without_blacklisting_future_reprobe() -> None:
     class _FakeSession:
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict]] = []

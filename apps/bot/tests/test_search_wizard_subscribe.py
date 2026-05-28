@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,16 +22,19 @@ def test_results_header_pluralizes_tours() -> None:
 
 
 class FakeState:
-    def __init__(self, data: dict) -> None:
+    def __init__(self, data: dict[str, Any]) -> None:
         self.data = data
 
-    async def get_data(self) -> dict:
+    async def get_data(self) -> dict[str, Any]:
         return dict(self.data)
 
     async def update_data(self, *args, **kwargs) -> None:
         if args:
             self.data.update(args[0])
         self.data.update(kwargs)
+
+    async def set_state(self, state) -> None:
+        self.data["state"] = state
 
 
 @pytest.mark.asyncio
@@ -46,6 +50,7 @@ async def test_results_subscribe_creates_real_filter_and_hides_button(monkeypatc
         message=message,
         answer=AsyncMock(),
     )
+    monkeypatch.setattr(search_wizard, "callback_message", lambda _query: message)
     state = FakeState(
         {
             "country": "TR",
@@ -91,3 +96,22 @@ async def test_results_subscribe_creates_real_filter_and_hides_button(monkeypatc
         if button.callback_data
     ]
     assert "res:subscribe" not in callbacks
+
+
+@pytest.mark.asyncio
+async def test_search_nights_ignores_malformed_callback_without_mutating_state(monkeypatch) -> None:
+    message = SimpleNamespace(edit_text=AsyncMock())
+    query = SimpleNamespace(
+        data="n:not-a-number",
+        message=message,
+        answer=AsyncMock(),
+    )
+    monkeypatch.setattr(search_wizard, "callback_message", lambda _query: message)
+    state = FakeState({"country": "TR"})
+
+    await search_wizard.cb_nights(query, state)
+
+    assert "nights" not in state.data
+    assert "state" not in state.data
+    message.edit_text.assert_not_awaited()
+    query.answer.assert_awaited_once_with()

@@ -8,6 +8,9 @@ DB calls outside of subscribe / profile flows.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -121,7 +124,7 @@ async def add_subscription(
         return new_id
 
 
-async def list_subscriptions(chat_id: int) -> list[dict]:
+async def list_subscriptions(chat_id: int) -> list[dict[str, Any]]:
     from sqlalchemy import text
 
     async with get_session_factory()() as db:
@@ -157,7 +160,7 @@ async def delete_subscription(chat_id: int, sub_id: int) -> bool:
             {"chat_id": chat_id, "id": sub_id},
         )
         await db.commit()
-        return result.rowcount > 0
+        return cast("CursorResult[Any]", result).rowcount > 0
 
 
 async def delete_all_user_data(chat_id: int) -> None:

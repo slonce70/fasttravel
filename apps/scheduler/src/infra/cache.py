@@ -1,35 +1,33 @@
 """Async Redis client factory.
 
-Used by detect_deals to read the `flag:cold_start` feature flag and by
-post_deals for the (future) per-hotel anti-spam dedup key. Kept
-process-local — no shared state with apps/api at runtime.
+Used by scheduler jobs that coordinate through Redis, such as snapshot queue
+workers and Farvater sweep locks. Kept process-local — no shared state with
+apps/api at runtime.
 """
 
 from __future__ import annotations
 
-import redis.asyncio as aioredis
+from collections.abc import Callable
+from typing import Any
 
+from shared.infra.redis_client import close_redis as close_redis_client
+from shared.infra.redis_client import get_redis_factory
 from src.config import get_settings
 
-_client: aioredis.Redis | None = None
+_get_client: Callable[[], Any] | None = None
 
 
-def get_redis() -> aioredis.Redis:
+def get_redis() -> Any:
     """Lazy-init shared async Redis client."""
-    global _client
-    if _client is None:
+    global _get_client
+    if _get_client is None:
         settings = get_settings()
-        _client = aioredis.from_url(
-            settings.redis_url,
-            encoding="utf-8",
-            decode_responses=True,
-            health_check_interval=30,
-        )
-    return _client
+        _get_client = get_redis_factory(settings.redis_url)
+    return _get_client()
 
 
 async def close_redis() -> None:
-    global _client
-    if _client is not None:
-        await _client.aclose()
-        _client = None
+    global _get_client
+    if _get_client is not None:
+        await close_redis_client(_get_client())
+        _get_client = None

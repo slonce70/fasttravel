@@ -26,9 +26,11 @@ from aiogram.types import (
 )
 
 from shared.publishers.broadcast import escape_markdown_v2
+from shared.site_urls import public_hotel_url
 from shared.text_uk import plural_uk
 from src.config import get_settings
 from src.infra.api_client import ApiError, get_destinations, search_hotels
+from src.infra.callbacks import callback_int_tail, callback_message, callback_tail
 from src.infra.db import add_subscription, ensure_subscriber
 from src.infra.logging import get_logger
 from src.keyboards.countries import countries_kb, country_emoji, country_name_uk
@@ -61,12 +63,7 @@ def _hotel_site_url(slug: str | None, medium: str = "wizard") -> str | None:
     if not slug:
         return None
     settings = get_settings()
-    if not settings.public_site_url:
-        return None
-    return (
-        f"{settings.public_site_url.rstrip('/')}/hotels/{slug}"
-        f"?utm_source=tg_bot&utm_medium={medium}"
-    )
+    return public_hotel_url(settings.public_site_url, slug, medium=medium)
 
 
 def _result_link_rows(items: list[dict[str, Any]]) -> list[list[InlineKeyboardButton]]:
@@ -120,17 +117,21 @@ async def cmd_search(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("cc:"), SearchState.choosing_country)
 async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
-    iso = query.data.split(":", 1)[1] if query.data else ""
+    iso = callback_tail(query.data, "cc:") or ""
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     if iso == "cancel":
         await state.clear()
-        await query.message.edit_text("Пошук скасовано\\.")
+        await message.edit_text("Пошук скасовано\\.")
         await query.answer()
         return
 
     name = country_name_uk(iso)
     await state.update_data(country=iso, country_emoji=country_emoji(iso), country_name=name)
     await state.set_state(SearchState.choosing_nights)
-    await query.message.edit_text(
+    await message.edit_text(
         f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · скільки ночей\\? 🌙",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=nights_kb(),
@@ -140,14 +141,21 @@ async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("n:"), SearchState.choosing_nights)
 async def cb_nights(query: CallbackQuery, state: FSMContext) -> None:
-    value = query.data.split(":", 1)[1] if query.data else ""
+    value = callback_tail(query.data, "n:") or ""
     if value == "back":
         await _go_back_to_country(query, state)
         return
-    nights = None if value == "any" else int(value)
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
+    nights = None if value == "any" else callback_int_tail(query.data, "n:")
+    if value != "any" and nights is None:
+        await query.answer()
+        return
     await state.update_data(nights=nights)
     await state.set_state(SearchState.choosing_when)
-    await query.message.edit_text(
+    await message.edit_text(
         "*Коли заїзд\\?* 📅",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=when_kb(),
@@ -165,10 +173,14 @@ _WHEN_OFFSETS_DAYS: dict[str, int | None] = {
 
 @router.callback_query(F.data.startswith("w:"), SearchState.choosing_when)
 async def cb_when(query: CallbackQuery, state: FSMContext) -> None:
-    value = query.data.split(":", 1)[1] if query.data else ""
+    value = callback_tail(query.data, "w:") or ""
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     if value == "back":
         await state.set_state(SearchState.choosing_nights)
-        await query.message.edit_text(
+        await message.edit_text(
             "*Скільки ночей\\?* 🌙",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=nights_kb(),
@@ -180,7 +192,7 @@ async def cb_when(query: CallbackQuery, state: FSMContext) -> None:
     check_in = (date.today() + timedelta(days=offset)).isoformat() if offset else None
     await state.update_data(check_in=check_in, when_bucket=value)
     await state.set_state(SearchState.choosing_budget)
-    await query.message.edit_text(
+    await message.edit_text(
         "*Який бюджет на людину\\?* 💰",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=budget_kb(),
@@ -190,10 +202,14 @@ async def cb_when(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("b:"), SearchState.choosing_budget)
 async def cb_budget(query: CallbackQuery, state: FSMContext) -> None:
-    value = query.data.split(":", 1)[1] if query.data else ""
+    value = callback_tail(query.data, "b:") or ""
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     if value == "back":
         await state.set_state(SearchState.choosing_when)
-        await query.message.edit_text(
+        await message.edit_text(
             "*Коли заїзд\\?* 📅",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=when_kb(),
@@ -206,10 +222,13 @@ async def cb_budget(query: CallbackQuery, state: FSMContext) -> None:
     elif value == "premium":
         price_max = None
     else:
-        price_max = int(value)
+        price_max = callback_int_tail(query.data, "b:")
+        if price_max is None:
+            await query.answer()
+            return
     await state.update_data(price_max=price_max, budget_bucket=value)
     await state.set_state(SearchState.choosing_meal)
-    await query.message.edit_text(
+    await message.edit_text(
         "*Тип харчування\\?* 🍽",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=meal_kb(),
@@ -219,10 +238,14 @@ async def cb_budget(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("m:"), SearchState.choosing_meal)
 async def cb_meal(query: CallbackQuery, state: FSMContext) -> None:
-    value = query.data.split(":", 1)[1] if query.data else ""
+    value = callback_tail(query.data, "m:") or ""
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     if value == "back":
         await state.set_state(SearchState.choosing_budget)
-        await query.message.edit_text(
+        await message.edit_text(
             "*Який бюджет на людину\\?* 💰",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=budget_kb(),
@@ -233,7 +256,7 @@ async def cb_meal(query: CallbackQuery, state: FSMContext) -> None:
     meal_plan = None if value == "any" else value
     await state.update_data(meal_plan=meal_plan)
     await state.set_state(SearchState.choosing_stars)
-    await query.message.edit_text(
+    await message.edit_text(
         "*Категорія готелю\\?* ⭐",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=stars_kb(),
@@ -243,10 +266,14 @@ async def cb_meal(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("s:"), SearchState.choosing_stars)
 async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
-    value = query.data.split(":", 1)[1] if query.data else ""
+    value = callback_tail(query.data, "s:") or ""
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     if value == "back":
         await state.set_state(SearchState.choosing_meal)
-        await query.message.edit_text(
+        await message.edit_text(
             "*Тип харчування\\?* 🍽",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=meal_kb(),
@@ -254,7 +281,10 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
         await query.answer()
         return
 
-    stars_min = None if value == "any" else int(value)
+    stars_min = None if value == "any" else callback_int_tail(query.data, "s:")
+    if value != "any" and stars_min is None:
+        await query.answer()
+        return
     await state.update_data(stars_min=stars_min)
     await state.set_state(SearchState.viewing_results)
     await _show_results(query, state, edit=True)
@@ -283,13 +313,17 @@ async def _show_results(
     edit: bool,
     page_override: int | None = None,
 ) -> None:
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     data = await state.get_data()
     cached = data.get(_RESULTS_KEY)
     if not cached:
         try:
             payload = await _fetch_results(data)
         except ApiError:
-            await query.message.answer(
+            await message.answer(
                 "Сервіс пошуку тимчасово недоступний\\. Спробуйте знову через хвилину\\.",
                 reply_markup=main_menu_kb(),
             )
@@ -302,7 +336,7 @@ async def _show_results(
     total = cached.get("total", len(items))
 
     if not items:
-        await query.message.edit_text(
+        await message.edit_text(
             "Нічого не знайдено за цими фільтрами\\. Спробуйте інші параметри\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=results_actions_kb(
@@ -339,7 +373,7 @@ async def _show_results(
 
     if edit:
         try:
-            await query.message.edit_text(
+            await message.edit_text(
                 text,
                 parse_mode=ParseMode.MARKDOWN_V2,
                 disable_web_page_preview=True,
@@ -348,7 +382,7 @@ async def _show_results(
         except Exception as exc:  # noqa: BLE001
             log.debug("results.edit_skip", error=str(exc))
     else:
-        await query.message.answer(
+        await message.answer(
             text,
             parse_mode=ParseMode.MARKDOWN_V2,
             disable_web_page_preview=True,
@@ -372,8 +406,12 @@ async def cb_next(query: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "res:restart", SearchState.viewing_results)
 async def cb_restart(query: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     await query.answer("Новий пошук…")
-    await start_wizard(query.message, state)
+    await start_wizard(message, state)
 
 
 @router.callback_query(F.data == "res:noop")
@@ -422,12 +460,13 @@ async def cb_subscribe(query: CallbackQuery, state: FSMContext) -> None:
 
     cached = data.get(_RESULTS_KEY) or {}
     items: list[dict[str, Any]] = cached.get("items", [])
-    if items and query.message:
+    message = callback_message(query)
+    if items and message is not None:
         total_pages = max(1, (len(items) + _PAGE_SIZE - 1) // _PAGE_SIZE)
         page = max(1, min(int(data.get(_PAGE_KEY, 1)), total_pages))
         start = (page - 1) * _PAGE_SIZE
         chunk = items[start : start + _PAGE_SIZE]
-        await query.message.edit_reply_markup(
+        await message.edit_reply_markup(
             reply_markup=_results_markup(
                 chunk=chunk,
                 has_prev=page > 1,
@@ -444,14 +483,18 @@ async def cb_subscribe(query: CallbackQuery, state: FSMContext) -> None:
 
 
 async def _go_back_to_country(query: CallbackQuery, state: FSMContext) -> None:
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     try:
         destinations = await get_destinations()
     except ApiError:
-        await query.message.answer("Сервіс тимчасово недоступний\\.")
+        await message.answer("Сервіс тимчасово недоступний\\.")
         await query.answer()
         return
     await state.set_state(SearchState.choosing_country)
-    await query.message.edit_text(
+    await message.edit_text(
         "*Куди летимо\\?* ✈️\n\nВиберіть країну\\:",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=countries_kb(destinations),

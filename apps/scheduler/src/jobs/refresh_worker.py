@@ -29,18 +29,20 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable
-from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from datetime import date, timedelta
 from typing import Any, cast
 
 import httpx
 from sqlalchemy import text
 
+from src.clients.farvater_calendar import CALENDAR_DATE_SHIFT_DAYS, NIGHTS, fetch_calendar
 from src.infra.cache import get_redis
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
-from src.jobs._price_validation import parse_check_in, validate_price_row
-from src.jobs.snapshot_farvater import CALENDAR_DATE_SHIFT_DAYS, NIGHTS
+from src.services.hotel_upsert import HotelMeta
+from src.services.materialized_views import refresh_price_views
+from src.services.price_insert import PriceRow, insert_prices
+from src.services.price_state import mark_priced
 
 log = get_logger(__name__)
 
@@ -51,113 +53,60 @@ CHECK_IN_OFFSETS_DAYS = [0]
 USER_AGENT = "FastTravel-RefreshWorker/1.0"
 
 
+class _HttpxCalendarClient:
+    def __init__(self, client: httpx.AsyncClient) -> None:
+        self._client = client
+
+    async def post_json(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any],
+        json: dict[str, Any],
+        extra_headers: dict[str, str],
+    ) -> dict[str, Any]:
+        response = await self._client.post(
+            url,
+            params=params,
+            json=json,
+            headers=extra_headers,
+        )
+        if response.status_code != 200:
+            return {"statusCode": response.status_code}
+        return cast(dict[str, Any], response.json())
+
+
 async def _fetch_hotel_prices(
     hotel_id: int,
     farvater_key: str,
     requested_nights: list[int] | None = None,
-) -> list[dict[str, Any]]:
+) -> list[PriceRow]:
     """Pull live price calendar with one broad Farvater request.
     Returns a list of normalised price rows ready for INSERT."""
-    all_prices: list[dict[str, Any]] = []
+    all_prices: list[PriceRow] = []
     seen: set[str] = set()
     nights_to_fetch = requested_nights or NIGHTS
     async with httpx.AsyncClient(http2=True, timeout=20) as client:
+        calendar_client = _HttpxCalendarClient(client)
         for offset in CHECK_IN_OFFSETS_DAYS:
             ci_date = date.today() + timedelta(days=offset)
-            ci = ci_date.strftime("%d.%m.%Y")
-            url = (
-                f"https://farvater.travel/uk/tour/stat/low-price-calendar/auto"
-                f"?hotelKey={farvater_key}&adults=2&ages=0&meals=all&checkIn={ci}"
+            rows = await fetch_calendar(
+                calendar_client,
+                int(farvater_key),
+                ci_date,
+                date_shift_days=CALENDAR_DATE_SHIFT_DAYS,
+                nights=nights_to_fetch,
+                user_agent=USER_AGENT,
+                payload_source="live_refresh",
+                payload_hotel_key=str(farvater_key),
             )
-            try:
-                r = await client.post(
-                    url,
-                    json={
-                        "dateShift": CALENDAR_DATE_SHIFT_DAYS,
-                        "nights": nights_to_fetch,
-                        "townFroms": "all",
-                    },
-                    headers={
-                        "User-Agent": USER_AGENT,
-                        "Accept": "application/json",
-                        "Content-Type": "application/json",
-                    },
-                )
-            except Exception as exc:  # noqa: BLE001 — single offset failure is recoverable
-                log.warning(
-                    "refresh_worker.fetch_failed",
-                    hotel_id=hotel_id,
-                    offset=offset,
-                    error=str(exc),
-                )
-                continue
-            if r.status_code != 200:
-                continue
-            try:
-                payload = r.json()
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "refresh_worker.bad_json",
-                    hotel_id=hotel_id,
-                    offset=offset,
-                    error=str(exc),
-                )
-                continue
-            if payload.get("statusCode") != 200:
-                continue
-            for w in payload["data"]["items"]:
-                n = int(w["item"]["night"])
-                for d in w["item"]["dates"]:
-                    ok, reason = validate_price_row(d)
-                    if not ok:
-                        log.warning(
-                            "refresh_worker.row_rejected",
-                            hotel_id=hotel_id,
-                            offset=offset,
-                            reason=reason,
-                        )
-                        continue
-                    sk = str(d.get("systemKey") or "")
-                    if sk in seen:
-                        continue
-                    seen.add(sk)
-                    ci_d = parse_check_in(d["date"])
-                    if ci_d is None:
-                        log.warning(
-                            "refresh_worker.row_bad_date",
-                            hotel_id=hotel_id,
-                            offset=offset,
-                            raw_date=d.get("date"),
-                        )
-                        continue
-                    all_prices.append(
-                        {
-                            "check_in": ci_d,
-                            "nights": n,
-                            "meal": (d.get("meal") or "OTHER")[:8],
-                            "room": (d.get("room") or "")[:64],
-                            "uah": int(d.get("priceUAH") or 0),
-                            "usd": int(d.get("price") or 0),
-                            "sk": sk,
-                            "raw": {
-                                "systemKey": sk,
-                                "source": "live_refresh",
-                                "hotelKey": str(farvater_key),
-                                "requestedCheckIn": ci_date.isoformat(),
-                                "requestedDateShift": CALENDAR_DATE_SHIFT_DAYS,
-                                "requestedNights": nights_to_fetch,
-                                "calendarNight": n,
-                                "offer": d,
-                            },
-                        }
-                    )
+            for row in rows:
+                if row.system_key in seen:
+                    continue
+                seen.add(row.system_key)
+                all_prices.append(row)
     return all_prices
 
-
-# 12h dedup — mirrors apps/scheduler/src/jobs/snapshot_farvater.py::_insert_prices.
-# Without this, hot-priority + user refresh + nightly snapshot inside the same
-# 12h window double-write every row and poison the price_baselines percentiles.
-DEDUP_WINDOW_HOURS = 12
 
 _DEEP_LINK_BASE_SQL = text(
     """SELECT 'https://farvater.travel/uk/hotel/'
@@ -171,7 +120,26 @@ _DEEP_LINK_BASE_SQL = text(
 )
 
 
-async def _persist_prices(hotel_id: int, prices: list[dict[str, Any]]) -> int:
+def _hotel_meta_from_deep_link_base(deep_link_base: str | None) -> HotelMeta:
+    prefix = "https://farvater.travel"
+    url_path = (deep_link_base or prefix).removeprefix(prefix)
+    parts = url_path.strip("/").split("/")
+    country_iso2 = parts[2].upper() if len(parts) >= 3 and parts[:2] == ["uk", "hotel"] else ""
+    return HotelMeta(
+        hotel_id=0,
+        url_path=url_path,
+        name="",
+        country_iso2=country_iso2,
+        photo_url="",
+        description="",
+        stars=None,
+        photos=[],
+        review_score=None,
+        review_count=0,
+    )
+
+
+async def _persist_prices(hotel_id: int, prices: list[PriceRow]) -> int:
     """Write fetched prices + refresh hotel-page MVs. Returns rows inserted.
 
     Applies the same 12h dedup as `snapshot_farvater._insert_prices` — a
@@ -189,111 +157,32 @@ async def _persist_prices(hotel_id: int, prices: list[dict[str, Any]]) -> int:
             log.error("refresh_worker.no_farvater_operator")
             return 0
         op_id = op_row[0]
-
-        # Sprint 3.3 — shared helper, room_category in tuple.
-        from src.jobs._dedup_window import existing_dedup_keys
-
-        existing_keys = await existing_dedup_keys(db, hotel_id=hotel_id, operator_id=op_id)
-        fresh = [
-            p
-            for p in prices
-            if (
-                p["check_in"],
-                p["nights"],
-                p["meal"],
-                p.get("room") or "",
-                p["uah"],
-            )
-            not in existing_keys
-        ]
-        if not fresh:
+        deep_link_base = (
+            await db.execute(_DEEP_LINK_BASE_SQL, {"id": hotel_id})
+        ).scalar() or "https://farvater.travel"
+        hotel = _hotel_meta_from_deep_link_base(deep_link_base)
+        inserted = await insert_prices(
+            db,
+            hotel_id,
+            op_id,
+            hotel,
+            prices,
+            country_iso2=hotel.country_iso2 or None,
+        )
+        if inserted == 0:
             log.info(
                 "refresh_worker.all_deduped",
                 hotel_id=hotel_id,
                 seen_in_last_12h=len(prices),
             )
             return 0
-
-        observed_at = datetime.now(UTC)
-        fx = (
-            Decimal(fresh[0]["uah"]) / Decimal(fresh[0]["usd"])
-            if fresh[0]["usd"]
-            else Decimal("41.5")
-        )
-
-        deep_link_base = (
-            await db.execute(_DEEP_LINK_BASE_SQL, {"id": hotel_id})
-        ).scalar() or "https://farvater.travel"
-
-        payload = [
-            {
-                "obs": observed_at,
-                "h": hotel_id,
-                "op": op_id,
-                "ci": p["check_in"],
-                "n": p["nights"],
-                "m": p["meal"],
-                "rm": p["room"],
-                "ad": 2,
-                "dc": "",
-                "puah": p["uah"],
-                "porig": p["usd"],
-                "cur": "USD",
-                "fx": fx,
-                # `?q=` is the farvater-internal booking-preselect param.
-                # See snapshot_farvater for the discovery trail.
-                "dl": f"{deep_link_base}?q={p['sk']}",
-                "raw": json.dumps(p["raw"], default=str),
-            }
-            for p in fresh
-        ]
-        # ON CONFLICT DO NOTHING uses uq_price_obs_natural (migration 007).
-        # The in-code 12h dedup above filters most repeats; this is the
-        # last-line guard for the rare case when two writers (snapshot_farvater
-        # + this worker) hit the same hotel at the same microsecond.
-        await db.execute(
-            text("""INSERT INTO price_observations
-                      (observed_at, hotel_id, operator_id, check_in, nights,
-                       meal_plan, room_category, adults, departure_city,
-                       price_uah, price_original, currency, fx_rate_to_uah,
-                       deep_link, raw_payload)
-                    VALUES (:obs, :h, :op, :ci, :n, :m, :rm, :ad, :dc,
-                            :puah, :porig, :cur, :fx, :dl, CAST(:raw AS jsonb))
-                    ON CONFLICT
-                      (hotel_id, operator_id, check_in, nights, meal_plan, observed_at)
-                    DO NOTHING"""),
-            payload,
-        )
         # Hotel just produced fresh prices — bump the search-gate flags.
-        await db.execute(
-            text("""UPDATE hotels
-                    SET last_priced_at = NOW(),
-                        has_active_prices = TRUE
-                    WHERE id = :id"""),
-            {"id": hotel_id},
-        )
+        await mark_priced(db, hotel_id)
         await db.commit()
 
-    # REFRESH MV CONCURRENTLY — non-blocking for ongoing reads. UNIQUE
-    # indexes on these MVs (migration 001 lines 330/357) make CONCURRENTLY
-    # legal; non-CONCURRENT here would take an AccessExclusiveLock and
-    # block every /api/hotels/{id}/calendar request, which is exactly the
-    # DoS the security audit flagged. CONCURRENTLY can't run inside a tx
-    # so we use a fresh AUTOCOMMIT connection. price_baselines stays out
-    # — baselines need the hourly batch tick to recompute coherently.
-    from src.infra.db import async_engine
+    await refresh_price_views(log_prefix="refresh_worker")
 
-    async with async_engine.connect() as raw_conn:
-        ac = await raw_conn.execution_options(isolation_level="AUTOCOMMIT")
-        try:
-            await ac.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY current_prices"))
-            await ac.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY hotel_calendar_prices"))
-        except Exception as exc:  # noqa: BLE001 — MV un-primed → fall back to plain
-            log.warning("refresh_worker.mv_refresh_fallback", error=str(exc))
-            await ac.execute(text("REFRESH MATERIALIZED VIEW current_prices"))
-            await ac.execute(text("REFRESH MATERIALIZED VIEW hotel_calendar_prices"))
-
-    return len(payload)
+    return inserted
 
 
 async def _process_job(raw: str) -> None:
@@ -313,7 +202,7 @@ async def _process_job(raw: str) -> None:
         return
     if requested_nights is not None and (
         not isinstance(requested_nights, list)
-        or not all(isinstance(n, int) and 1 <= n <= 30 for n in requested_nights)
+        or not all(type(n) is int and 1 <= n <= 30 for n in requested_nights)
     ):
         log.warning("refresh_worker.invalid_requested_nights", job=job)
         return

@@ -83,12 +83,24 @@ export function OffersList({ hotelId, date, nights, mealPlan }: OffersListProps)
   return (
     <ul className="space-y-2" aria-label="Пропозиції операторів">
       {sorted.map((offer) => (
-        <li key={`${offer.operator_id}-${offer.nights}-${offer.meal_plan}`}>
+        <li key={offerKey(offer)}>
           <OfferRow offer={offer} isCheapest={offer.price_uah === cheapest} />
         </li>
       ))}
     </ul>
   );
+}
+
+export function offerKey(offer: Offer): string {
+  return [
+    offer.operator_id,
+    offer.check_in,
+    offer.nights,
+    offer.meal_plan,
+    offer.room_category || '',
+    offer.price_uah,
+    offer.deep_link || '',
+  ].join('|');
 }
 
 function OfferRow({ offer, isCheapest }: { offer: Offer; isCheapest: boolean }) {

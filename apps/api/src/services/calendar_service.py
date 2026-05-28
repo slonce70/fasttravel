@@ -14,6 +14,7 @@ from datetime import date
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.deal_detection import DATE_DIP_POLICY, date_dip_neighbor_stats_lateral_sql
 from src.schemas.calendar import CalendarDay, OfferOut
 from src.services.meal_normalizer import raw_codes_for
 
@@ -52,58 +53,87 @@ async def get_calendar(
     MIN over per-meal-plan MIN is still a MIN — no double-counting.
     """
     if nights is not None:
-        if meal_plan is not None:
-            codes = raw_codes_for(meal_plan)
-            sql = text(
-                """
+        response_meal = (
+            "CAST(:requested_meal_plan AS VARCHAR)" if meal_plan is not None else "NULL::VARCHAR"
+        )
+        meal_filter = "AND cp.meal_plan IN :meal_codes" if meal_plan is not None else ""
+        sql = text(
+            f"""
+            WITH candidate_prices AS (
                 SELECT
-                    cp.check_in,
-                    CAST(:requested_meal_plan AS VARCHAR)                AS meal_plan,
-                    MIN(cp.price_uah)                                    AS min_price_uah,
-                    jsonb_build_object(CAST(:nights_key AS text), MIN(cp.price_uah))   AS prices_by_night,
-                    MAX(cp.observed_at)                                  AS observed_at
+                    cp.*,
+                    MAX(cp.observed_at) OVER (PARTITION BY cp.check_in) AS day_observed_at
                 FROM current_prices cp
                 WHERE cp.hotel_id = :hotel_id
                   AND cp.check_in BETWEEN :from_date AND :to_date
                   AND cp.nights = :nights
-                  AND cp.meal_plan IN :meal_codes
-                GROUP BY cp.check_in
-                ORDER BY cp.check_in
-                """
-            ).bindparams(bindparam("meal_codes", expanding=True))
-            params = {
-                "hotel_id": hotel_id,
-                "from_date": from_date,
-                "to_date": to_date,
-                "nights": nights,
-                "nights_key": str(nights),
-                "meal_codes": codes,
-                "requested_meal_plan": meal_plan,
-            }
-        else:
-            sql = text(
-                """
+                  {meal_filter}
+            ),
+            ranked_day_prices AS (
+                SELECT
+                    cp.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY cp.check_in
+                        ORDER BY cp.price_uah, cp.operator_id, cp.meal_plan,
+                                 cp.room_family, cp.room_category
+                    ) AS price_rank
+                FROM candidate_prices cp
+            ),
+            day_min AS (
+                SELECT *
+                FROM ranked_day_prices
+                WHERE price_rank = 1
+            ),
+            date_dip_candidates AS (
                 SELECT
                     cp.check_in,
-                    NULL::VARCHAR                                        AS meal_plan,
-                    MIN(cp.price_uah)                                    AS min_price_uah,
-                    jsonb_build_object(CAST(:nights_key AS text), MIN(cp.price_uah))   AS prices_by_night,
-                    MAX(cp.observed_at)                                  AS observed_at
-                FROM current_prices cp
-                WHERE cp.hotel_id = :hotel_id
-                  AND cp.check_in BETWEEN :from_date AND :to_date
-                  AND cp.nights = :nights
-                GROUP BY cp.check_in
-                ORDER BY cp.check_in
-                """
+                    cp.price_uah,
+                    hs.p50 AS baseline_p50,
+                    ROUND((1 - cp.price_uah::numeric / hs.p50) * 100, 2) AS discount_pct,
+                    hs.sample_n
+                FROM candidate_prices cp
+                {date_dip_neighbor_stats_lateral_sql(candidate_alias="cp")}
+                WHERE cp.check_in BETWEEN CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'
+                                      AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'
+                  AND cp.price_uah < hs.p50 * {DATE_DIP_POLICY.discount_multiplier_sql}
+                  AND hs.p50 - cp.price_uah >= {DATE_DIP_POLICY.min_absolute_saving_uah}
+            ),
+            best_date_dip AS (
+                SELECT DISTINCT ON (check_in)
+                    check_in,
+                    price_uah,
+                    baseline_p50,
+                    discount_pct,
+                    sample_n
+                FROM date_dip_candidates
+                ORDER BY check_in, discount_pct DESC, price_uah ASC
             )
-            params = {
-                "hotel_id": hotel_id,
-                "from_date": from_date,
-                "to_date": to_date,
-                "nights": nights,
-                "nights_key": str(nights),
-            }
+            SELECT
+                dm.check_in,
+                {response_meal} AS meal_plan,
+                dm.price_uah AS min_price_uah,
+                jsonb_build_object(CAST(:nights_key AS text), dm.price_uah) AS prices_by_night,
+                dm.day_observed_at AS observed_at,
+                bd.price_uah AS date_dip_price_uah,
+                bd.baseline_p50 AS date_dip_baseline_uah,
+                bd.discount_pct AS date_dip_discount_pct,
+                bd.sample_n AS date_dip_sample_n
+            FROM day_min dm
+            LEFT JOIN best_date_dip bd ON bd.check_in = dm.check_in
+            ORDER BY dm.check_in
+            """
+        )
+        params = {
+            "hotel_id": hotel_id,
+            "from_date": from_date,
+            "to_date": to_date,
+            "nights": nights,
+            "nights_key": str(nights),
+        }
+        if meal_plan is not None:
+            sql = sql.bindparams(bindparam("meal_codes", expanding=True))
+            params["meal_codes"] = raw_codes_for(meal_plan)
+            params["requested_meal_plan"] = meal_plan
         rows = (await session.execute(sql, params)).mappings().all()
         return [CalendarDay(**dict(row)) for row in rows]
 

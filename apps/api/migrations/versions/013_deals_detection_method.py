@@ -11,10 +11,10 @@ answer "why did detect_deals flag this row?". Those are different
 dimensions, and the May 2026 audit caught us conflating them.
 
 This migration adds `detection_method` for the "why":
-  - 'percentile'         — existing warm/cold percentile rule
-  - 'bucket_<slug>'      — promo_offers branch (e.g. 'bucket_gorjashhie-tury')
-                           introduced in Sprint 1D
-  - 'peer_anomaly'       — future Phase 2 ML detector
+  - 'calendar_anomaly'   — active same-hotel date-dip detector
+  - 'promo_discount'     — historical/imported operator strike-through promo
+  - 'percentile'         — historical same-hotel percentile rule
+  - 'peer_anomaly'       — historical/imported peer comparison
 
 Default = 'percentile' so historical deals (all detected before this
 migration ships) get the right value retroactively.
@@ -42,8 +42,8 @@ def upgrade() -> None:
             server_default="percentile",
         ),
     )
-    # Hot path: "list current bucket-based promo deals" for
-    # /api/promotions and Telegram broadcaster filtering.
+    # Hot path: public deal feeds and routing filters by detection_method
+    # while preserving historical/imported method labels.
     op.create_index(
         "ix_deals_detection_method",
         "deals",

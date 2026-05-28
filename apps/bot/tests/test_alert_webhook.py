@@ -6,9 +6,11 @@ the broadcast_deal call so a test never tries to reach Telegram.
 
 from __future__ import annotations
 
+import warnings
 from unittest.mock import AsyncMock
 
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 import src.alert_webhook as alert_webhook
@@ -29,6 +31,14 @@ def fake_bot():
     """A real-ish Bot stand-in. broadcast_deal is monkey-patched so the
     bot object's identity is all that matters."""
     return object()
+
+
+def test_build_app_uses_typed_app_keys_without_warnings(fake_bot) -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        build_app(fake_bot, channel_id="@test_channel")
+
+    assert not [w for w in caught if issubclass(w.category, web.NotAppKeyWarning)]
 
 
 @pytest.fixture
@@ -93,6 +103,22 @@ def test_format_alert_truncates_long_description() -> None:
     text = _format_alert(alert)
     assert len(text) < 1000  # well under 4096
     assert "…" in text  # truncation marker
+
+
+def test_format_alert_escapes_markdown_code_block_description() -> None:
+    alert = {
+        "status": "firing",
+        "labels": {"alertname": "BrokenMarkdown", "severity": "warning"},
+        "annotations": {
+            "summary": "s",
+            "description": r"path C:\tmp triggered `code` sample",
+        },
+    }
+
+    text = _format_alert(alert)
+
+    assert r"C:\\tmp" in text
+    assert r"\`code\`" in text
 
 
 def test_format_alert_handles_missing_fields() -> None:

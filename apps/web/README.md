@@ -38,7 +38,7 @@ Useful scripts:
 
 ```bash
 pnpm typecheck      # tsc --noEmit
-pnpm lint           # eslint via next lint
+pnpm lint           # ESLint CLI
 pnpm format         # prettier --write
 pnpm build          # next build (server runtime)
 pnpm cf:build       # OpenNext adapter → .open-next/worker.js + assets
@@ -109,10 +109,9 @@ pnpm test        # CI mode — runs once, exits
 pnpm test:watch  # dev mode
 ```
 
-Current coverage: `DealCard.test.tsx` (5 cases — headline %, savings,
-strike-through, sponsored-link disclosure, missing-field resilience).
-Add more under `src/**/*.test.tsx` — vitest config matches both
-`.test.ts` and `.test.tsx`.
+Current coverage includes `DealCard.test.tsx`, `OffersList.test.tsx`, and
+`api-client.test.ts`. Add more under `src/**/*.test.ts(x)` — vitest config
+matches both `.test.ts` and `.test.tsx`.
 
 ---
 
@@ -135,6 +134,9 @@ After `pnpm install` succeeds, sanity-check the following — they're version-se
 
 ```bash
 pnpm test:e2e:install
+docker compose up -d postgres redis
+docker compose run --rm api alembic upgrade head
+FASTTRAVEL_ALLOW_E2E_SEED=1 docker compose run --rm api python -m scripts.seed_e2e
 NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm test:e2e
 ```
 

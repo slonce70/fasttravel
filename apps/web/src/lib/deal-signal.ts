@@ -9,14 +9,14 @@ export type DealSignalCopy = {
 };
 
 export function getDealSignalCopy(method: Deal['detection_method']): DealSignalCopy {
-  switch ((method || 'percentile').toLowerCase()) {
+  switch ((method || '').trim().toLowerCase()) {
     case 'calendar_anomaly':
       return {
         badgeIcon: '📉',
         badgeVariant: 'success',
         reason: 'Ця дата значно дешевша за сусідні у цьому готелі',
         baselineLabel: 'інші дати',
-        strikeBaseline: true,
+        strikeBaseline: false,
       };
     case 'promo_discount':
       return {
@@ -30,17 +30,35 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
       return {
         badgeIcon: '📊',
         badgeVariant: 'neutral',
-        reason: 'Дешевше за аналогічні готелі в цьому регіоні',
+        reason: 'Дешевше за схожі готелі в цьому регіоні',
         baselineLabel: 'орієнтир схожих',
         strikeBaseline: false,
       };
-    default:
+    case 'percentile':
       return {
         badgeIcon: '📊',
         badgeVariant: 'brand',
         reason: 'Ціна нижча за звичайну для цього готелю',
         baselineLabel: 'зазвичай',
-        strikeBaseline: true,
+        strikeBaseline: false,
+      };
+    case '':
+    default:
+      if (method && method.trim()) {
+        return {
+          badgeIcon: 'ℹ️',
+          badgeVariant: 'neutral',
+          reason: 'Порівняльний орієнтир ціни',
+          baselineLabel: 'орієнтир',
+          strikeBaseline: false,
+        };
+      }
+      return {
+        badgeIcon: '📊',
+        badgeVariant: 'brand',
+        reason: 'Ціна нижча за звичайну для цього готелю',
+        baselineLabel: 'зазвичай',
+        strikeBaseline: false,
       };
   }
 }

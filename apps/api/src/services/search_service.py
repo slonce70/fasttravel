@@ -114,29 +114,38 @@ async def search_hotels(
         params["meal_codes"] = meal_codes
 
     prices_cte = f"""
-        prices AS (
+        ranked_prices AS (
             SELECT
                 cp.hotel_id,
-                (ARRAY_AGG(
-                    cp.price_uah
-                    ORDER BY {exact_first_order} cp.price_uah ASC NULLS LAST, cp.observed_at DESC
-                ))[1] AS effective_price,
-                (ARRAY_AGG(
-                    cp.nights
-                    ORDER BY {exact_first_order} cp.price_uah ASC NULLS LAST, cp.observed_at DESC
-                ))[1] AS effective_nights,
-                (ARRAY_AGG(
-                    cp.deep_link
-                    ORDER BY {exact_first_order} (cp.deep_link IS NULL), cp.price_uah ASC NULLS LAST, cp.observed_at DESC
-                ))[1] AS deep_link,
+                cp.price_uah AS effective_price,
+                cp.nights AS effective_nights,
+                cp.deep_link AS deep_link,
                 {requested_nights_expr} AS requested_nights,
-                COALESCE(BOOL_OR(cp.nights = CAST(:nights AS INTEGER)), FALSE) AS nights_exact,
-                MAX(cp.observed_at) AS last_observed_at
+                COALESCE(
+                    BOOL_OR(cp.nights = CAST(:nights AS INTEGER)) OVER (PARTITION BY cp.hotel_id),
+                    FALSE
+                ) AS nights_exact,
+                cp.observed_at AS last_observed_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY cp.hotel_id
+                    ORDER BY {exact_first_order} cp.price_uah ASC NULLS LAST, cp.observed_at DESC
+                ) AS rn
             FROM current_prices cp
             WHERE 1=1
               {current_price_date_filter}
               {current_price_meal_filter}
-            GROUP BY cp.hotel_id
+        ),
+        prices AS (
+            SELECT
+                hotel_id,
+                effective_price,
+                effective_nights,
+                deep_link,
+                requested_nights,
+                nights_exact,
+                last_observed_at
+            FROM ranked_prices
+            WHERE rn = 1
         )
     """
     join_clause = "JOIN prices px ON px.hotel_id = h.id"

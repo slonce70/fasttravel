@@ -36,23 +36,26 @@ from typing import Any
 import httpx
 from sqlalchemy import text
 
-from src.infra.db import async_session_factory
-from src.infra.logging import get_logger
-from src.jobs.snapshot_farvater import (
+from src.clients.farvater_calendar import fetch_calendar
+from src.clients.farvater_catalog import list_sitemap_hotels, make_slug
+from src.clients.farvater_hotel_page import fetch_hotel_meta
+from src.clients.farvater_runtime import (
     CATALOG_COUNTRIES,
     CHECK_IN_OFFSETS_DAYS,
-    _country_dest_id,
-    _ensure_operator,
-    _fetch_calendar,
-    _fetch_hotel_meta,
-    _http_client,
-    _insert_prices,
-    _list_sitemap_hotels,
-    _make_slug,
-    _mark_priced,
-    _upsert_hotel,
-    _upsert_mapping,
+    open_farvater_client,
 )
+from src.infra.db import async_session_factory
+from src.infra.logging import get_logger
+from src.services.hotel_upsert import (
+    country_dest_id,
+    ensure_operator,
+    upsert_hotel,
+    upsert_mapping,
+)
+from src.services.materialized_views import refresh_price_views
+from src.services.price_insert import insert_prices
+from src.services.price_state import mark_priced, mark_unpriced
+from src.services.scrape_runs import record_scrape_run
 
 # Transient errors worth retrying. Captures DNS failures (the observed live
 # incident — gaierror inside httpx.ConnectError), connection resets, and
@@ -95,15 +98,10 @@ async def _already_ingested(slugs: list[str]) -> set[str]:
 
 async def _mark_price_probe_complete(hotel_db_id: int, has_active_prices: bool) -> None:
     async with async_session_factory() as db:
-        await db.execute(
-            text(
-                """UPDATE hotels
-                   SET last_priced_at = NOW(),
-                       has_active_prices = :has_active_prices
-                   WHERE id = :hotel_id"""
-            ),
-            {"hotel_id": hotel_db_id, "has_active_prices": has_active_prices},
-        )
+        if has_active_prices:
+            await mark_priced(db, hotel_db_id)
+        else:
+            await mark_unpriced(db, hotel_db_id)
         await db.commit()
 
 
@@ -118,14 +116,14 @@ async def _process_hotel(
     """Fetch meta + probe a few calendar dates. Returns (hotel_seen, price_rows)."""
     async with semaphore:
         await asyncio.sleep(PER_REQUEST_DELAY_S)
-        meta = await _fetch_hotel_meta(client, url_path, iso2)
+        meta = await fetch_hotel_meta(client, url_path, iso2)
         if meta is None:
             return (0, 0)
 
         # Persist meta first — even if calendar probe fails the catalog row stays.
         async with async_session_factory() as db:
-            hotel_db_id = await _upsert_hotel(db, meta, dest_id, operator_id)
-            await _upsert_mapping(db, hotel_db_id, operator_id, meta)
+            hotel_db_id = await upsert_hotel(db, meta, dest_id, operator_id)
+            await upsert_mapping(db, hotel_db_id, operator_id, meta)
             await db.commit()
 
         # Probe the full supported check-in window for this hotel.
@@ -133,7 +131,7 @@ async def _process_hotel(
         seen_keys: set[str] = set()
         for offset in PROBE_OFFSETS:
             await asyncio.sleep(PER_REQUEST_DELAY_S)
-            chunk = await _fetch_calendar(
+            chunk = await fetch_calendar(
                 client, meta.hotel_id, date.today() + timedelta(days=offset)
             )
             new = [r for r in chunk if r.system_key not in seen_keys]
@@ -142,11 +140,11 @@ async def _process_hotel(
 
     if all_prices:
         async with async_session_factory() as db:
-            inserted = await _insert_prices(
+            inserted = await insert_prices(
                 db, hotel_db_id, operator_id, meta, all_prices, country_iso2=iso2
             )
             if inserted > 0:
-                await _mark_priced(db, hotel_db_id)
+                await mark_priced(db, hotel_db_id)
             await db.commit()
         log.info(
             "sitemap.hotel.priced",
@@ -163,13 +161,7 @@ async def _process_hotel(
 
 
 async def _refresh_views() -> None:
-    async with async_session_factory() as db:
-        for mv in ("current_prices", "hotel_calendar_prices", "price_baselines"):
-            try:
-                await db.execute(text(f"REFRESH MATERIALIZED VIEW {mv}"))
-            except Exception as exc:
-                log.warning("sitemap.mv_refresh_failed", mv=mv, error=str(exc))
-        await db.commit()
+    await refresh_price_views(log_prefix="sitemap")
 
 
 async def sitemap_long_tail_ingest(cap: int | None = None) -> int:
@@ -186,14 +178,14 @@ async def main(cap: int | None) -> int:
     iso_filter = {iso2 for _, iso2 in CATALOG_COUNTRIES}
 
     async with async_session_factory() as db:
-        operator_id = await _ensure_operator(db)
+        operator_id = await ensure_operator(db)
         await db.commit()
 
     seen_hotels = 0
     inserted_prices = 0
 
-    async with _http_client() as client:
-        by_iso = await _list_sitemap_hotels(client, iso2_filter=iso_filter)
+    async with open_farvater_client() as client:
+        by_iso = await list_sitemap_hotels(client, iso2_filter=iso_filter)
         total_urls = sum(len(v) for v in by_iso.values())
         log.info(
             "sitemap.discovered",
@@ -206,9 +198,9 @@ async def main(cap: int | None) -> int:
 
         for iso2, paths in by_iso.items():
             async with async_session_factory() as db:
-                dest_id = await _country_dest_id(db, iso2)
+                dest_id = await country_dest_id(db, iso2)
 
-            slugs = [_make_slug(iso2, p) for p in paths]
+            slugs = [make_slug(iso2, p) for p in paths]
             existing = await _already_ingested(slugs)
             fresh = [p for p, s in zip(paths, slugs, strict=False) if s not in existing]
 
@@ -251,10 +243,13 @@ async def main(cap: int | None) -> int:
                 if cap is not None and seen_hotels >= cap:
                     break
 
-            # Refresh MVs per-country so the UI starts showing the new
-            # priced cohort as the run progresses, not only at the end.
-            await _refresh_views()
-            log.info("sitemap.country.mv_refreshed", iso2=iso2)
+            # Refresh MVs per-country only when this country changed price
+            # rows, so no-inventory cohorts do not add avoidable MV load.
+            if country_priced > 0:
+                await _refresh_views()
+                log.info("sitemap.country.mv_refreshed", iso2=iso2)
+            else:
+                log.info("sitemap.country.mv_refresh_skipped", iso2=iso2, reason="no_prices")
 
             if cap is not None and seen_hotels >= cap:
                 log.info("sitemap.cap_reached", cap=cap)
@@ -286,20 +281,13 @@ async def _record_sitemap_run(
     """
     try:
         async with async_session_factory() as db:
-            await db.execute(
-                text(
-                    """INSERT INTO scrape_runs
-                          (started_at, finished_at, source, status,
-                           rows_inserted, error_text)
-                        VALUES (:s, NOW(), :src, :st, :n, :e)"""
-                ),
-                {
-                    "s": started_at or datetime.now(UTC),
-                    "src": source,
-                    "st": status,
-                    "n": rows,
-                    "e": error[:500],
-                },
+            await record_scrape_run(
+                db,
+                source=source,
+                status=status,
+                rows_inserted=rows,
+                error=error,
+                started_at=started_at,
             )
             await db.commit()
     except Exception as exc:  # noqa: BLE001

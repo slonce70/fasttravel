@@ -55,6 +55,7 @@ from src.infra.farvater_http import (
     UpstreamRateLimited,
 )
 from src.infra.logging import get_logger
+from src.services.scrape_runs import record_scrape_run
 
 log = get_logger(__name__)
 
@@ -223,21 +224,14 @@ async def _record_sweep_run(
 ) -> None:
     """scrape_runs row for one sweep — mirrors `_record_run` from
     snapshot_farvater so dashboards aggregate across both."""
-    await db.execute(
-        text(
-            """INSERT INTO scrape_runs
-                 (started_at, finished_at, operator_id, source,
-                  status, rows_inserted, error_text)
-               VALUES (:s, NOW(), :op, :src, :st, :n, :e)"""
-        ),
-        {
-            "s": started_at,
-            "op": operator_id,
-            "src": SCRAPE_SOURCE,
-            "st": status,
-            "n": rows_inserted,
-            "e": error[:500],
-        },
+    await record_scrape_run(
+        db,
+        source=SCRAPE_SOURCE,
+        status=status,
+        rows_inserted=rows_inserted,
+        error=error,
+        started_at=started_at,
+        operator_id=operator_id,
     )
 
 

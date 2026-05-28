@@ -17,7 +17,7 @@ Errors raise `ApiError` so handlers can render a single canned
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -77,7 +77,7 @@ async def get_destinations() -> list[dict[str, Any]]:
     try:
         r = await get_client().get("/api/destinations")
         r.raise_for_status()
-        return r.json()
+        return cast(list[dict[str, Any]], r.json())
     except httpx.HTTPError as exc:
         log.warning("api.destinations.failed", error=str(exc))
         raise ApiError("destinations fetch failed") from exc
@@ -91,7 +91,7 @@ async def search_hotels(**params: Any) -> dict[str, Any]:
     try:
         r = await get_client().get("/api/search", params=clean)
         r.raise_for_status()
-        return r.json()
+        return cast(dict[str, Any], r.json())
     except httpx.HTTPError as exc:
         log.warning("api.search.failed", error=str(exc), params=clean)
         raise ApiError("search failed") from exc
@@ -126,7 +126,7 @@ async def get_deals(
     try:
         r = await get_client().get("/api/deals", params=params)
         r.raise_for_status()
-        return r.json()
+        return cast(dict[str, Any], r.json())
     except httpx.HTTPError as exc:
         log.warning("api.deals.failed", error=str(exc))
         raise ApiError("deals fetch failed") from exc
@@ -139,7 +139,7 @@ async def get_hotel(slug: str) -> dict[str, Any] | None:
         if r.status_code == 404:
             return None
         r.raise_for_status()
-        return r.json()
+        return cast(dict[str, Any], r.json())
     except httpx.HTTPError as exc:
         log.warning("api.hotel.failed", error=str(exc), slug=slug)
         raise ApiError("hotel fetch failed") from exc

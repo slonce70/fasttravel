@@ -32,7 +32,7 @@
 | 4 | **HIGH** | Deps | bot, scheduler | aiohttp 3.10.11 (bot) → 19 CVE; aiohttp 3.12.15 (scheduler) → 18 CVE. Включно з parser-confusion (CVE-2024-52303), request smuggling (CVE-2025-53643). Bot's `/alerts` webhook — це aiohttp.web на мережевому порті. **Fix:** `aiohttp ≥ 3.13.4`. |
 | 5 | **HIGH** | Deps | api, ingest | `starlette==0.46.2` (3 CVE, fix у 1.0.1), `python-multipart==0.0.20` (3 CVE), `urllib3==1.26.20` транзитивно в ingest (5 CVE), `curl-cffi==0.7.4` (1 CVE). FastAPI стоїть на starlette → публічно експоновано. |
 | 6 | **HIGH** | Postgres / Backups | infra | `archive_mode=off` → **немає WAL-архівування, немає PITR**. RPO ≈ 24 год (єдиний бекап — нічний `pg_dump → R2`). Краш о 23:59 = втрата дня даних. + дампи у R2 **незашифровані** — компрометована R2-токен = повний дамп БД у відкритому вигляді. |
-| 7 | **HIGH** | CI / Coverage | api | `ci.yml` запускає `pytest --cov=src` але `pytest-cov` НЕ задекларовано в dev-deps `apps/api`. Крок мовчки падає → coverage не вимірюється. Інші сервіси (scheduler/bot/ingest) взагалі не мають `--cov`. |
+| 7 | **CLOSED** | CI / Coverage | cross-cutting | `pytest-cov` додано до api/scheduler/bot/ingest, а CI запускає `pytest --cov=src`. Залишився окремий hardening-крок: додати мінімальні coverage thresholds, щоб метрика не була лише informational. |
 | 8 | **HIGH** | Compose / Cost | cross-cutting | Жодна служба не має `logging:` секції → docker default `json-file` без `max-size` → логи забивають 200 GB boot-диск через місяці. + жодна служба не має `mem_limit:` у prod overlay → runaway-контейнер може OOM-килнути Postgres. |
 | 9 | **HIGH** | Nginx | infra | certbot встановлений через `cloud-init.yml`, але **renewal hooks НЕ написані** і `certbot.timer` не enable'нутий. LE-cert живе 90 днів → залежить від пам'яті оператора. Виявиться як 5xx з фронта в один день. |
 
@@ -48,7 +48,7 @@
 | TS/JS test files | 2 (4 unit + 7 e2e) |
 | Ruff violations | 0 (всі 4 Python сервіси чисті) |
 | Hadolint findings | 5 (всі DL3008 — unpinned apt-get) |
-| Mypy в CI | `continue-on-error: true` + `\|\| true` → не enforced |
+| Mypy в CI | strict, enforced across api/bot/scheduler/ingest |
 | pip-audit total CVE | 47 (api:7, bot:19, scheduler:19, ingest:2) |
 | pnpm audit (web) | 0 vulns, 848 deps |
 | Bandit MED/HIGH | 6 (1 HIGH MD5, 5 MED — переважно `0.0.0.0` bind) |
@@ -74,11 +74,11 @@
 **[Medium] Cross-cutting duplication of infra plumbing.** `apps/{api,bot,scheduler}/src/config.py` — три класи Settings з copy-paste `forbidden_markers = ("_change_me", "fasttravel_dev")` і дрейфом (scheduler перевіряє Telegram creds, API — ні). Те саме з `infra/sentry.py` (бот не має `SqlalchemyIntegration` хоч і ходить у Postgres) і `infra/logging.py`. `apps/shared/` існує, але містить лише Telegram publisher.
 → **Fix:** Винести `BaseAppSettings`, `configure_logging`, `configure_sentry` у `apps/shared/infra/`. Single-highest-impact рефактор.
 
-**[Medium] `apps/scheduler/src/jobs/snapshot_farvater.py` (1,284 LOC) і `detect_deals.py` (700 LOC) — моноліти.** Перший змішує regex-екстрактори, HTTP catalog walker, hotel upsert, price-validation insert, MV refresh, freshness metric, entrypoint. Другий містить 5 SQL-стратегій з ручною budget-арифметикою повтореною 4 рази.
-→ **Fix:** Розбити на `clients/farvater_catalog.py`, `services/{hotel_upsert,price_insert}.py`, `jobs/snapshot_farvater.py` (тільки orchestration). Для detect_deals — `class DealStrategy` + `for s in strategies: ...`.
+**[Medium] `apps/scheduler/src/jobs/snapshot_farvater.py` лишається великим orchestration-модулем; `detect_deals.py` уже звужено до двох production SQL-стратегій (`date_dip` + real `promo_discount`).** Перший ще змішує regex-екстрактори, HTTP catalog walker, hotel upsert, price-validation insert, MV refresh, freshness metric, entrypoint. Другий більше не містить warm/cold/stay SQL-гілок, а promo-гілка приймає тільки реальні strike-through ціни (`red_price_uah > price_uah`), тож окремий `DealStrategy` шар зараз не виправданий.
+→ **Fix:** Розбити `snapshot_farvater.py` на `clients/farvater_catalog.py`, `services/{hotel_upsert,price_insert}.py`, `jobs/snapshot_farvater.py` (тільки orchestration). Для `detect_deals.py` тримати малий explicit two-query module, доки не з'явиться третя активна production-стратегія.
 
-**[Medium] `apps/bot` — другий клас.** Немає `pyproject.toml` (deps пінняться лише в Dockerfile, без lockfile), `apps/bot/src/infra/db.py` робить raw `text(...)` SQL для subscriber CRUD хоча в API вже є ORM-модель `TelegramSubscriber`, `search_wizard.py` (434 LOC) змішує FSM dispatch + рендеринг + пагінацію + API client + UTM URL construction.
-→ **Fix:** Додати `apps/bot/pyproject.toml`; використати існуючий `TelegramSubscriber` ORM; розбити wizard на `wizard/steps/{country,nights,when,budget,meal,stars}.py`.
+**[Medium] `apps/bot` — частково вирівняний, але ще не повністю.** `pyproject.toml` і Poetry lockfile вже додані, CI більше не робить raw `pip install`, але `apps/bot/src/infra/db.py` досі робить raw `text(...)` SQL для subscriber CRUD хоча в API вже є ORM-модель `TelegramSubscriber`, а `search_wizard.py` змішує FSM dispatch + рендеринг + пагінацію + API client + UTM URL construction.
+→ **Fix:** Використати існуючий `TelegramSubscriber` ORM; розбити wizard на `wizard/steps/{country,nights,when,budget,meal,stars}.py`; додати focused callback-message tests для всіх callback handlers.
 
 ### 1.3 Дивні/несподівані знахідки
 
@@ -163,25 +163,25 @@
 
 | Service | Source LOC | Test files | Tests | Test:Src | Ruff | Mypy CI | Coverage |
 |---|---:|---:|---:|---:|---|---|---|
-| api | 3,080 | 13 | 61 | 0.71 | 0 errors | strict, **continue-on-error** | **broken (no pytest-cov)** |
-| bot | 2,756 | 8 | 41 | 0.27 | 0 errors | **not run** | none |
-| scheduler | 6,346 | 20 | 122 | 0.41 | 0 errors | strict, `\|\| true` | none |
-| ingest | 1,613 | 4 | 11 | 0.15 | 0 errors | strict, `\|\| true` | none |
+| api | 3,080 | 13 | 61 | 0.71 | 0 errors | strict, enforced | pytest-cov enabled |
+| bot | 2,756 | 8 | 41 | 0.27 | 0 errors | strict, enforced | pytest-cov enabled |
+| scheduler | 6,346 | 20 | 122 | 0.41 | 0 errors | strict, enforced | pytest-cov enabled |
+| ingest | 1,613 | 4 | 11 | 0.15 | 0 errors | strict, enforced | pytest-cov enabled |
 | web | 4,495 | 1+1 | **4+7** | **0.03** | eslint | tsc strict | none |
 | shared | small | 0 | 0 | 0.0 | n/a | n/a | none |
 
 ### 3.2 Найгостріші проблеми
 
-- **[High] CI coverage step падає мовчки** (api: `pytest --cov=src` без `pytest-cov` у deps).
-- **[High] Bot CI робить raw `pip install` з пінами повтореними у Dockerfile + CI workflow** — triple source of truth.
-- **[High] Scheduler/ingest/bot — нуль coverage**. Scheduler — найбільший сервіс і має 0 видимості над тим, які гілки покривають його 122 тести.
-- **[High] Mypy `strict=true` у pyproject + `continue-on-error: true` + `|| true` у CI** — типізація обіцяна, не enforced. Найгірше з обох світів.
+- **[Closed] CI coverage step no longer падає через missing plugin** — `pytest-cov` є в api/scheduler/bot/ingest.
+- **[Closed] Bot CI більше не робить raw `pip install`** — job перейшов на Poetry + lockfile.
+- **[Medium] Coverage є, але без threshold gates.** Scheduler — найбільший сервіс; coverage вимірюється, але CI ще не fail'ить на падіння покриття.
+- **[Closed] Mypy is now enforced in CI** for api, bot, scheduler, and ingest; the remaining `continue-on-error` in `.github/workflows/ci.yml` is the non-blocking Codecov upload, not type checking.
 - **[High] Frontend — 4 unit + 7 e2e тести на 4,500 LOC.** Vitest конфіг навіть не матчить `.tsx`. Recharts-календар, deal cards, search wizard — нуль тестів.
 - **[Medium] `pytest-vcr`/`vcrpy`/`respx` задекларовані в ingest — нуль cassettes** (`find apps/ingest/tests -path '*cassettes*'` → пусто). Dead infra.
 - **[Medium] Скрипти heavy mocks замість real DB+Redis** у scheduler/ingest tests — circular validation (моки повертають що тест очікує).
 - **[Medium] No pre-commit/husky/lefthook** — devs пушать lint/typecheck failures у CI.
 - **[Medium] No pytest-xdist** — sequential execution scales linearly.
-- **[Medium] Scheduler CI без Postgres+Redis services block** — `detect_deals` і `post_deals` (1000 LOC core логіки) без SQL-level integration tests, документація обіцяє `tests/integration/` якого не існує.
+- **[Closed] Scheduler має DB-backed SQL integration slice** — `apps/scheduler/tests/integration/test_deal_selection_sql.py` покриває `post_deals`, `notify_subscribers` ledger/thresholds, freshness window, real `promo_discount` conversion, і invariant що bucket-only promos без `red_price_uah > price_uah` не стають deals. CI service wiring still belongs to release hardening, but the earlier "tests/integration does not exist" finding is no longer true.
 
 ### 3.3 Що зроблено добре
 
@@ -209,7 +209,7 @@
 
 **[High] Terraform local state, не remote.** `infra/terraform/main.tf:23-37` — S3 backend block закоментований ("Phase 2"). State живе тільки на лептопі оператора. Bus-factor = 1.
 
-**[Medium] Bot Dockerfile: no pyproject, no lockfile, no multi-stage, no USER app.** Транзитивні deps анпіннуть; CI workflow дублює піни. Bot не в Dependabot pip ecosystem.
+**[Closed/Medium] Bot Dockerfile/CI dependency source mostly fixed.** `pyproject.toml` + lockfile є, runtime запускається під non-root `app`, CI використовує Poetry. Залишилось перевірити Dependabot pip ecosystem і security-audit cadence для bot.
 
 **[Medium] Prometheus має лише 4 scrape targets — немає node_exporter/postgres_exporter/redis_exporter.** Більшість outages на маленьких VM-ах — infra-level, не app-level. Немає `DiskFull80Pct`, `OOMRiskHigh`, `PostgresDeadTuplesHigh`.
 
@@ -245,21 +245,21 @@
    - У prod fail-closed коли env-var відсутній.
 4. **One coordinated PR для CVE-bump:** `aiohttp>=3.13.4` (через bump aiogram), `starlette>=1.0.1`, `python-multipart>=0.0.27`, `urllib3>=2.7.0`, `curl-cffi>=0.15.0`, `pytest>=9.0.3`.
 5. **Encrypt R2 backups** — `| age -r <recipient>` у `.github/workflows/daily-backup.yml`; ротувати R2 token.
-6. **Fix coverage gate** — `poetry add --group dev pytest-cov` у api/scheduler/ingest/bot.
+6. **Add coverage thresholds** — `pytest-cov` вже доданий у api/scheduler/ingest/bot; наступний крок — мінімальний `--cov-fail-under`/ratchet.
 
 ### Цей спринт (~1-2 тижні)
 
 7. **Cross-cutting refactor:** винести `BaseAppSettings`, `configure_logging`, `configure_sentry`, Redis singleton у `apps/shared/infra/`. Усуне дрейф між api/bot/scheduler.
-8. **Add `apps/bot/pyproject.toml`** + Poetry lockfile; multi-stage Dockerfile; `USER app`; додати bot у Dependabot і pip-audit matrix.
+8. **Finish bot dependency hardening** — `apps/bot/pyproject.toml` + lockfile + `USER app` уже є; додати bot у Dependabot і pip-audit matrix.
 9. **Container guardrails:** `logging:` anchor + `mem_limit:` у prod overlay + Prometheus retention flags.
 10. **Certbot renewal hooks** у `cloud-init.yml` + enable `certbot.timer`.
-11. **Mypy decision:** або ratchet (record current error count, fail CI if grows), або drop `strict=true`. Не залишати "strict-but-unenforced".
-12. **Add `services: postgres + redis` block у scheduler CI job** + написати `tests/integration/test_detect_deals_sql.py` (живий DB замість мокованої сесії).
+11. **Mypy ratchet follow-up:** mypy уже enforced; наступний крок — не послаблювати `strict=true` і додати short doc для локального запуску всіх service gates.
+12. **Expand scheduler DB integration tests** — `services: postgres + redis` block уже є; наступні slices: static-tours promo conversion edge cases і refresh starvation fixtures.
 13. **Vitest + @testing-library/react** для apps/web — стартові тести для `PriceCalendar`, `DealCard`, search wizard.
 
 ### Цей квартал
 
-14. **Split `snapshot_farvater.py` (1284 LOC) і `detect_deals.py` (700 LOC)** на тонкий job + services + clients.
+14. **Split `snapshot_farvater.py`** на тонкий job + services + clients; `detect_deals.py` already reduced to a small two-query module, so keep it simple until another active production detector appears.
 15. **WAL archiving до R2** (або документувати 24h RPO як accepted risk).
 16. **Log aggregation** — Grafana Loki / Better Stack free tier + promtail/vector sidecar.
 17. **node_exporter + postgres_exporter + redis_exporter** + 4 host-level alerts.
@@ -277,7 +277,7 @@
 - Зусилля на цей спринт: 1-2 тижні
 - Зусилля на цей квартал: ~4-5 тижнів cumulative
 
-**Загальний висновок:** проект — суттєво вище середнього для одноосібного MVP. Структура коду, async-дисципліна, observability, інфра-як-код, preflight скрипти — усе свідчить про вдумливу інженерну культуру. Гострі болі — точкові: переважно "obviously good intentions, забули завершити" (CSP TODO, certbot Phase 2, Mypy strict-but-unenforced, ports !reset на alertmanager забули). Зробіть топ-9 цього тижня — і проект з "thoughtful MVP" переходить у "production-grade for what it is" при тих самих $0/міс.
+**Загальний висновок:** проект — суттєво вище середнього для одноосібного MVP. Структура коду, async-дисципліна, observability, інфра-як-код, preflight скрипти — усе свідчить про вдумливу інженерну культуру. Гострі болі — точкові: переважно "obviously good intentions, забули завершити" (certbot Phase 2, coverage thresholds, ports !reset на alertmanager забули). Зробіть топ-9 цього тижня — і проект з "thoughtful MVP" переходить у "production-grade for what it is" при тих самих $0/міс.
 
 ---
 

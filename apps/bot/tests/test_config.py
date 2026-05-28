@@ -19,7 +19,9 @@ def test_default_public_channel_link_points_to_live_channel() -> None:
     assert settings.public_channel_link == "https://t.me/fasttravel_deals"
 
 
-def test_public_site_url_has_no_unsafe_default() -> None:
+def test_public_site_url_has_no_unsafe_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PUBLIC_SITE_URL", raising=False)
+
     settings = Settings(_env_file=None)
 
     assert settings.public_site_url is None

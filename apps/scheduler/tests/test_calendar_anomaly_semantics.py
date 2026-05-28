@@ -1,9 +1,11 @@
-"""Behavioural tests for the simplified deal detection (date_dip only).
+"""Behavioural tests for production deal detection.
 
-The detector now runs a single strategy: date_dip (calendar_anomaly).
-It compares a check-in date's price against nearby dates for the same
-hotel + nights + meal. A date that is 4%+ below the local median (and
-at least 1500 UAH cheaper in absolute terms) is flagged as a deal.
+The primary strategy is date_dip (calendar_anomaly). It compares a check-in
+date's price against nearby dates for the same hotel + operator + nights +
+meal + room-family neighborhood. A date that is 4%+ below the trimmed local
+baseline (and at least 1500 UAH cheaper in absolute terms) is flagged as a
+deal. A narrow promo_discount branch also promotes real operator strike-through
+promos where red_price_uah > price_uah.
 """
 
 from __future__ import annotations
@@ -12,6 +14,8 @@ import importlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from shared.deal_detection import DATE_DIP_POLICY
 
 detect_deals = importlib.import_module("src.jobs.detect_deals")
 
@@ -60,25 +64,19 @@ def patched_orchestrator(monkeypatch):
 
     monkeypatch.setattr(detect_deals, "async_session_factory", _session_factory)
 
-    redis_mock = MagicMock()
-
-    async def _get(key: str):
-        return None
-
-    redis_mock.get = _get
-    monkeypatch.setattr(detect_deals, "get_redis", lambda: redis_mock)
-
     return {"executed": executed, "params": executed_params}
 
 
 @pytest.mark.asyncio
-async def test_only_date_dip_runs(patched_orchestrator) -> None:
-    """Only date_dip strategy should execute — no warm, cold, or bucket."""
+async def test_only_active_production_strategies_run(patched_orchestrator) -> None:
+    """Only date_dip plus real promo-discount strategies should execute."""
     await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
 
     executed_sql = patched_orchestrator["executed"]
-    assert len(executed_sql) == 1, f"Expected 1 SQL query (date_dip), got {len(executed_sql)}"
+    assert len(executed_sql) == 2, f"Expected 2 SQL queries, got {len(executed_sql)}"
     assert "local_stats" in executed_sql[0], "date_dip SQL should use local_stats CTE"
+    assert "FROM promo_offers po" in executed_sql[1]
+    assert "po.red_price_uah > po.price_uah" in executed_sql[1]
 
 
 @pytest.mark.asyncio
@@ -88,8 +86,8 @@ async def test_date_dip_uses_4pct_threshold(patched_orchestrator) -> None:
 
     executed_sql = patched_orchestrator["executed"]
     assert any(
-        "p50 * 0.96" in sql for sql in executed_sql
-    ), "date_dip should use 4% threshold (p50 * 0.96)"
+        f"p50 * {DATE_DIP_POLICY.discount_multiplier_sql}" in sql for sql in executed_sql
+    ), "date_dip should use the shared date-dip discount multiplier"
 
 
 @pytest.mark.asyncio
@@ -100,12 +98,22 @@ async def test_date_dip_uses_nearby_dates_not_whole_season(patched_orchestrator)
 
     sql = patched_orchestrator["executed"][0]
 
-    assert "neighbor.check_in BETWEEN cp.check_in - INTERVAL '14 days'" in sql
+    assert f"CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'" in sql
+    assert f"AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'" in sql
+    assert (
+        "neighbor.check_in BETWEEN "
+        f"cp.check_in - INTERVAL '{DATE_DIP_POLICY.neighbor_window_days} days'" in sql
+    )
+    assert f"cp.check_in + INTERVAL '{DATE_DIP_POLICY.neighbor_window_days} days'" in sql
     assert "neighbor.check_in <> cp.check_in" in sql
+    assert "room_family" in sql
+    assert "neighbor.room_family = cp.room_family" in sql
+    assert "GROUP BY neighbor.check_in" in sql
+    assert "neighbor.room_category = cp.room_category" not in sql
     assert "JOIN LATERAL" in sql
-    assert "hs.sample_n >= 4" in sql
-    # Trimmed median + consistency gate. Farvater's synthetic "sold out"
-    # placeholder prices were inflating the plain median by 3-5x and
+    assert f"hs.sample_n >= {DATE_DIP_POLICY.min_sample_size}" in sql
+    # Trimmed local baseline + consistency gate. Farvater's synthetic "sold out"
+    # placeholder prices were inflating the plain local comparison by 3-5x and
     # triggering false 70-80% "deals". Two defences:
     #   1. interquartile mean (PERCENT_RANK middle 50%) — robust to a few
     #      outliers in an otherwise clean sample.
@@ -114,7 +122,20 @@ async def test_date_dip_uses_nearby_dates_not_whole_season(patched_orchestrator)
     #      ≥half synthetic rows can't be saved by trimming alone).
     assert "PERCENT_RANK()" in sql
     assert "rnk BETWEEN 0.25 AND 0.75" in sql
-    assert "hs.p_max <= hs.p_min * 2.5" in sql
+    assert f"hs.p_max <= hs.p_min * {DATE_DIP_POLICY.max_spread_ratio_sql}" in sql
+
+
+@pytest.mark.asyncio
+async def test_date_dip_uses_materialized_room_family(patched_orchestrator) -> None:
+    """Equivalent Farvater room labels are normalized in current_prices, keeping
+    detector lookups indexed instead of recomputing family per neighbor row."""
+    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
+
+    sql = patched_orchestrator["executed"][0]
+
+    assert "cp.room_family" in sql
+    assert "neighbor.room_family = cp.room_family" in sql
+    assert "regexp_replace" not in sql
 
 
 @pytest.mark.asyncio
@@ -146,13 +167,42 @@ async def test_date_dip_passes_country_cap_param(patched_orchestrator) -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_warm_cold_bucket_executed(patched_orchestrator) -> None:
-    """Warm, cold, and bucket strategies must not execute."""
+async def test_detect_deals_rolls_back_all_branches_when_promo_branch_fails(monkeypatch) -> None:
+    """Date-dip and promo promotion should share one transaction boundary."""
+    db = AsyncMock()
+    executions = 0
+
+    async def _execute(_sql, _params=None):
+        nonlocal executions
+        executions += 1
+        if executions == 1:
+            return _FakeResult([(1, 101, 12.5)])
+        raise RuntimeError("promo query failed")
+
+    db.execute = _execute
+    db.commit = AsyncMock(return_value=None)
+    db.rollback = AsyncMock(return_value=None)
+    db.__aenter__.return_value = db
+    db.__aexit__.return_value = None
+
+    monkeypatch.setattr(detect_deals, "async_session_factory", lambda: db)
+
+    with pytest.raises(RuntimeError, match="promo query failed"):
+        await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
+
+    db.commit.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_no_warm_cold_bucket_only_executed(patched_orchestrator) -> None:
+    """Warm, cold, and bucket-only strategies must not execute."""
     await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
 
     executed_sql = patched_orchestrator["executed"]
     for sql in executed_sql:
         assert "price_baselines" not in sql, "warm strategy should not run"
         assert "peer_stats" not in sql, "cold strategy should not run"
-        assert "promo_offers" not in sql, "bucket strategy should not run"
         assert "long_cp.nights > short_cp.nights" not in sql, "stay_inversion should not run"
+    assert any("FROM promo_offers po" in sql for sql in executed_sql)
+    assert all("'bucket_'" not in sql for sql in executed_sql)

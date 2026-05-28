@@ -1,14 +1,12 @@
-"""Normalizer for farvater HTML pages and (eventually) XHR responses.
+"""Normalizer for farvater HTML pages.
 
-Farvater is the bootstrap source — its data shape is intentionally
-not stable, because we'll replace it with ittour direct as soon as
-the partner token arrives.
+Farvater price ingest is owned by scheduler snapshot jobs, where the
+current request sequence, rate budget, and schema canary live.
 
 What this module currently does:
   * `parse_hotel_card_html(html)` → NormalizedHotelContent (best-effort
     metadata extraction from a public hotel landing page)
-  * `parse_calendar_xhr(payload)` — STUB; raises NotImplementedError
-    until we capture the real XHR shape via DevTools HAR
+  * `parse_calendar_xhr(payload)` — explicitly unsupported in generic ingest
 
 What this module deliberately does NOT do:
   * Render JavaScript. If the data isn't in the static HTML, the
@@ -22,6 +20,7 @@ from typing import Any
 
 from selectolax.parser import HTMLParser
 
+from src.exceptions import UnsupportedGenericFarvaterIngest
 from src.normalizers.base import NormalizedHotelContent, NormalizedOffer
 
 
@@ -63,31 +62,12 @@ def parse_hotel_card_html(html: str) -> NormalizedHotelContent | None:
 
 
 def parse_calendar_xhr(payload: dict[str, Any]) -> list[NormalizedOffer]:
-    """Return list[NormalizedOffer] from Farvater's private calendar payload.
+    """Reject generic Farvater calendar parsing.
 
-    The generic ingest package does not yet know Farvater's private XHR
-    shape; production prices currently come from scheduler snapshot jobs.
-    Once a HAR capture pins this endpoint, the function should look roughly
-    like:
-
-        offers = []
-        for entry in payload["data"]["calendar"]:
-            for op in entry["operators"]:
-                offers.append(NormalizedOffer(
-                    hotel_external_id=str(payload["hotelId"]),
-                    operator_code=_OPERATOR_ID_TO_CODE[op["operatorId"]],
-                    check_in=date.fromisoformat(entry["date"]),
-                    nights=op["nights"],
-                    meal_plan=normalize_meal_plan(op["meal"]),
-                    price_uah=int(op["priceUah"]),
-                    ...
-                ))
-        return offers
+    Production prices are handled by `apps/scheduler/src/jobs/snapshot_farvater.py`
+    and `static_tours_sweep.py`; this package only keeps HTML metadata helpers.
     """
-    raise NotImplementedError(
-        "farvater calendar XHR shape unknown for generic ingest — "
-        "production Farvater prices are handled by scheduler snapshots"
-    )
+    raise UnsupportedGenericFarvaterIngest()
 
 
 # ---------------------------------------------------------------------------

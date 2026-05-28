@@ -26,9 +26,11 @@ from aiogram.types import (
 )
 
 from shared.publishers.broadcast import escape_markdown_v2
+from shared.site_urls import public_destination_url
 from shared.text_uk import format_hotels
 from src.config import get_settings
 from src.infra.api_client import ApiError, get_deals, get_destinations
+from src.infra.callbacks import callback_message, callback_tail
 from src.infra.logging import get_logger
 from src.keyboards.countries import country_emoji, country_name_uk
 from src.keyboards.main_menu import main_menu_kb
@@ -80,16 +82,29 @@ def _drill_kb(iso: str) -> InlineKeyboardMarkup:
         ]
     ]
     if settings.public_site_url:
+        site_url = public_destination_url(settings.public_site_url, iso)
         rows.append(
             [
                 InlineKeyboardButton(
                     text="🌐 Всі готелі на сайті",
-                    url=f"{settings.public_site_url.rstrip('/')}/destinations/{iso.lower()}?utm_source=tg_bot",
+                    url=site_url or settings.public_site_url,
                 )
             ]
         )
     rows.append([InlineKeyboardButton(text="◀ До списку країн", callback_data="ds:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _destinations_list_text() -> str:
+    return "*🌍 Куди літаємо\\?*\n\nНатисніть країну, щоб побачити топ\\-варіанти та готелі\\."
+
+
+def _country_drill_header(iso: str) -> str:
+    return f"{country_emoji(iso)} *{escape_markdown_v2(country_name_uk(iso))}* · топ варіантів"
+
+
+def _country_drill_empty_body() -> str:
+    return "_Зараз немає активних варіантів у цій країні\\._\nСпробуйте «🔍 Знайти тури» нижче\\."
 
 
 async def show_destinations(message: Message) -> None:
@@ -110,7 +125,7 @@ async def show_destinations(message: Message) -> None:
         return
 
     await message.answer(
-        "*🌍 Куди літаємо\\?*\n\nНатисніть країну, щоб побачити топ\\-знижки та готелі\\.",
+        _destinations_list_text(),
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=_countries_list_kb(destinations),
     )
@@ -123,13 +138,17 @@ async def cmd_destinations(message: Message) -> None:
 
 @router.callback_query(F.data == "ds:back")
 async def cb_back(query: CallbackQuery) -> None:
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     try:
         destinations = await get_destinations()
     except ApiError:
         await query.answer("Сервіс недоступний", show_alert=False)
         return
-    await query.message.edit_text(
-        "*🌍 Куди літаємо\\?*\n\nНатисніть країну, щоб побачити топ\\-знижки та готелі\\.",
+    await message.edit_text(
+        _destinations_list_text(),
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=_countries_list_kb(destinations),
     )
@@ -138,7 +157,14 @@ async def cb_back(query: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("ds:search:"))
 async def cb_search_in_country(query: CallbackQuery, state: FSMContext) -> None:
-    iso = (query.data or "").split(":", 2)[2]
+    iso = callback_tail(query.data, "ds:search:")
+    if iso is None:
+        await query.answer()
+        return
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
     # Hand off to the wizard with country pre-filled (skip choosing_country step)
     await state.clear()
     name = country_name_uk(iso)
@@ -146,7 +172,7 @@ async def cb_search_in_country(query: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SearchState.choosing_nights)
     from src.keyboards.filters import nights_kb
 
-    await query.message.edit_text(
+    await message.edit_text(
         f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · скільки ночей\\? 🌙",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=nights_kb(),
@@ -156,9 +182,16 @@ async def cb_search_in_country(query: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("ds:"))
 async def cb_country_drill(query: CallbackQuery) -> None:
-    iso = (query.data or "").split(":", 1)[1]
+    iso = callback_tail(query.data, "ds:")
+    if iso is None:
+        await query.answer()
+        return
     if iso in {"back"} or iso.startswith("search:"):
         return  # already handled by other callbacks
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
 
     try:
         deals_payload = await get_deals(limit=_MAX_DRILL_DEALS, country=iso)
@@ -167,15 +200,15 @@ async def cb_country_drill(query: CallbackQuery) -> None:
         return
 
     items: list[dict[str, Any]] = deals_payload.get("items", [])
-    header = f"{country_emoji(iso)} *{escape_markdown_v2(country_name_uk(iso))}* · топ знижок"
+    header = _country_drill_header(iso)
     if not items:
-        body = "_Зараз немає активних знижок у цій країні\\._\nСпробуйте «🔍 Знайти тури» нижче\\."
+        body = _country_drill_empty_body()
     else:
         body = "\n\n— · — · —\n\n".join(render_deal(d) for d in items)
     text = f"{header}\n\n{body}"
 
     try:
-        await query.message.edit_text(
+        await message.edit_text(
             text,
             parse_mode=ParseMode.MARKDOWN_V2,
             disable_web_page_preview=True,
