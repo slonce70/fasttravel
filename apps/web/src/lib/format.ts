@@ -17,10 +17,6 @@ const PRICE_SHORT_FMT = new Intl.NumberFormat('uk-UA', {
 
 const DATE_LONG_FMT = new Intl.DateTimeFormat('uk-UA', { dateStyle: 'long' });
 const DATE_MEDIUM_FMT = new Intl.DateTimeFormat('uk-UA', { dateStyle: 'medium' });
-const DATE_SHORT_FMT = new Intl.DateTimeFormat('uk-UA', {
-  day: 'numeric',
-  month: 'short',
-});
 
 /** "22 400 ₴" */
 export function formatPrice(uah: number | null | undefined): string {
@@ -49,11 +45,6 @@ export function formatDateLong(d: Date | string): string {
 /** "15 черв. 2026 р." */
 export function formatDateMedium(d: Date | string): string {
   return DATE_MEDIUM_FMT.format(toDate(d));
-}
-
-/** "15 черв." */
-export function formatDateShort(d: Date | string): string {
-  return DATE_SHORT_FMT.format(toDate(d));
 }
 
 /** "оновлено 12 хв тому" — relative-time helper. */

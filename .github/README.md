@@ -15,7 +15,7 @@ Dependabot, шаблони issue/PR, CODEOWNERS.
 
 | File | Trigger | Що робить | Потребує secrets |
 |---|---|---|---|
-| `ci.yml` | PR + push до `main` | Lint, type check, тести (API + scheduler + ingest + bot + web), build фронту, OpenNext build, local API + Playwright browser smoke, docker compose smoke build | _(none)_ optionally `CODECOV_TOKEN` |
+| `ci.yml` | PR + push до `main` | Lint, type check, тести (API + scheduler + bot + web), build фронту, OpenNext build, local API + Playwright browser smoke, docker compose smoke build | _(none)_ optionally `CODECOV_TOKEN` |
 | `deploy-api.yml` | Push до `main` (зміни в `apps/*` / `infra/*` / compose) + manual | Build і push образів до GHCR, SSH у VPS, GHCR login, alembic migration, recreate backend сервісів, health check | VPS SSH + (опц.) webhook |
 | `deploy-web.yml` | Push до `main` (зміни в `apps/web`) + manual | Audit/lint/typecheck/unit, OpenNext build, Wrangler dry-run, deploy Cloudflare Worker, optional deployed Playwright smoke | Cloudflare Workers |
 | `browser-smoke.yml` | Manual | Playwright smoke проти deployed frontend URL після cutover/deploy | _(none)_ |
@@ -110,7 +110,7 @@ frontend host.
 
 1. У `Settings → Branches → main`:
    - Enable "Require a pull request before merging".
-   - Enable "Require status checks to pass" → додати `backend (api) lint + test`, `scheduler lint + test`, `ingest lint + test`, `bot lint + test`, `frontend lint + build`, `browser smoke (local API)`, `docker compose validate + build`.
+   - Enable "Require status checks to pass" → додати `backend (api) lint + test`, `scheduler lint + test`, `bot lint + test`, `frontend lint + build`, `browser smoke (local API)`, `docker compose validate + build`.
    - Enable "Require review from Code Owners".
 2. У `Settings → Actions → General`:
    - Workflow permissions: `Read and write` (потрібно для GHCR push з deploy-api).
@@ -121,11 +121,11 @@ frontend host.
 
 ## Lockfiles
 
-Lockfiles закомічені для API, scheduler, ingest і web:
+Lockfiles закомічені для API, scheduler, bot і web:
 
 - `apps/api/poetry.lock`
 - `apps/scheduler/poetry.lock`
-- `apps/ingest/poetry.lock`
+- `apps/bot/poetry.lock`
 - `apps/web/pnpm-lock.yaml`
 
 CI використовує lockfile-friendly installs і не має генерувати нові lockfiles
