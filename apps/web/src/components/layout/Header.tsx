@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Container } from './Container';
 import { fetchDestinations } from '@/lib/api-client';
+import { uniqueCountriesByIso } from '@/lib/countries';
 import type { CountryOut } from '@/lib/types';
 
 const STATIC_NAV = [
@@ -22,16 +23,6 @@ async function getTopCountries(): Promise<CountryOut[]> {
   } catch {
     return [];
   }
-}
-
-function uniqueCountriesByIso(countries: CountryOut[]): CountryOut[] {
-  const seen = new Set<string>();
-  return countries.filter((country) => {
-    const iso = country.country_iso2.toUpperCase();
-    if (seen.has(iso)) return false;
-    seen.add(iso);
-    return true;
-  });
 }
 
 export async function Header() {

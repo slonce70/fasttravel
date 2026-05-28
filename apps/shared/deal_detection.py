@@ -69,7 +69,7 @@ def date_dip_neighbor_stats_lateral_sql(*, candidate_alias: str = "cp") -> str:
     return f"""
                 JOIN LATERAL (
                     SELECT
-                        AVG(CASE WHEN rnk BETWEEN 0.25 AND 0.75 THEN price_uah END)::int AS p50,
+                        AVG(CASE WHEN rnk BETWEEN 0.25 AND 0.75 THEN price_uah END)::int AS trimmed_mean,
                         COUNT(*) AS sample_n,
                         MIN(price_uah) AS p_min,
                         MAX(price_uah) AS p_max
@@ -94,6 +94,6 @@ def date_dip_neighbor_stats_lateral_sql(*, candidate_alias: str = "cp") -> str:
                         ) neighbor_day
                     ) ranked
                 ) hs ON hs.sample_n >= {DATE_DIP_POLICY.min_sample_size}
-                      AND hs.p50 IS NOT NULL
+                      AND hs.trimmed_mean IS NOT NULL
                       AND hs.p_max <= hs.p_min * {DATE_DIP_POLICY.max_spread_ratio_sql}
     """

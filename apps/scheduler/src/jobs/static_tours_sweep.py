@@ -259,7 +259,7 @@ async def static_tours_sweep(
         log.error("static_tours_sweep.no_operator")
         return 0
 
-    redis = await get_redis()
+    redis = get_redis()
     total_rows = 0
     errors: list[str] = []
 

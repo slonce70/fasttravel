@@ -8,6 +8,7 @@ import { DealCard } from '@/components/DealCard';
 import { HotelCard } from '@/components/HotelCard';
 import { SearchForm } from '@/components/SearchForm';
 import { fetchDeals, fetchDestination, fetchDestinations, searchHotels } from '@/lib/api-client';
+import { accusativeCountry } from '@/lib/countries';
 import type { CountryOut, Deal } from '@/lib/types';
 
 /**
@@ -31,27 +32,6 @@ export async function generateStaticParams() {
   }
 }
 
-function accusative(name: string): string {
-  const map: Record<string, string> = {
-    Туреччина: 'Туреччину',
-    Єгипет: 'Єгипет',
-    ОАЕ: 'ОАЕ',
-    Греція: 'Грецію',
-    Іспанія: 'Іспанію',
-    Болгарія: 'Болгарію',
-    Чорногорія: 'Чорногорію',
-    Хорватія: 'Хорватію',
-    Кіпр: 'Кіпр',
-    Таїланд: 'Таїланд',
-    Мальдіви: 'Мальдіви',
-    Італія: 'Італію',
-    Туніс: 'Туніс',
-    'Домініканська Республіка': 'Домініканську Республіку',
-    Україна: 'Україну',
-  };
-  return map[name] ?? name;
-}
-
 export async function generateMetadata({
   params,
 }: {
@@ -63,7 +43,7 @@ export async function generateMetadata({
     return { title: 'Напрямок не знайдено' };
   }
   return {
-    title: `Тури в ${accusative(country.name_uk)} — календар цін на 90 днів`,
+    title: `Тури в ${accusativeCountry(country.name_uk)} — календар цін на 90 днів`,
     description: `${country.name_uk} на FastTravel. Дивіться календар цін на ${country.hotel_count} готелів у каталозі від трьох операторів.`,
   };
 }
@@ -110,7 +90,7 @@ export default async function CountryDestinationPage({
   ]);
 
   const hasHotels = country.hotel_count > 0;
-  const accName = accusative(country.name_uk);
+  const accName = accusativeCountry(country.name_uk);
 
   return (
     <div className="space-y-10 pb-12">

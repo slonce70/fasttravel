@@ -47,6 +47,6 @@ async def open_farvater_client(
     *,
     default_concurrency: int = 3,
 ) -> AsyncIterator[FarvaterProdClient]:
-    redis = await get_redis()
+    redis = get_redis()
     async with open_prod_client(redis, prod_tier_config(default_concurrency)) as client:
         yield client

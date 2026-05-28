@@ -191,7 +191,7 @@ async def canary_farvater_schema() -> int:
     started_at = datetime.now(UTC)
     errors: list[str] = []
     try:
-        redis = await get_redis()
+        redis = get_redis()
         async with FarvaterProdClient(redis) as client:
             cal_ok, cal_missing = await _probe_calendar(client)
             if not cal_ok:

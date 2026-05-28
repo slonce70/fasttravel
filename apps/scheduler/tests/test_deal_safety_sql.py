@@ -147,8 +147,8 @@ def test_date_dip_branch_detects_same_hotel_date_mispricing() -> None:
     assert "neighbor.room_family = cp.room_family" in sql
     assert "GROUP BY neighbor.check_in" in sql
     assert "neighbor.room_category = cp.room_category" not in sql
-    assert f"p50 * {DATE_DIP_POLICY.discount_multiplier_sql}" in sql
-    assert f"(cp.p50 - cp.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}" in sql
+    assert f"trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}" in sql
+    assert f"(cp.trimmed_mean - cp.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}" in sql
     assert "long_cp.nights > short_cp.nights" not in sql
     # Per-country diversity guard (without it the top-N by % is dominated
     # by whichever single country has the steepest drops).
