@@ -11,7 +11,6 @@
 /apps/api/         @slonce70
 /apps/scheduler/   @slonce70
 /apps/bot/         @slonce70
-/apps/ingest/      @slonce70
 
 # Frontend
 /apps/web/         @slonce70

@@ -230,53 +230,6 @@ jobs:
           fi
 
   # ---------------------------------------------------------------------------
-  # Ingest library: lint + test normalizers/dedup/pipeline contracts
-  # ---------------------------------------------------------------------------
-  ingest-lint-test:
-    name: ingest lint + test
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/ingest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Cache pip + poetry virtualenv
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cache/pip
-            ~/.cache/pypoetry
-            ~/.local/share/pypoetry
-          key: poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('apps/ingest/pyproject.toml', 'apps/ingest/poetry.lock') }}
-          restore-keys: |
-            poetry-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
-
-      - name: Install Poetry
-        run: pip install "poetry==${{ env.POETRY_VERSION }}"
-
-      - name: Install dependencies
-        run: poetry install --no-root --with dev
-
-      - name: Lint (ruff check)
-        run: poetry run ruff check src/ tests/
-
-      - name: Format check (ruff format)
-        run: poetry run ruff format --check src/ tests/
-
-      - name: Type check (mypy)
-        run: poetry run mypy src/
-
-      - name: Run tests with coverage
-        run: poetry run pytest --cov=src --cov-report=xml --cov-report=term
-
-  # ---------------------------------------------------------------------------
   # Bot: lint + test via Poetry (Audit #8 sprint — pyproject + lockfile now)
   # ---------------------------------------------------------------------------
   bot-lint-test:

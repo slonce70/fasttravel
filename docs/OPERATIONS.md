@@ -171,12 +171,12 @@ Baselines live in `infra/scripts/mypy-baseline.txt`.
 After a typing cleanup (you reduced the count):
 
 ```bash
-./infra/scripts/mypy-ratchet.sh --refresh-baseline api scheduler ingest bot
+./infra/scripts/mypy-ratchet.sh --refresh-baseline api scheduler bot
 git add infra/scripts/mypy-baseline.txt
 git commit -m "chore(mypy): refresh ratchet baseline after typing cleanup"
 ```
 
-Current baseline (May 2026): `api=0`, `scheduler=0`, `ingest=0`, `bot=70`.
+Current baseline (May 2026): `api=0`, `scheduler=0`, `bot=70`.
 The bot's 70 are pre-existing aiogram `Message | InaccessibleMessage |
 None` union-narrowing gaps; ratchet just prevents regression while a
 targeted PR closes them.
@@ -273,4 +273,4 @@ before first prod use.
 - [`infra/SETUP.md`](../infra/SETUP.md) — full Oracle Cloud VM provisioning runbook
 - [`docs/AUDIT_REPORT.md`](AUDIT_REPORT.md) — the source of all this hardening
 - [`docs/superpowers/specs/`](superpowers/specs/) — deferred refactor plans
-- [`apps/{api,bot,scheduler,ingest,web}/README.md`](../apps/) — per-service docs
+- [`apps/{api,bot,scheduler,web}/README.md`](../apps/) — per-service docs
