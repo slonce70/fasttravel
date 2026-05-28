@@ -74,8 +74,8 @@ curl http://localhost:8000/health   # → {"status":"ok","db":"ok","redis":"ok"}
 **URLs:**
 - API + Swagger → http://localhost:8000/docs
 - Frontend → http://localhost:3000
-- Grafana → http://localhost:3001 (admin / `$GRAFANA_ADMIN_PASSWORD`)
-- Prometheus → http://localhost:9090
+- Grafana → http://localhost:3001 (admin / `$GRAFANA_ADMIN_PASSWORD`) — потребує `docker compose --profile observability up -d`
+- Prometheus → http://localhost:9090 — те саме (профіль `observability`)
 
 ---
 
@@ -106,7 +106,7 @@ fasttravel/
 │   └── superpowers/specs/                     Deferred refactor plans
 ├── .github/workflows/   CI, deploy-api (workflow_run gated), deploy-web, daily-backup, security-scan, browser-smoke
 ├── .pre-commit-config.yaml   ruff + prettier + shellcheck + hadolint
-├── docker-compose.yml        Local dev (+ observability profile for Loki+Vector)
+├── docker-compose.yml        Local dev (core only; full monitoring behind --profile observability)
 ├── docker-compose.prod.yml   Prod overlay (mem_limits, ports !reset, image-from-GHCR)
 └── docker-compose.test.yml   Test overlay (INSTALL_DEV=true variants)
 ```
@@ -123,7 +123,7 @@ fasttravel/
 | DB | Postgres 16 self-hosted (custom image: pg_partman + pg_cron + postgis) | postgis для майбутнього "find hotels near X" |
 | Cache | Redis 7 (`maxmemory 512mb`, `allkeys-lru`) | scheduler queue + bot FSM (logical DB /2) |
 | Schedule | APScheduler у власному контейнері | post_deals кожні 15 хв, detect_deals щогодини |
-| Observability | Prometheus 30d/8GB + AlertManager + Grafana + node/postgres/redis exporters | 9 alert rules; optional Loki+Vector через `--profile observability` |
+| Observability | Prometheus 30d/8GB + AlertManager + Grafana + node/postgres/redis exporters + Loki/Vector | повністю opt-in через `--profile observability` (за замовч. вимкнено для $0 VM); 9 alert rules |
 | Backups | `pg_dump -Fc --compress=9` → age-encrypt → rclone → R2 | parallel restore (`pg_restore -j 4`), ciphertext-only на R2 |
 
 ---
