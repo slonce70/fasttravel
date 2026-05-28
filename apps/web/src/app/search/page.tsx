@@ -7,6 +7,7 @@ import { SearchForm } from '@/components/SearchForm';
 import { SearchSortControl } from '@/components/SearchSortControl';
 import { TelegramCta } from '@/components/TelegramCta';
 import { fetchDestinations, searchHotels, userMessageForApiError } from '@/lib/api-client';
+import { accusativeCountry } from '@/lib/countries';
 import {
   PAGE_SIZE,
   readParam,
@@ -23,29 +24,6 @@ export const metadata: Metadata = {
 
 // Dynamic — query params drive the response, no caching that's worth the risk.
 export const dynamic = 'force-dynamic';
-
-function accusativeCountry(name: string): string {
-  // Same map as SearchForm — duplicated to keep both pure. Tiny enough that
-  // moving to a shared lib would cost more than it's worth.
-  const map: Record<string, string> = {
-    Туреччина: 'Туреччину',
-    Єгипет: 'Єгипет',
-    ОАЕ: 'ОАЕ',
-    Греція: 'Грецію',
-    Іспанія: 'Іспанію',
-    Болгарія: 'Болгарію',
-    Чорногорія: 'Чорногорію',
-    Хорватія: 'Хорватію',
-    Кіпр: 'Кіпр',
-    Таїланд: 'Таїланд',
-    Мальдіви: 'Мальдіви',
-    Італія: 'Італію',
-    Туніс: 'Туніс',
-    'Домініканська Республіка': 'Домініканську Республіку',
-    Україна: 'Україну',
-  };
-  return map[name] ?? name;
-}
 
 async function getCountries(): Promise<CountryOut[]> {
   try {

@@ -86,7 +86,7 @@ async def test_date_dip_uses_4pct_threshold(patched_orchestrator) -> None:
 
     executed_sql = patched_orchestrator["executed"]
     assert any(
-        f"p50 * {DATE_DIP_POLICY.discount_multiplier_sql}" in sql for sql in executed_sql
+        f"trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}" in sql for sql in executed_sql
     ), "date_dip should use the shared date-dip discount multiplier"
 
 

@@ -77,7 +77,7 @@ _DATE_DIP_SQL = text(
             cp.room_family,
             cp.price_uah,
             cp.deep_link,
-            hs.p50,
+            hs.trimmed_mean,
             hs.sample_n
         FROM priced cp
         {date_dip_neighbor_stats_lateral_sql(candidate_alias="cp")}
@@ -128,15 +128,15 @@ _DATE_DIP_SQL = text(
                     cp.meal_plan,
                     cp.room_category,
                     cp.price_uah,
-                    cp.p50 AS baseline_p50,
-                    ROUND(100 * (1 - cp.price_uah::numeric / cp.p50), 2) AS discount_pct,
+                    cp.trimmed_mean AS baseline_p50,
+                    ROUND(100 * (1 - cp.price_uah::numeric / cp.trimmed_mean), 2) AS discount_pct,
                     cp.deep_link,
                     dest.country_iso2 AS country_iso2
                 FROM local_stats cp
                 JOIN hotels h ON h.id = cp.hotel_id
                 LEFT JOIN destinations dest ON dest.id = h.destination_id
-                WHERE cp.price_uah < cp.p50 * {DATE_DIP_POLICY.discount_multiplier_sql}
-                  AND (cp.p50 - cp.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}
+                WHERE cp.price_uah < cp.trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}
+                  AND (cp.trimmed_mean - cp.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}
             ) cand
             WHERE cand.discount_pct > 0
               AND cand.country_iso2 IS NOT NULL
