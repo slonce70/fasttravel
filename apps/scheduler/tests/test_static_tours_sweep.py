@@ -111,7 +111,7 @@ async def test_happy_path_inserts_rows(monkeypatch: pytest.MonkeyPatch) -> None:
             return None
 
     monkeypatch.setattr(sweep, "async_session_factory", lambda: _NullSession())
-    monkeypatch.setattr(sweep, "get_redis", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(sweep, "get_redis", MagicMock(return_value=MagicMock()))
 
     # Patch the HTTP client open + fetch to return our pre-baked tours.
     class _FakeClient:
@@ -173,7 +173,7 @@ async def test_unresolved_hotel_keys_are_dropped(
             return None
 
     monkeypatch.setattr(sweep, "async_session_factory", lambda: _NullSession())
-    monkeypatch.setattr(sweep, "get_redis", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(sweep, "get_redis", MagicMock(return_value=MagicMock()))
 
     class _FakeClient:
         async def __aenter__(self):
@@ -211,7 +211,7 @@ async def test_breaker_open_aborts_sweep(monkeypatch: pytest.MonkeyPatch) -> Non
             return None
 
     monkeypatch.setattr(sweep, "async_session_factory", lambda: _NullSession())
-    monkeypatch.setattr(sweep, "get_redis", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(sweep, "get_redis", MagicMock(return_value=MagicMock()))
 
     class _FakeClient:
         async def __aenter__(self):
@@ -258,7 +258,7 @@ async def test_one_bucket_429_continues_with_others(
             return None
 
     monkeypatch.setattr(sweep, "async_session_factory", lambda: _NullSession())
-    monkeypatch.setattr(sweep, "get_redis", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(sweep, "get_redis", MagicMock(return_value=MagicMock()))
 
     class _FakeClient:
         async def __aenter__(self):

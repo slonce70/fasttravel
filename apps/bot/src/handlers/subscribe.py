@@ -52,6 +52,25 @@ def _format_stars(value: int | None) -> str:
     return f"{value}⭐+"
 
 
+def _budget_kb() -> InlineKeyboardMarkup:
+    """Budget-step keyboard — shared by the country→budget step and the
+    stars→budget back navigation."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="до 30 000 ₴", callback_data="subb:30000"),
+                InlineKeyboardButton(text="до 50 000 ₴", callback_data="subb:50000"),
+            ],
+            [
+                InlineKeyboardButton(text="до 80 000 ₴", callback_data="subb:80000"),
+                InlineKeyboardButton(text="до 120 000 ₴", callback_data="subb:120000"),
+            ],
+            [InlineKeyboardButton(text="Будь-яка ціна", callback_data="subb:any")],
+            [InlineKeyboardButton(text="◀ Назад", callback_data="subb:back")],
+        ]
+    )
+
+
 def _render_subscriptions(subs: list[dict[str, Any]]) -> str:
     if not subs:
         return (
@@ -152,24 +171,10 @@ async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(country=iso, country_name=name)
     await state.set_state(SubscribeState.budget)
 
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="до 30 000 ₴", callback_data="subb:30000"),
-                InlineKeyboardButton(text="до 50 000 ₴", callback_data="subb:50000"),
-            ],
-            [
-                InlineKeyboardButton(text="до 80 000 ₴", callback_data="subb:80000"),
-                InlineKeyboardButton(text="до 120 000 ₴", callback_data="subb:120000"),
-            ],
-            [InlineKeyboardButton(text="Будь-яка ціна", callback_data="subb:any")],
-            [InlineKeyboardButton(text="◀ Назад", callback_data="subb:back")],
-        ]
-    )
     await message.edit_text(
         f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · максимальний бюджет\\? 💰",
         parse_mode=ParseMode.MARKDOWN_V2,
-        reply_markup=kb,
+        reply_markup=_budget_kb(),
     )
     await query.answer()
 
@@ -233,24 +238,10 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
         iso = data.get("country", "")
         name = data.get("country_name") or country_name_uk(iso)
         await state.set_state(SubscribeState.budget)
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="до 30 000 ₴", callback_data="subb:30000"),
-                    InlineKeyboardButton(text="до 50 000 ₴", callback_data="subb:50000"),
-                ],
-                [
-                    InlineKeyboardButton(text="до 80 000 ₴", callback_data="subb:80000"),
-                    InlineKeyboardButton(text="до 120 000 ₴", callback_data="subb:120000"),
-                ],
-                [InlineKeyboardButton(text="Будь-яка ціна", callback_data="subb:any")],
-                [InlineKeyboardButton(text="◀ Назад", callback_data="subb:back")],
-            ]
-        )
         await message.edit_text(
             f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · максимальний бюджет\\? 💰",
             parse_mode=ParseMode.MARKDOWN_V2,
-            reply_markup=kb,
+            reply_markup=_budget_kb(),
         )
         await query.answer()
         return

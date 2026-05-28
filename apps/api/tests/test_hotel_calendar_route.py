@@ -157,9 +157,13 @@ async def test_calendar_service_exact_nights_annotations_use_detector_scope() ->
         f"AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'"
         in session.statement
     )
-    assert f"cp.price_uah < hs.p50 * {DATE_DIP_POLICY.discount_multiplier_sql}" in session.statement
     assert (
-        f"hs.p50 - cp.price_uah >= {DATE_DIP_POLICY.min_absolute_saving_uah}" in session.statement
+        f"cp.price_uah < hs.trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}"
+        in session.statement
+    )
+    assert (
+        f"hs.trimmed_mean - cp.price_uah >= {DATE_DIP_POLICY.min_absolute_saving_uah}"
+        in session.statement
     )
     assert rows[0].date_dip_discount_pct is None
 

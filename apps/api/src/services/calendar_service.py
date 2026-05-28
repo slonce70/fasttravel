@@ -88,15 +88,15 @@ async def get_calendar(
                 SELECT
                     cp.check_in,
                     cp.price_uah,
-                    hs.p50 AS baseline_p50,
-                    ROUND((1 - cp.price_uah::numeric / hs.p50) * 100, 2) AS discount_pct,
+                    hs.trimmed_mean AS baseline_p50,
+                    ROUND((1 - cp.price_uah::numeric / hs.trimmed_mean) * 100, 2) AS discount_pct,
                     hs.sample_n
                 FROM candidate_prices cp
                 {date_dip_neighbor_stats_lateral_sql(candidate_alias="cp")}
                 WHERE cp.check_in BETWEEN CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'
                                       AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'
-                  AND cp.price_uah < hs.p50 * {DATE_DIP_POLICY.discount_multiplier_sql}
-                  AND hs.p50 - cp.price_uah >= {DATE_DIP_POLICY.min_absolute_saving_uah}
+                  AND cp.price_uah < hs.trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}
+                  AND hs.trimmed_mean - cp.price_uah >= {DATE_DIP_POLICY.min_absolute_saving_uah}
             ),
             best_date_dip AS (
                 SELECT DISTINCT ON (check_in)

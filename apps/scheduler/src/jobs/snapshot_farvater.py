@@ -162,7 +162,7 @@ async def _process_hotel(
         try:
             from src.infra.cache import get_redis
 
-            redis = await get_redis()
+            redis = get_redis()
             async with async_session_factory() as db:
                 row = (
                     await db.execute(

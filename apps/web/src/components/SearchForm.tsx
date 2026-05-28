@@ -6,6 +6,7 @@ import { Button } from './ui/Button';
 import { PaxPicker, paxFromSearchParams, paxToSearchParams, type PaxValue } from './PaxPicker';
 import { toApiSearchParams, type RouteSearchParams } from '@/lib/search-params';
 import { DEFAULT_SEARCH_SORT, normalizeSearchSort } from '@/lib/search-sort';
+import { accusativeCountry, uniqueCountriesByIso } from '@/lib/countries';
 import { PRECOMPUTED_NIGHTS, type CountryOut } from '@/lib/types';
 
 /**
@@ -125,28 +126,8 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
     router.push(query ? `/search?${query}` : '/search');
   }
 
-  // Ukrainian accusative for the button label. Falls back to nominative for
-  // countries we haven't taught (won't happen often — list is short).
-  const accusative: Record<string, string> = {
-    Туреччина: 'Туреччину',
-    Єгипет: 'Єгипет',
-    ОАЕ: 'ОАЕ',
-    Греція: 'Грецію',
-    Іспанія: 'Іспанію',
-    Болгарія: 'Болгарію',
-    Чорногорія: 'Чорногорію',
-    Хорватія: 'Хорватію',
-    Кіпр: 'Кіпр',
-    Таїланд: 'Таїланд',
-    Мальдіви: 'Мальдіви',
-    Італія: 'Італію',
-    Туніс: 'Туніс',
-    'Домініканська Республіка': 'Домініканську Республіку',
-    Україна: 'Україну',
-  };
-
   const submitLabel = selectedCountry
-    ? `Знайти тури в ${accusative[selectedCountry.name_uk] ?? selectedCountry.name_uk}`
+    ? `Знайти тури в ${accusativeCountry(selectedCountry.name_uk)}`
     : 'Знайти тури';
 
   return (
@@ -268,18 +249,6 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
 
 function readSearchParam(params: ReturnType<typeof useSearchParams>, key: string): string | null {
   return params.get(key) ?? params.get(`amp;${key}`);
-}
-
-function uniqueCountriesByIso(countries: CountryOut[]): CountryOut[] {
-  const seen = new Set<string>();
-  const result: CountryOut[] = [];
-  for (const country of countries) {
-    const iso = country.country_iso2.toUpperCase();
-    if (seen.has(iso)) continue;
-    seen.add(iso);
-    result.push(country);
-  }
-  return result;
 }
 
 function Field({
