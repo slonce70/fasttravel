@@ -58,10 +58,7 @@ describe('DealCard', () => {
     const heading = screen.getByText('Belport Beach Hotel');
     expect(heading).toBeInTheDocument();
     // Permalink anchor under the card footer
-    expect(screen.getByLabelText(/Постійне посилання/i)).toHaveAttribute(
-      'href',
-      '/deals/1',
-    );
+    expect(screen.getByLabelText(/Постійне посилання/i)).toHaveAttribute('href', '/deals/1');
   });
 
   it('rounds the discount percent and includes the method badge icon', () => {
@@ -79,6 +76,12 @@ describe('DealCard', () => {
     expect(screen.getByText(/51/)).toBeInTheDocument();
     // Current price uses bigger font but same component — verify present.
     expect(screen.getByText(/32/)).toBeInTheDocument();
+  });
+
+  it('does not strike calendar-anomaly baselines like an old booking price', () => {
+    render(<DealCard deal={fullDeal} />);
+
+    expect(screen.getByText(/інші дати/i)).not.toHaveClass('line-through');
   });
 
   it('renders the affiliate CTA with rel="sponsored noopener nofollow"', () => {
@@ -112,5 +115,20 @@ describe('DealCard', () => {
     expect(screen.getByText(/Дешевше за схожі готелі/i)).toBeInTheDocument();
     expect(screen.getByText(/орієнтир схожих/i)).toBeInTheDocument();
     expect(screen.queryByText(/зазвичай/i)).toBeNull();
+  });
+
+  it('labels percentile deals as same-hotel history without striking the baseline', () => {
+    render(<DealCard deal={{ ...fullDeal, detection_method: 'percentile' }} />);
+
+    expect(screen.getByText(/Ціна нижча за звичайну для цього готелю/i)).toBeInTheDocument();
+    expect(screen.getByText(/^зазвичай/)).not.toHaveClass('line-through');
+  });
+
+  it('labels unknown deal methods with neutral non-struck baselines', () => {
+    render(<DealCard deal={{ ...fullDeal, detection_method: 'legacy_experiment' }} />);
+
+    expect(screen.getByText(/орієнтир ціни/i)).toBeInTheDocument();
+    expect(screen.queryByText(/зазвичай/i)).toBeNull();
+    expect(screen.getByText(/^орієнтир/)).not.toHaveClass('line-through');
   });
 });

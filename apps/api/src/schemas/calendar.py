@@ -27,6 +27,10 @@ class CalendarDay(BaseModel):
     min_price_uah: int | None = None
     prices_by_night: dict[str, int] = Field(default_factory=dict)
     observed_at: datetime | None = None
+    date_dip_price_uah: int | None = None
+    date_dip_baseline_uah: int | None = None
+    date_dip_discount_pct: float | None = None
+    date_dip_sample_n: int | None = None
 
 
 class OfferOut(BaseModel):

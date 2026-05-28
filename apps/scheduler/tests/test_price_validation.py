@@ -21,6 +21,18 @@ from src.jobs._price_validation import (
     validate_price_row,
 )
 
+
+def test_jobs_price_validation_shim_keeps_legacy_imports_compatible() -> None:
+    from src.jobs import _price_validation
+    from src.services import price_validation
+
+    assert _price_validation.REJECT_BAD_DATE == price_validation.REJECT_BAD_DATE
+    assert _price_validation.REJECT_EMPTY_SYSTEM_KEY == price_validation.REJECT_EMPTY_SYSTEM_KEY
+    assert _price_validation.REJECT_NON_POSITIVE_PRICE == price_validation.REJECT_NON_POSITIVE_PRICE
+    assert _price_validation.parse_check_in is price_validation.parse_check_in
+    assert _price_validation.validate_price_row is price_validation.validate_price_row
+
+
 # ── validate_price_row ───────────────────────────────────────────────────
 
 

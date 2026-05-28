@@ -68,6 +68,15 @@ export interface CalendarDay {
   /** Keyed by stringified night count. Empty when no nights matched. */
   prices_by_night: Record<string, number>;
   observed_at: string | null; // ISO datetime
+  /**
+   * Server-side date-dip annotation for the displayed minimum exact-nights
+   * window. Null when the row is only a heatmap value, or when no exact offer
+   * on that date passes the production detector's local comparable-date gates.
+   */
+  date_dip_price_uah?: number | null;
+  date_dip_baseline_uah?: number | null;
+  date_dip_discount_pct?: number | null;
+  date_dip_sample_n?: number | null;
 }
 
 /** apps/api/src/schemas/calendar.py :: OfferOut */

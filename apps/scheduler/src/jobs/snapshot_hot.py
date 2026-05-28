@@ -29,6 +29,14 @@ from typing import cast
 
 from sqlalchemy import text
 
+from shared.refresh_queue import (
+    REFRESH_QUEUE_KEY,
+    RefreshQueueFullError,
+    push_refresh_job_with_cap,
+)
+from shared.refresh_queue import (
+    REFRESH_QUEUE_MAX_LEN as SHARED_REFRESH_QUEUE_MAX_LEN,
+)
 from src.infra.cache import get_redis
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -37,7 +45,8 @@ log = get_logger(__name__)
 
 
 HOT_KEY_PREFIX = "hot:hotel:"
-QUEUE_KEY = "refresh:queue"
+QUEUE_KEY = REFRESH_QUEUE_KEY
+REFRESH_QUEUE_MAX_LEN = SHARED_REFRESH_QUEUE_MAX_LEN
 TOP_N = 50
 OPERATOR_CODE = "farvater"
 # Mirrors `apps/api/src/routers/hotels.py::REFRESH_MIN_INTERVAL_S` — if a
@@ -155,7 +164,16 @@ async def snapshot_hot(*, top_n: int = TOP_N) -> int:
                 "hot_count": count,
             }
         )
-        await cast(Awaitable[int], redis.lpush(QUEUE_KEY, payload))
+        try:
+            await push_refresh_job_with_cap(redis, payload)
+        except RefreshQueueFullError as exc:
+            log.warning(
+                "snapshot_hot.queue_full",
+                current=exc.current,
+                cap=exc.cap,
+                skipped_remaining=len(top) - queued,
+            )
+            break
         queued += 1
 
     # Sprint 2.2 — REFRESH_QUEUE_DEPTH was declared in metrics.py from

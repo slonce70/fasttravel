@@ -28,8 +28,9 @@ rewrites the raw query string before route matching. Router stays clean.
 from __future__ import annotations
 
 from datetime import date
+from http import HTTPStatus
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.deps import get_db
@@ -37,6 +38,9 @@ from src.schemas.search import PaginatedSearchResults
 from src.services.search_service import search_hotels
 
 router = APIRouter(prefix="/api/search", tags=["search"])
+
+_HTTP_422_INVALID_QUERY = HTTPStatus.UNPROCESSABLE_ENTITY
+_MAX_KIDS = 6
 
 
 def _parse_kids(raw: str | None) -> list[int]:
@@ -47,23 +51,28 @@ def _parse_kids(raw: str | None) -> list[int]:
         value = part.strip()
         if not value:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=_HTTP_422_INVALID_QUERY,
                 detail="kids must be a comma-separated list of ages 1..17",
             )
         try:
             age = int(value)
         except ValueError:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=_HTTP_422_INVALID_QUERY,
                 detail="kids must be a comma-separated list of ages 1..17",
             ) from None
         if not 1 <= age <= 17:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=_HTTP_422_INVALID_QUERY,
                 detail="kids ages must be between 1 and 17",
             )
         out.append(age)
-    return out[:6]
+        if len(out) > _MAX_KIDS:
+            raise HTTPException(
+                status_code=_HTTP_422_INVALID_QUERY,
+                detail="kids must include no more than 6 ages",
+            )
+    return out
 
 
 @router.get("", response_model=PaginatedSearchResults)

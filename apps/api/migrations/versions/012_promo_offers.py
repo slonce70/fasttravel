@@ -20,9 +20,10 @@ This table is INTENTIONALLY separate from `price_observations`:
   - the `static_tours_sweep` job (introduced in Sprint 1C) writes here
     every 2 hours per (bucket, country) — much higher cadence than the
     calendar snapshot, and a different write pattern entirely
-  - downstream `detect_deals` will read promo_offers as a SECOND
-    branch with `detection_method = 'bucket_<slug>'` so a bucketed
-    promo always becomes a deal regardless of the percentile rule
+  - downstream promo surfaces read `promo_offers` directly via
+    `/api/promotions`; `detect_deals` now remains date-dip only. Historical
+    `promo_discount` deals are still render/API-supported when seeded by
+    older data or manual compatibility tests.
 
 `bucket_slug` is what encodes the promo type. We don't model isPromo
 as a column because farvater's own `isPromo` field appears deprecated
@@ -151,7 +152,7 @@ def upgrade() -> None:
     )
 
     # Hot path: "show me the latest gorjashhie-tury offers" for
-    # /api/promotions?bucket=... and the detect_deals bucket branch.
+    # /api/promotions?bucket=...
     op.create_index(
         "ix_promo_offers_bucket_observed",
         "promo_offers",

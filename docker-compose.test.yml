@@ -4,7 +4,8 @@
 # Usage:
 #   docker compose -f docker-compose.yml -f docker-compose.test.yml build api-test scheduler-test bot-test
 #   docker compose up -d postgres redis
-#   docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test pytest
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test alembic upgrade head
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test pytest -q
 
 services:
   api-test:

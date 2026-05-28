@@ -7,7 +7,6 @@ FastAPI integration that's API-only (scheduler / bot don't need it).
 from __future__ import annotations
 
 from shared.infra.sentry import configure_sentry as _shared_configure
-
 from src.config import get_settings
 
 

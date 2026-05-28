@@ -3,7 +3,7 @@
 Hotels ingested before the gallery/review/JSON-LD extractors landed are
 stuck on a single og:image and no review data. This script walks every
 active hotel with `photos_jsonb` shorter than 5 entries (or no review_score)
-and re-runs `_fetch_hotel_meta + _upsert_hotel`.
+and re-runs `_fetch_hotel_meta + upsert_hotel`.
 
 Run from inside the scheduler container:
 
@@ -11,7 +11,7 @@ Run from inside the scheduler container:
 
 Throttled to the same `PER_REQUEST_DELAY_S` the regular scraper uses.
 Safe to re-run — the upsert is idempotent and the photo column never
-shrinks (see `_upsert_hotel`).
+shrinks (see `upsert_hotel`).
 """
 
 from __future__ import annotations
@@ -25,13 +25,10 @@ from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
 from src.jobs.snapshot_farvater import (
     PER_REQUEST_DELAY_S,
-    _country_dest_id,
-    _ensure_operator,
     _fetch_hotel_meta,
     _http_client,
-    _upsert_hotel,
-    _upsert_mapping,
 )
+from src.services.hotel_upsert import country_dest_id, ensure_operator, upsert_hotel, upsert_mapping
 
 log = get_logger(__name__)
 
@@ -65,7 +62,7 @@ def _path_from_slug(slug: str, iso2: str | None) -> str | None:
 async def main(limit: int) -> None:
     async with async_session_factory() as db:
         rows = (await db.execute(_TARGET_SQL, {"lim": limit})).all()
-        operator_id = await _ensure_operator(db)
+        operator_id = await ensure_operator(db)
         await db.commit()
 
     log.info("backfill.start", targets=len(rows))
@@ -82,9 +79,9 @@ async def main(limit: int) -> None:
             if meta is None:
                 continue
             async with async_session_factory() as db:
-                dest_id = await _country_dest_id(db, meta.country_iso2)
-                await _upsert_hotel(db, meta, dest_id, operator_id)
-                await _upsert_mapping(db, row.id, operator_id, meta)
+                dest_id = await country_dest_id(db, meta.country_iso2)
+                await upsert_hotel(db, meta, dest_id, operator_id)
+                await upsert_mapping(db, row.id, operator_id, meta)
                 await db.commit()
             updated += 1
             if fetched % 25 == 0:

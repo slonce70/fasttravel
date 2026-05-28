@@ -11,7 +11,15 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from src.jobs._dedup_window import DEDUP_WINDOW_HOURS, existing_dedup_keys
+from src.services.dedup_window import DEDUP_WINDOW_HOURS, existing_dedup_keys
+
+
+def test_jobs_dedup_window_shim_keeps_legacy_imports_compatible() -> None:
+    from src.jobs import _dedup_window
+    from src.services import dedup_window
+
+    assert _dedup_window.DEDUP_WINDOW_HOURS == dedup_window.DEDUP_WINDOW_HOURS
+    assert _dedup_window.existing_dedup_keys is dedup_window.existing_dedup_keys
 
 
 async def test_returns_5_tuple_with_room_category() -> None:

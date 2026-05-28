@@ -1,18 +1,8 @@
-"""End-to-end test for the promo-deal pipeline (Sprint 1A-1E joint).
+"""End-to-end tests for promotions plus historical promo-discount deals.
 
-Simulates the production data flow without spinning up the actual
-scheduler jobs:
-
-  1. Seed `promo_offers` directly (mirrors what static_tours_sweep
-     would write after a sweep tick).
-  2. Run the promo-discount SQL that detect_deals issues.
-  3. Hit `GET /api/promotions` and `GET /api/deals` to confirm both
-     surfaces show the new data with the correct shape.
-
-This catches integration regressions that the per-component unit
-tests would miss — e.g. if `detection_method` ever stops being
-copied through, both deals and promotions would still individually
-pass but the end-to-end pipeline would be broken.
+`detect_deals` is production date-dip only. `promo_offers` feed
+`/api/promotions`; historical/manual `promo_discount` rows remain valid
+`/api/deals` data when they already exist as deals.
 """
 
 from __future__ import annotations
@@ -20,51 +10,11 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.deal import Deal
-
-# Same SQL the production detect_deals._BUCKET_SQL runs. Mirrored here
-# so a refactor of the production SQL doesn't silently break the e2e
-# contract — when they drift, this test fails first.
-# Test variant of detect_deals._BUCKET_SQL with a `po.hotel_id =
-# :scoped_hotel_id` filter so the dev DB's existing promo_offers (live
-# scheduler may have populated thousands) don't drown the test row.
-_BUCKET_SQL = text(
-    """
-    INSERT INTO deals (
-        hotel_id, operator_id, check_in, nights, meal_plan,
-        price_uah, baseline_p50, discount_pct, deep_link,
-        source, detection_method
-    )
-    SELECT DISTINCT ON (cand.hotel_id)
-        cand.hotel_id, cand.operator_id, cand.check_in, cand.nights,
-        cand.meal_plan, cand.price_uah, cand.baseline_p50,
-        cand.discount_pct, cand.deep_link,
-        'farvater_scrape', 'promo_discount'
-    FROM (
-        SELECT
-            po.hotel_id, po.operator_id, po.check_in, po.nights,
-            po.meal_plan, po.bucket_slug, po.price_uah,
-            po.red_price_uah AS baseline_p50,
-            ROUND(100 * (1 - po.price_uah::numeric / po.red_price_uah), 2)
-                AS discount_pct,
-            'https://farvater.travel/?q=' || po.system_key AS deep_link
-        FROM promo_offers po
-        WHERE po.hotel_id = :scoped_hotel_id
-          AND po.observed_at >= NOW() - INTERVAL '24 hours'
-          AND po.red_price_uah IS NOT NULL
-          AND po.red_price_uah > po.price_uah
-          AND po.check_in BETWEEN CURRENT_DATE + INTERVAL '5 days'
-                              AND CURRENT_DATE + INTERVAL '90 days'
-          AND po.operator_id IS NOT NULL
-    ) cand
-    ORDER BY cand.hotel_id, cand.discount_pct DESC
-    """
-)
 
 
 async def _scoped_promos(client: AsyncClient, hotel_id: int, **params) -> list:
@@ -127,7 +77,7 @@ async def _seed_full(session: AsyncSession) -> tuple[int, int]:
     ).scalar_one()
 
     # Two promos in different buckets — both appear in /api/promotions.
-    # Only the best real strike-through becomes a /api/deals row.
+    # Promo offers are not converted into /api/deals by the active detector.
     for bucket, sk, price, red in [
         ("gorjashhie-tury", f"sk-hot-{suffix}", 29847, 39847),
         ("rannee-bronirovanie", f"sk-early-{suffix}", 25000, 50000),
@@ -153,15 +103,54 @@ async def _seed_full(session: AsyncSession) -> tuple[int, int]:
     return hotel_id, operator_id
 
 
-async def test_e2e_promo_to_deal_to_endpoints(
+async def _seed_historical_promo_discount_deal(
+    session: AsyncSession,
+    *,
+    hotel_id: int,
+    operator_id: int,
+) -> int:
+    deal_id = (
+        await session.execute(
+            text(
+                """INSERT INTO deals
+                     (hotel_id, operator_id, check_in, nights, meal_plan,
+                      price_uah, baseline_p50, discount_pct, deep_link,
+                      source, detection_method, detected_at)
+                   VALUES (:h, :o, :ci, 7, 'AI', 25000, 50000, 50.0,
+                           'https://farvater.travel/?q=historical-promo',
+                           'farvater_scrape', 'promo_discount', NOW())
+                   RETURNING id"""
+            ),
+            {
+                "h": hotel_id,
+                "o": operator_id,
+                "ci": date.today() + timedelta(days=30),
+            },
+        )
+    ).scalar_one()
+    return int(deal_id)
+
+
+async def test_promotions_and_historical_promo_discount_deal_surfaces(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     hotel_id, operator_id = await _seed_full(db_session)
 
-    # ── Step 1: detect_deals bucket SQL runs ───────────────────────────
-    await db_session.execute(_BUCKET_SQL, {"scoped_hotel_id": hotel_id})
+    # Promo offers alone stay promotions at the API layer. The scheduler's
+    # detect_deals job is responsible for promoting real strike-through promos
+    # into `/api/deals` rows.
+    before_deals = (
+        (await db_session.execute(select(Deal).where(Deal.hotel_id == hotel_id))).scalars().all()
+    )
+    assert before_deals == []
 
-    # ── Step 2: one best real promo discount was inserted ──────────────
+    await _seed_historical_promo_discount_deal(
+        db_session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+    )
+
+    # ── Historical promo_discount deal shape is still supported ─────────
     deals = (
         (
             await db_session.execute(
@@ -172,25 +161,23 @@ async def test_e2e_promo_to_deal_to_endpoints(
         .all()
     )
     assert len(deals) == 1
-    methods = {d.detection_method for d in deals}
-    assert methods == {"promo_discount"}
+    deal = deals[0]
+    assert deal.detection_method == "promo_discount"
+    assert float(deal.discount_pct) == 50.0
+    assert deal.source == "farvater_scrape"
+    assert "farvater.travel" in deal.deep_link
 
-    # Discount is computed from red/price. The best seeded offer is 50%.
-    for d in deals:
-        assert float(d.discount_pct) == pytest.approx(50.0, abs=0.1)
-        assert d.source == "farvater_scrape"
-        assert "farvater.travel" in d.deep_link
-
-    # ── Step 3: /api/promotions returns both promo_offers ──────────────
+    # ── /api/promotions returns both promo_offers ───────────────────────
     # Paginate because the dev DB may have many unrelated rows.
     our_promos = await _scoped_promos(client, hotel_id, country="TR")
     assert len(our_promos) == 2
     buckets = {p["bucket_slug"] for p in our_promos}
     assert buckets == {"gorjashhie-tury", "rannee-bronirovanie"}
 
-    # ── Step 4: /api/deals shows the real discounted deal only ─────────
+    # ── /api/deals shows the historical promo_discount deal ─────────────
     our_deals = await _scoped_deals(client, hotel_id, country="TR")
     assert len(our_deals) == 1
+    assert our_deals[0]["detection_method"] == "promo_discount"
 
 
 async def test_e2e_bucket_filter_isolates_one_bucket(
@@ -207,30 +194,40 @@ async def test_e2e_bucket_filter_isolates_one_bucket(
 async def test_e2e_freshness_filter_blocks_stale_deals(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A deal detected > 48h ago should NOT appear on /api/deals
-    (Sprint 2.4 filter)."""
+    """A deal detected > 48h ago should NOT appear on /api/deals."""
     hotel_id, operator_id = await _seed_full(db_session)
     # Hand-insert a stale deal with detection_method=percentile
-    await db_session.execute(
-        text(
-            """INSERT INTO deals
-                 (hotel_id, operator_id, check_in, nights, meal_plan,
-                  price_uah, baseline_p50, discount_pct, deep_link,
-                  source, detection_method, detected_at)
-               VALUES (:h, :o, :ci, 7, 'AI', 8000, 12000, 33.33,
-                       'https://farvater.travel/x', 'farvater_scrape',
-                       'percentile', :dt)"""
-        ),
-        {
-            "h": hotel_id,
-            "o": operator_id,
-            "ci": date.today() + timedelta(days=30),
-            "dt": datetime.now(UTC) - timedelta(hours=72),  # 3 days ago
-        },
+    stale_id = (
+        await db_session.execute(
+            text(
+                """INSERT INTO deals
+                     (hotel_id, operator_id, check_in, nights, meal_plan,
+                      price_uah, baseline_p50, discount_pct, deep_link,
+                      source, detection_method, detected_at)
+                   VALUES (:h, :o, :ci, 7, 'AI', 8000, 12000, 33.33,
+                           'https://farvater.travel/x', 'farvater_scrape',
+                           'percentile', :dt)
+                   RETURNING id"""
+            ),
+            {
+                "h": hotel_id,
+                "o": operator_id,
+                "ci": date.today() + timedelta(days=30),
+                "dt": datetime.now(UTC) - timedelta(hours=72),  # 3 days ago
+            },
+        )
+    ).scalar_one()
+    fresh_id = await _seed_historical_promo_discount_deal(
+        db_session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
     )
+
     our = await _scoped_deals(client, hotel_id)
-    # Stale deal we just seeded (72h ago) must NOT appear; any deals
-    # produced earlier in the test (from promo branch) are recent.
+    ids = {item["id"] for item in our}
+    assert fresh_id in ids
+    assert stale_id not in ids
+
     assert all(
         (
             datetime.now(UTC) - datetime.fromisoformat(d["detected_at"].replace("Z", "+00:00"))

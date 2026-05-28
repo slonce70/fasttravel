@@ -22,17 +22,18 @@
 
 ## Як виявляються "акційні пропозиції"
 
-Серцевина продукту — `apps/scheduler/src/jobs/detect_deals.py`. Працює раз на годину, паралельно прогоняючи 5 SQL-стратегій по таблиці `current_prices`:
+Серцевина продукту — `apps/scheduler/src/jobs/detect_deals.py`. Працює раз на годину і зараз запускає одну production-стратегію по таблиці `current_prices`: same-hotel `date_dip`, який створює `calendar_anomaly` тільки коли локальна ціна справді дешевша за порівнянні дати того самого готелю.
 
-| Метод (`detection_method`) | Що порівнюється | Сила сигналу |
+| Метод (`detection_method`) | Що порівнюється | Статус |
 |---|---|---|
-| **`calendar_anomaly` (date_dip)** | ціна одного дня vs медіана інших дат **того самого готелю** | 🟢 найсильніший — це і є "акція" в сенсі продукту |
-| **`calendar_anomaly` (stay_inversion)** | 10-ночна ціна < 7-ночної в тому самому готелі/даті | 🟡 flag-gated (часто легальна знижка оператора) |
-| **`promo_discount`** | scrap'нута strike-through ціна оператора | 🟡 маркетингова |
-| **`percentile` (warm)** | ціна сьогодні vs історична медіана цього готелю | 🟢 потребує ≥10 спостережень |
-| **`peer_anomaly` (cold-start)** | ціна vs сусідні готелі (зірковість + дестинація + meal) | 🔴 слабкий, не публікується в каналі |
+| **`calendar_anomaly` (date_dip)** | ціна одного дня vs trimmed baseline локальних дат **того самого готелю / ночей / meal / room-family-quality-view bucket** | active production detector |
+| **`promo_discount`** | реальна strike-through ціна оператора | render/API supported, не активна SQL-гілка detector job |
+| **`percentile`** | ціна сьогодні vs історична медіана цього готелю | render/API supported, не активна SQL-гілка detector job |
+| **`peer_anomaly`** | ціна vs сусідні готелі | render/API supported для старих/імпортованих рядків; не публікується в каналі |
 
-Канал `post_deals` показує тільки `calendar_anomaly` / `promo_discount` / `percentile`. `peer_anomaly` йде тільки в UI feed (`/api/deals`) і в персональні алерти при дисконті ≥ 25%.
+Канал `post_deals` публікує `calendar_anomaly` від `date_dip` при дисконті ≥ 4%. `peer_anomaly` не йде в канал; персональні алерти пропускають його тільки при дисконті ≥ 25%, інші методи — від ≥ 4%.
+
+Пороги `date_dip` живуть в одному місці: `apps/shared/deal_detection.py` (`DATE_DIP_POLICY`). Поточна політика: check-in через 5-90 днів, сусідні дати ±14 днів, мінімум 4 порівнянні сусідні дати, spread не більше 2.5x, ціна строго нижча за 96% trimmed local baseline і мінімум на 1500 грн дешевша.
 
 Деталі бачить кожен користувач у бот-картці: причина внизу повідомлення (`📉 Аномально дешева дата у цьому готелі`).
 
@@ -133,14 +134,21 @@ fasttravel/
 ### Запуск тестів
 
 ```bash
-# Bot (43 tests) — використовуй scheduler venv бо там aiogram
+# Bot — використовуй scheduler venv бо там aiogram
 cd apps/bot && PYTHONPATH=.:.. ../scheduler/.venv/bin/python -m pytest tests/
 
-# Scheduler (139 tests)
+# Scheduler local tests + DB integration tests in scheduler-test
 cd apps/scheduler && PYTHONPATH=.:.. .venv/bin/python -m pytest tests/
+docker compose -f docker-compose.yml -f docker-compose.test.yml build api-test scheduler-test
+docker compose up -d postgres redis
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test alembic upgrade head
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps scheduler-test pytest tests/integration/ -q
 
-# API unit tests (потребують Postgres+Redis у compose)
-cd apps/api && PYTHONPATH=.:.. .venv/bin/python -m pytest tests/
+# API DB-backed tests: use the compose test image with dev deps
+docker compose -f docker-compose.yml -f docker-compose.test.yml build api-test
+docker compose up -d postgres redis
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test alembic upgrade head
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test pytest -q
 
 # Web (vitest + RTL)
 cd apps/web && pnpm test

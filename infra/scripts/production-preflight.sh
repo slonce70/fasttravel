@@ -11,6 +11,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_FILE="${ENV_FILE:-"$ROOT/.env"}"
 STRICT_ENV="${STRICT_ENV:-0}"
+HOST_OS="$(uname -s)"
 
 failures=0
 
@@ -327,11 +328,33 @@ else
 fi
 
 if curl -fsS --max-time 3 http://localhost:9090/api/v1/targets >/tmp/fasttravel-targets.json; then
-    down_targets="$(jq '[.data.activeTargets[] | select(.health != "up")] | length' /tmp/fasttravel-targets.json)"
+    ignore_node_exporter=false
+    if [[ "$HOST_OS" == "Darwin" ]]; then
+        # Docker Desktop for macOS rejects the node-exporter's
+        # `/:/host:ro,rslave` mount. Keep production/Linux strict, but don't
+        # make local preflight fail only because that host-metrics sidecar
+        # cannot run on the developer laptop.
+        ignore_node_exporter=true
+    fi
+    down_targets="$(
+        jq --argjson ignore_node "$ignore_node_exporter" \
+            '[.data.activeTargets[]
+              | select(.health != "up")
+              | select((($ignore_node | not) or .labels.job != "node"))] | length' \
+            /tmp/fasttravel-targets.json
+    )"
     if [[ "$down_targets" != "0" ]]; then
-        jq '.data.activeTargets[] | {job:.labels.job, health, lastError}' /tmp/fasttravel-targets.json >&2
+        jq --argjson ignore_node "$ignore_node_exporter" \
+            '.data.activeTargets[]
+             | select(.health != "up")
+             | select((($ignore_node | not) or .labels.job != "node"))
+             | {job:.labels.job, health, lastError}' \
+            /tmp/fasttravel-targets.json >&2
         fail "Prometheus has down targets"
     else
+        if [[ "$ignore_node_exporter" == "true" ]] && jq -e '.data.activeTargets[] | select(.labels.job == "node" and .health != "up")' /tmp/fasttravel-targets.json >/dev/null; then
+            warn "Prometheus node target is down on macOS Docker Desktop; ignored for local preflight"
+        fi
         ok "Prometheus targets are up"
     fi
 else

@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 
+from shared.meal_plans import RAW_LABELS_UK
+
 
 def plural_uk(count: int, one: str, few: str, many: str) -> str:
     """Return the Ukrainian noun form for an integer count."""
@@ -57,15 +59,6 @@ _CYRILLIC_MEAL_CODE_TRANSLATION = str.maketrans(
     }
 )
 
-_MEAL_LABELS = {
-    "AI": "Все включено",
-    "UAI": "Ультра все включено",
-    "HB": "Напівпансіон",
-    "BB": "Сніданок",
-    "FB": "Повний пансіон",
-    "RO": "Без харчування",
-}
-
 
 def _meal_code(raw: str) -> str | None:
     normalized = raw.translate(_CYRILLIC_MEAL_CODE_TRANSLATION).upper()
@@ -80,21 +73,21 @@ def format_meal_plan(raw: str | None) -> str:
     text = " ".join(str(raw).split())
     code = _meal_code(text)
     if code:
-        return _MEAL_LABELS[code]
+        return RAW_LABELS_UK[code]
 
     folded = text.casefold()
     if "ультра" in folded and "включ" in folded:
-        return _MEAL_LABELS["UAI"]
+        return RAW_LABELS_UK["UAI"]
     if "all inclusive" in folded or "все включ" in folded:
-        return _MEAL_LABELS["AI"]
+        return RAW_LABELS_UK["AI"]
     if "half board" in folded or "напівпанс" in folded or "полупанс" in folded:
-        return _MEAL_LABELS["HB"]
+        return RAW_LABELS_UK["HB"]
     if "breakfast" in folded or "снідан" in folded or "завтрак" in folded:
-        return _MEAL_LABELS["BB"]
+        return RAW_LABELS_UK["BB"]
     if "full board" in folded or "повний панс" in folded or "полный панс" in folded:
-        return _MEAL_LABELS["FB"]
+        return RAW_LABELS_UK["FB"]
     if "room only" in folded or "без харч" in folded or "без питан" in folded:
-        return _MEAL_LABELS["RO"]
+        return RAW_LABELS_UK["RO"]
     return text
 
 
@@ -102,6 +95,7 @@ def format_meal_plan(raw: str | None) -> str:
 # Price / date / hotel formatters used by channel broadcast, bot templates,
 # and subscriber notifications. Consolidated here from three copies.
 # ---------------------------------------------------------------------------
+
 
 def format_uah(amount: int | float | None) -> str:
     """``35200`` → ``'35 200 ₴'``. Returns ``'—'`` for None."""
@@ -111,13 +105,34 @@ def format_uah(amount: int | float | None) -> str:
 
 
 _MONTHS_UK_SHORT = (
-    "січ.", "лют.", "бер.", "квіт.", "трав.", "черв.",
-    "лип.", "серп.", "вер.", "жовт.", "лист.", "груд.",
+    "січ.",
+    "лют.",
+    "бер.",
+    "квіт.",
+    "трав.",
+    "черв.",
+    "лип.",
+    "серп.",
+    "вер.",
+    "жовт.",
+    "лист.",
+    "груд.",
 )
 
 _MONTHS_UK_FULL = (
-    "", "січня", "лютого", "березня", "квітня", "травня", "червня",
-    "липня", "серпня", "вересня", "жовтня", "листопада", "грудня",
+    "",
+    "січня",
+    "лютого",
+    "березня",
+    "квітня",
+    "травня",
+    "червня",
+    "липня",
+    "серпня",
+    "вересня",
+    "жовтня",
+    "листопада",
+    "грудня",
 )
 
 

@@ -1,9 +1,9 @@
 """Unit tests for static_tours_sweep.
 
-The sweep is the hot promo-ingest job — it's what writes into the
-promo_offers table that detect_deals (Sprint 1D) will then convert to
-bucket-based deals. These tests stub out the HTTP client + DB so they
-run without the docker stack.
+The sweep is the hot promo-ingest job: it writes into `promo_offers`, which
+feeds `/api/promotions`. `detect_deals` is intentionally date-dip only, so
+these tests verify ingest behavior rather than deal creation. They stub out
+the HTTP client + DB so they run without the docker stack.
 """
 
 from __future__ import annotations

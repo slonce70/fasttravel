@@ -42,6 +42,25 @@ def escape_markdown_v2(text: str | None) -> str:
     return text.translate(_ESCAPE_TABLE)
 
 
+def escape_markdown_v2_url(url: str | None) -> str:
+    """Escape a MarkdownV2 inline-link destination.
+
+    Telegram link destinations do not use the full body-text escape table:
+    escaping every punctuation mark can alter URLs. The characters that break
+    `[text](url)` in our generated links are `)` and backslash.
+    """
+    if not url:
+        return ""
+    return url.replace("\\", "\\\\").replace(")", "\\)")
+
+
+def escape_markdown_v2_code(text: str | None) -> str:
+    """Escape MarkdownV2 text inside `code` or ```pre``` entities."""
+    if not text:
+        return ""
+    return text.replace("\\", "\\\\").replace("`", "\\`")
+
+
 def make_bot(token: str) -> Bot:
     """Construct an aiogram Bot with MarkdownV2 as the default parse mode."""
     return Bot(

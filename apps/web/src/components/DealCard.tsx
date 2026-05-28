@@ -17,7 +17,11 @@ export function DealCard({ deal }: DealCardProps) {
   const signal = getDealSignalCopy(deal.detection_method);
   return (
     <Card className="flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
-      <Link href={href} aria-label={heading} className="relative block h-40 w-full overflow-hidden bg-slate-100">
+      <Link
+        href={href}
+        aria-label={heading}
+        className="relative block h-40 w-full overflow-hidden bg-slate-100"
+      >
         {deal.hotel_photo_url ? (
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
@@ -61,12 +65,7 @@ export function DealCard({ deal }: DealCardProps) {
           {signal.reason}
         </p>
         <div className="mt-auto">
-          <p
-            className={cn(
-              'text-xs text-slate-400',
-              signal.strikeBaseline && 'line-through',
-            )}
-          >
+          <p className={cn('text-xs text-slate-400', signal.strikeBaseline && 'line-through')}>
             {signal.baselineLabel} {formatPrice(deal.baseline_p50)}
           </p>
           <p className="text-2xl font-bold text-brand-800">{formatPrice(deal.price_uah)}</p>
@@ -76,7 +75,7 @@ export function DealCard({ deal }: DealCardProps) {
         <Link
           href={`/deals/${deal.id}`}
           className="text-xs text-slate-500 hover:text-slate-700"
-          aria-label={`Постійне посилання на знижку ${heading}`}
+          aria-label={`Постійне посилання на варіант ${heading}`}
         >
           Permalink →
         </Link>

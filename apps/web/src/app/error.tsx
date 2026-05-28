@@ -12,7 +12,6 @@ export default function ErrorBoundary({
 }) {
   useEffect(() => {
     // Keep local visibility until a browser-side reporter is configured.
-    // eslint-disable-next-line no-console
     console.error('App error:', error);
   }, [error]);
 

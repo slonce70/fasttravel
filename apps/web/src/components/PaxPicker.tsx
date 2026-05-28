@@ -29,7 +29,7 @@ const DEFAULT_KID_AGE = 7;
 
 const ADULT_MIN = 1;
 const ADULT_MAX = 9;
-const KIDS_MAX = 4;
+const KIDS_MAX = 6;
 const KID_AGE_MIN = 1;
 const KID_AGE_MAX = 17;
 
@@ -367,20 +367,11 @@ function pluralUk(n: number, forms: [string, string, string]): string {
 
 /** Reads adults + kids from a URLSearchParams-like getter. */
 export function paxFromSearchParams(get: (key: string) => string | null): PaxValue {
-  const adultsRaw = get('adults');
-  const kidsRaw = get('kids');
-  const adults = adultsRaw ? Number(adultsRaw) : DEFAULT_PAX.adults;
-  const kids = kidsRaw
-    ? kidsRaw
-        .split(',')
-        .map((s) => Number(s.trim()))
-        .filter((n) => Number.isFinite(n) && n >= KID_AGE_MIN && n <= KID_AGE_MAX)
-    : [];
+  const adults = parseBoundedInt(get('adults'), ADULT_MIN, ADULT_MAX) ?? DEFAULT_PAX.adults;
+  const kids = parseKids(get('kids')) ?? [];
   return {
-    adults: Number.isFinite(adults)
-      ? Math.max(ADULT_MIN, Math.min(ADULT_MAX, adults))
-      : DEFAULT_PAX.adults,
-    kids: kids.slice(0, KIDS_MAX),
+    adults,
+    kids,
   };
 }
 
@@ -392,4 +383,20 @@ export function paxToSearchParams(qs: URLSearchParams, value: PaxValue): void {
   if (value.kids.length > 0) {
     qs.set('kids', value.kids.join(','));
   }
+}
+
+function parseBoundedInt(raw: string | null, min: number, max: number): number | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const value = Number(trimmed);
+  return Number.isSafeInteger(value) && value >= min && value <= max ? value : undefined;
+}
+
+function parseKids(raw: string | null): number[] | undefined {
+  if (!raw) return [];
+  const parts = raw.split(',').map((s) => s.trim());
+  if (parts.length === 0 || parts.length > KIDS_MAX) return undefined;
+  const kids = parts.map((part) => parseBoundedInt(part, KID_AGE_MIN, KID_AGE_MAX));
+  return kids.every((age): age is number => age !== undefined) ? kids : undefined;
 }

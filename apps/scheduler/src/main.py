@@ -162,6 +162,8 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(minute=15, timezone=TIMEZONE),
         id="notify_subscribers",
         name="notify_subscribers (hourly :15)",
+        max_instances=1,
+        coalesce=True,
     )
     # Hot-priority sweep — runs at :30 so it doesn't collide with the
     # MV refresh (:05) or the deal detector (:10). Pushes top-N viewed
@@ -177,6 +179,8 @@ def _build_scheduler() -> AsyncIOScheduler:
         IntervalTrigger(minutes=15, timezone=TIMEZONE),
         id="post_deals",
         name="post_deals (every 15 min)",
+        max_instances=1,
+        coalesce=True,
     )
 
     # Sprint 1C — promo-bucket sweep. Cheap (~10-50 POSTs/run), every

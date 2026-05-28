@@ -7,7 +7,13 @@ import { SearchForm } from '@/components/SearchForm';
 import { SearchSortControl } from '@/components/SearchSortControl';
 import { TelegramCta } from '@/components/TelegramCta';
 import { fetchDestinations, searchHotels, userMessageForApiError } from '@/lib/api-client';
-import { normalizeSearchSort } from '@/lib/search-sort';
+import {
+  PAGE_SIZE,
+  readParam,
+  searchHref,
+  toApiSearchParams,
+  type RouteSearchParams,
+} from '@/lib/search-params';
 import type { CountryOut, SearchParams } from '@/lib/types';
 
 export const metadata: Metadata = {
@@ -17,64 +23,6 @@ export const metadata: Metadata = {
 
 // Dynamic — query params drive the response, no caching that's worth the risk.
 export const dynamic = 'force-dynamic';
-
-type RouteSearchParams = {
-  country?: string;
-  // Phase 2 P0-1: backend now takes a single `check_in` (the day the user
-  // wants to fly out) + `nights` + `meal_plan` rather than a date range.
-  check_in?: string;
-  check_in_min?: string;
-  nights?: string;
-  meal_plan?: string;
-  price_max?: string;
-  stars_min?: string;
-  // #28: pax composition. Backend ignores these for now (MV doesn't index by
-  // pax); we pass them through so the future ittour adapter — which DOES
-  // honour pax — gets them for free without another schema change.
-  adults?: string;
-  kids?: string; // comma-separated ages: "5,7,9"
-  sort?: string;
-  limit?: string;
-  offset?: string;
-  [key: string]: string | undefined;
-};
-
-const PAGE_SIZE = 24;
-
-function readParam(sp: RouteSearchParams, key: string): string | undefined {
-  return sp[key] ?? sp[`amp;${key}`];
-}
-
-function parseKids(raw: string | undefined): number[] | undefined {
-  if (!raw) return undefined;
-  const ages = raw
-    .split(',')
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n) && n >= 1 && n <= 17);
-  return ages.length > 0 ? ages : undefined;
-}
-
-function toApiParams(sp: RouteSearchParams): SearchParams {
-  return {
-    country: readParam(sp, 'country')?.toUpperCase(),
-    check_in: readParam(sp, 'check_in') || readParam(sp, 'check_in_min') || undefined,
-    nights: toNumber(readParam(sp, 'nights')),
-    meal_plan: readParam(sp, 'meal_plan') || undefined,
-    price_max: toNumber(readParam(sp, 'price_max')),
-    stars_min: toNumber(readParam(sp, 'stars_min')),
-    adults: toNumber(readParam(sp, 'adults')),
-    kids: parseKids(readParam(sp, 'kids')),
-    sort: normalizeSearchSort(readParam(sp, 'sort')),
-    limit: toNumber(readParam(sp, 'limit')) ?? PAGE_SIZE,
-    offset: toNumber(readParam(sp, 'offset')) ?? 0,
-  };
-}
-
-function toNumber(raw: string | undefined): number | undefined {
-  if (!raw) return undefined;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : undefined;
-}
 
 function accusativeCountry(name: string): string {
   // Same map as SearchForm — duplicated to keep both pure. Tiny enough that
@@ -113,7 +61,7 @@ export default async function SearchPage({
   searchParams: Promise<RouteSearchParams>;
 }) {
   const sp = await searchParams;
-  const params = toApiParams(sp);
+  const params = toApiSearchParams(sp);
 
   const [countries, searchResult] = await Promise.all([
     getCountries(),
@@ -275,22 +223,6 @@ function SearchPagination({
       </div>
     </nav>
   );
-}
-
-function searchHref(params: SearchParams, offset: number): string {
-  const qs = new URLSearchParams();
-  if (params.country) qs.set('country', params.country);
-  if (params.check_in) qs.set('check_in', params.check_in);
-  if (params.nights) qs.set('nights', String(params.nights));
-  if (params.meal_plan) qs.set('meal_plan', params.meal_plan);
-  if (params.price_max) qs.set('price_max', String(params.price_max));
-  if (params.stars_min) qs.set('stars_min', String(params.stars_min));
-  if (params.adults) qs.set('adults', String(params.adults));
-  if (params.kids && params.kids.length > 0) qs.set('kids', params.kids.join(','));
-  if (params.sort && params.sort !== 'price_asc') qs.set('sort', params.sort);
-  qs.set('limit', String(params.limit ?? PAGE_SIZE));
-  if (offset > 0) qs.set('offset', String(offset));
-  return `/search?${qs.toString()}`;
 }
 
 function plural(n: number) {

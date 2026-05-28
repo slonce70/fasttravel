@@ -191,6 +191,16 @@ async def test_min_discount_pct_filter(client: AsyncClient, db_session: AsyncSes
         red_price_uah=29847,
         system_key="sk-noredprice",
     )
+    # Invalid upstream zero price must not pass SQL filtering and then
+    # serialize as has_real_discount=false.
+    await _add_promo(
+        db_session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+        price_uah=0,
+        red_price_uah=58000,
+        system_key="sk-zero-price",
+    )
     # Real strike-through — discount=~28%
     await _add_promo(
         db_session,

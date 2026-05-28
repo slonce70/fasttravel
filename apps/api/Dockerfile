@@ -53,7 +53,9 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpq5 curl \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --shell /bin/bash app
+    && useradd --create-home --shell /bin/bash app \
+    && mkdir -p /app/.pytest_cache /app/.ruff_cache \
+    && chown -R app:app /app/.pytest_cache /app/.ruff_cache
 
 # Copy installed python packages from builder.
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
@@ -61,7 +63,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # pyproject.toml is required in the runtime stage so pytest picks up
 # asyncio_mode=auto and markers config when the image is run under the
-# test overlay (docker-compose.test.yml). Prod runtime ignores it.
+# test image (api-test in docker-compose.test.yml). Prod runtime ignores it.
 COPY --chown=app:app api/pyproject.toml ./
 
 # App source
@@ -74,8 +76,8 @@ COPY --chown=app:app shared/ ./shared/
 COPY --chown=app:app api/scripts/ ./scripts/
 # Tests are always copied so the prod image and the test image differ
 # only by dev deps (controlled by INSTALL_DEV). Adds ~30KB to the image,
-# but means `docker compose -f docker-compose.test.yml run --rm api pytest`
-# works without a separate image build path.
+# but means the `api-test` service can run pytest without bind-mounting
+# source into the container.
 COPY --chown=app:app api/tests/ ./tests/
 
 USER app

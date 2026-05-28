@@ -25,29 +25,33 @@ from typing import Protocol
 
 from sqlalchemy import text
 
-from shared.deal_signals import get_deal_signal_copy
-from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2, make_bot
+from shared.deal_rendering import render_deal_hotel_context, render_deal_price_semantics
+from shared.publishers.broadcast import (
+    broadcast_deal,
+    escape_markdown_v2,
+    escape_markdown_v2_url,
+    make_bot,
+)
+from shared.site_urls import public_hotel_url
 from shared.text_uk import (
     format_date_full,
     format_location,
     format_meal_plan,
     format_nights,
-    format_reviews,
     format_stars,
-    format_uah,
 )
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
 
 log = get_logger(__name__)
 MIN_BROADCAST_DISCOUNT_PCT = 4
-HOTEL_DESCRIPTION_MAX_CHARS = 600
 
 
 class _DealRow(Protocol):
     discount_pct: float
     hotel_name: str
+    hotel_slug: str | None
     stars: int | None
     region_name: str | None
     country_name: str | None
@@ -74,8 +78,8 @@ class _DealRow(Protocol):
 #
 # {headline} and {price_line} are pre-assembled per detection_method
 # because date-anomaly and percentile/promo deals carry different price
-# semantics: date-anomaly's baseline is "median of nearby dates", which
-# isn't a price the user would otherwise pay for THIS booking, so we
+# semantics: date-anomaly's baseline is a trimmed neighbouring-date baseline,
+# not a price the user would otherwise pay for THIS booking, so we
 # render it without a "saved X ₴" framing.
 _DEAL_TEMPLATE = (
     "{headline}\n"
@@ -112,6 +116,7 @@ _SELECT_UNPOSTED = text(
         d.deep_link,
         d.detection_method,
         h.name_uk        AS hotel_name,
+        h.canonical_slug AS hotel_slug,
         h.stars          AS stars,
         h.description_uk AS description_uk,
         h.review_score   AS review_score,
@@ -148,6 +153,17 @@ _SELECT_UNPOSTED = text(
       --   'ittour'           — direct partner API (future)
       AND d.source IS NOT NULL
       AND d.source IN ('farvater_scrape', 'live_refresh', 'ittour')
+      -- Rows claimed for an in-flight Telegram send use a negative sentinel.
+      -- The claim has a TTL: a process crash between claim and send/mark must
+      -- not hide the deal forever, but immediate retries are still suppressed.
+      AND (
+          d.telegram_msg_id IS NULL
+          OR (
+              d.telegram_msg_id = :pending_msg_id
+              AND d.telegram_claimed_at
+                  < NOW() - make_interval(mins => CAST(:claim_ttl_minutes AS INTEGER))
+          )
+      )
     -- Channel content rule: the biggest savings always lead, with the
     -- newest detection as the tie-break. Pre-audit this was
     -- `ORDER BY detected_at DESC` — fresh first — but that buried
@@ -170,74 +186,77 @@ _MARK_POSTED = text(
     """
     UPDATE deals
     SET posted_at = NOW(),
-        telegram_msg_id = :msg_id
+        telegram_msg_id = :msg_id,
+        telegram_claimed_at = NULL
     WHERE id = :deal_id
+      AND posted_at IS NULL
     """
 )
-
-
-def _truncate_description(description: str) -> str:
-    if len(description) <= HOTEL_DESCRIPTION_MAX_CHARS:
-        return description
-    clipped = description[: HOTEL_DESCRIPTION_MAX_CHARS - 3].rstrip()
-    if " " in clipped:
-        clipped = clipped.rsplit(" ", 1)[0]
-    return clipped + "..."
+_PENDING_TELEGRAM_MSG_ID = -1
+_CLAIM_FOR_POSTING = text(
+    """
+    UPDATE deals
+    SET telegram_msg_id = :pending_msg_id,
+        telegram_claimed_at = NOW()
+    WHERE id = :deal_id
+      AND posted_at IS NULL
+      AND (
+          telegram_msg_id IS NULL
+          OR (
+              telegram_msg_id = :pending_msg_id
+              AND telegram_claimed_at
+                  < NOW() - make_interval(mins => CAST(:claim_ttl_minutes AS INTEGER))
+          )
+      )
+    RETURNING id
+    """
+)
+_RELEASE_POSTING_CLAIM = text(
+    """
+    UPDATE deals
+    SET telegram_msg_id = NULL,
+        telegram_claimed_at = NULL
+    WHERE id = :deal_id
+      AND posted_at IS NULL
+      AND telegram_msg_id = :pending_msg_id
+    """
+)
+_POST_DEALS_LOCK_KEY = 2026052801
+_POSTING_CLAIM_TTL_MINUTES = 30
+_TRY_POST_DEALS_LOCK = text("SELECT pg_try_advisory_lock(:lock_key)")
+_RELEASE_POST_DEALS_LOCK = text("SELECT pg_advisory_unlock(:lock_key)")
 
 
 def _format_hotel_context(row: _DealRow) -> str:
-    lines: list[str] = []
-    review_score = getattr(row, "review_score", None)
-    review_count = int(getattr(row, "review_count", 0) or 0)
-    if review_score is not None and review_count > 0:
-        score = f"{float(review_score):.1f}/10"
-        lines.append(f"⭐ {score} · {format_reviews(review_count)}")
-
-    description = " ".join((getattr(row, "description_uk", None) or "").split())
-    if description:
-        lines.append(f"ℹ️ {_truncate_description(description)}")
-
-    if not lines:
-        return ""
-    return "".join(f"{escape_markdown_v2(line)}\n" for line in lines)
+    return render_deal_hotel_context(
+        review_score=getattr(row, "review_score", None),
+        review_count=getattr(row, "review_count", None),
+        description_uk=getattr(row, "description_uk", None),
+    )
 
 
-def _render_deal(row: _DealRow) -> str:
+def _deal_link(row: _DealRow, public_site_url: str) -> str:
+    if row.deep_link:
+        return row.deep_link
+
+    hotel_slug = getattr(row, "hotel_slug", None)
+    return public_hotel_url(public_site_url, hotel_slug, source="") or public_site_url
+
+
+def _render_deal(row: _DealRow, *, public_site_url: str) -> str:
     """Render a deal row to a MarkdownV2 message. Pure / testable."""
-    # Savings in absolute UAH — only meaningful when baseline is a price
-    # the user would have otherwise paid for THIS booking (operator promo
-    # red-price, historical p50). For calendar_anomaly the baseline is the
-    # median of NEIGHBOURING check-in dates → using "економія" / strikethrough
-    # would imply "save X by buying now" when in reality the user has to
-    # pick a different date to lose the saving. We render those differently.
-    price_int = int(row.price_uah)
-    baseline_int = int(row.baseline_p50)
-    savings = max(0, baseline_int - price_int)
-    discount_str = escape_markdown_v2(f"{float(row.discount_pct):.0f}")
-    price_fmt = escape_markdown_v2(format_uah(price_int))
-    baseline_fmt = escape_markdown_v2(format_uah(baseline_int))
-    savings_fmt = escape_markdown_v2(format_uah(savings))
     meal_label = format_meal_plan(row.meal_plan)
-
-    signal = get_deal_signal_copy(getattr(row, "detection_method", None))
-
-    if signal.date_anomaly:
-        # No "економія" — baseline is a calendar median, not a forgone price.
-        headline = f"📉 *На {discount_str}% дешевше за сусідні дати в цьому готелі*"
-        price_line = f"💰 *{price_fmt}*"
-    elif signal.peer_comparison:
-        headline = f"📊 *На {discount_str}% дешевше за схожі готелі*"
-        price_line = f"💰 *{price_fmt}* · орієнтир схожих {baseline_fmt}"
-    else:
-        strikethrough = f"~{baseline_fmt}~" if savings > 0 else ""
-        headline = f"🔥 *\\-{discount_str}% · економія {savings_fmt}*"
-        price_line = f"💰 *{price_fmt}* {strikethrough}".rstrip()
-
-    why_line = f"_{escape_markdown_v2(signal.why_line)}_\n\n" if signal.why_line else ""
+    semantics = render_deal_price_semantics(
+        detection_method=getattr(row, "detection_method", None),
+        discount_pct=row.discount_pct,
+        price_uah=row.price_uah,
+        baseline_uah=row.baseline_p50,
+    )
+    why_line = f"_{escape_markdown_v2(semantics.why_line)}_\n\n" if semantics.why_line else ""
 
     return _DEAL_TEMPLATE.format(
-        headline=headline,
-        price_line=price_line,
+        headline=semantics.headline,
+        price_line=semantics.price_line,
         hotel_name=escape_markdown_v2(row.hotel_name),
         stars_str=format_stars(row.stars),
         destination=escape_markdown_v2(
@@ -252,9 +271,7 @@ def _render_deal(row: _DealRow) -> str:
         meal_plan_label=escape_markdown_v2(meal_label),
         why_line=why_line,
         operator_display_name=escape_markdown_v2(row.operator_display_name),
-        deep_link=(row.deep_link or "https://fasttravel.com.ua")
-        .replace("\\", "\\\\")
-        .replace(")", "\\)"),
+        deep_link=escape_markdown_v2_url(_deal_link(row, public_site_url)),
     )
 
 
@@ -269,6 +286,23 @@ async def post_deals() -> None:
         )
         return
 
+    async with async_session_factory() as lock_db:
+        acquired = (
+            await lock_db.execute(_TRY_POST_DEALS_LOCK, {"lock_key": _POST_DEALS_LOCK_KEY})
+        ).scalar_one()
+        if not acquired:
+            log.info("post_deals.skipped", reason="already_running")
+            return
+        try:
+            await _post_deals_locked(settings)
+        finally:
+            await lock_db.execute(
+                _RELEASE_POST_DEALS_LOCK,
+                {"lock_key": _POST_DEALS_LOCK_KEY},
+            )
+
+
+async def _post_deals_locked(settings: Settings) -> None:
     today = date.today()
 
     async with async_session_factory() as db:
@@ -288,7 +322,12 @@ async def post_deals() -> None:
         rows = (
             await db.execute(
                 _SELECT_UNPOSTED,
-                {"lim": limit, "min_discount_pct": MIN_BROADCAST_DISCOUNT_PCT},
+                {
+                    "lim": limit,
+                    "min_discount_pct": MIN_BROADCAST_DISCOUNT_PCT,
+                    "pending_msg_id": _PENDING_TELEGRAM_MSG_ID,
+                    "claim_ttl_minutes": _POSTING_CLAIM_TTL_MINUTES,
+                },
             )
         ).all()
 
@@ -305,12 +344,39 @@ async def post_deals() -> None:
         channel = int(channel)
 
     sent = 0
+    failed = 0
     try:
         for i, row in enumerate(rows):
+            async with async_session_factory() as db:
+                claimed = (
+                    await db.execute(
+                        _CLAIM_FOR_POSTING,
+                        {
+                            "pending_msg_id": _PENDING_TELEGRAM_MSG_ID,
+                            "claim_ttl_minutes": _POSTING_CLAIM_TTL_MINUTES,
+                            "deal_id": int(row.id),
+                        },
+                    )
+                ).scalar_one_or_none()
+                await db.commit()
+            if claimed is None:
+                log.info("post_deals.claim_skipped", deal_id=row.id, reason="already_claimed")
+                continue
+
             try:
-                msg_text = _render_deal(row)
+                msg_text = _render_deal(row, public_site_url=settings.public_site_url)
                 msg_id = await broadcast_deal(bot, channel, msg_text)
             except Exception as exc:
+                failed += 1
+                async with async_session_factory() as db:
+                    await db.execute(
+                        _RELEASE_POSTING_CLAIM,
+                        {
+                            "pending_msg_id": _PENDING_TELEGRAM_MSG_ID,
+                            "deal_id": int(row.id),
+                        },
+                    )
+                    await db.commit()
                 log.error(
                     "post_deals.send_failed",
                     deal_id=row.id,
@@ -321,11 +387,17 @@ async def post_deals() -> None:
                 continue
 
             async with async_session_factory() as db:
-                await db.execute(
+                mark_result = await db.execute(
                     _MARK_POSTED,
-                    {"msg_id": int(msg_id), "deal_id": int(row.id)},
+                    {
+                        "msg_id": int(msg_id),
+                        "pending_msg_id": _PENDING_TELEGRAM_MSG_ID,
+                        "deal_id": int(row.id),
+                    },
                 )
                 await db.commit()
+            if getattr(mark_result, "rowcount", 1) != 1:
+                raise RuntimeError(f"Telegram send could not be recorded for deal {int(row.id)}")
             sent += 1
             log.info(
                 "post_deals.sent",
@@ -343,4 +415,7 @@ async def post_deals() -> None:
         # event loop emits "unclosed connection" warnings on shutdown.
         await bot.session.close()
 
-    log.info("post_deals.completed", sent=sent, considered=len(rows))
+    if rows and sent == 0 and failed == len(rows):
+        log.error("post_deals.failed", sent=sent, failed=failed, considered=len(rows))
+        raise RuntimeError(f"all Telegram sends failed for {len(rows)} deals")
+    log.info("post_deals.completed", sent=sent, failed=failed, considered=len(rows))

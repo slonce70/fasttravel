@@ -84,6 +84,32 @@ def test_parse_meal_canonicalization(cassette: dict) -> None:
     assert arena.meal_plan == "BB"
 
 
+def test_parse_meal_canonicalization_handles_combined_hb_label() -> None:
+    payload = {
+        "statusCode": 200,
+        "data": {
+            "tourPackage": {
+                "totalItems": 1,
+                "tours": [
+                    {
+                        "hotelKey": "41024",
+                        "SystemKey": "2m4711532206895374022c33",
+                        "priceUAH": 82975,
+                        "redPriceUAH": 82975,
+                        "nights": 5,
+                        "checkIn": {"value": "2026-06-12T00:00:00+03:00"},
+                        "meal": {"value": "Сніданок + вечеря (HB)"},
+                    }
+                ],
+            }
+        },
+    }
+
+    page = parse_response(payload, bucket_slug="gorjashhie-tury")
+
+    assert page.tours[0].meal_plan == "HB"
+
+
 def test_parse_handles_iso_dates(cassette: dict) -> None:
     page = parse_response(cassette, bucket_slug="gorjashhie-tury")
     arena = next((t for t in page.tours if t.hotel_key == 15937), None)

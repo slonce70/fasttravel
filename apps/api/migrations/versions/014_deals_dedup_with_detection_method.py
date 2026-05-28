@@ -5,15 +5,14 @@ Revises: 013
 Create Date: 2026-05-25
 
 Sprint 1D made `detection_method` a first-class dimension on deals:
-the same hotel can legitimately produce TWO deals at the same
-(check_in, nights, meal_plan) on the same day if it's featured in
-two different farvater buckets (e.g. both `gorjashhie-tury` and
-`akcionnye-tury`) AND ALSO produce a percentile deal.
+the same hotel can legitimately produce multiple same-day deals for
+the same (check_in, nights, meal_plan) if they come from distinct
+method families (for example historical `promo_discount` plus a
+same-hotel anomaly).
 
 The migration-006 unique index `uq_deals_natural_key_day` doesn't
 account for that — it collapses different-method same-day rows into
-one. The Sprint 1D test
-`test_same_hotel_two_buckets_both_deals` caught this immediately.
+one.
 
 Fix: drop the old index, recreate it with `detection_method` in the
 key tuple. Same-day re-detection in the same method is still blocked

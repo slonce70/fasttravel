@@ -23,13 +23,10 @@ from sqlalchemy import text
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
 from src.jobs.snapshot_farvater import (
-    _country_dest_id,
-    _ensure_operator,
     _fetch_hotel_meta,
     _http_client,
-    _upsert_hotel,
-    _upsert_mapping,
 )
+from src.services.hotel_upsert import country_dest_id, ensure_operator, upsert_hotel, upsert_mapping
 
 log = get_logger(__name__)
 
@@ -100,9 +97,9 @@ async def _repair_target(client: httpx.AsyncClient, target: Target, operator_id:
         return False
 
     async with async_session_factory() as db:
-        dest_id = await _country_dest_id(db, meta.country_iso2)
-        hotel_id = await _upsert_hotel(db, meta, dest_id, operator_id)
-        await _upsert_mapping(db, hotel_id, operator_id, meta)
+        dest_id = await country_dest_id(db, meta.country_iso2)
+        hotel_id = await upsert_hotel(db, meta, dest_id, operator_id)
+        await upsert_mapping(db, hotel_id, operator_id, meta)
         if hotel_id != target.hotel_id:
             await db.execute(
                 text(
@@ -121,7 +118,7 @@ async def _repair_target(client: httpx.AsyncClient, target: Target, operator_id:
 
 async def main(limit: int, concurrency: int, recent_minutes: int) -> None:
     async with async_session_factory() as db:
-        operator_id = await _ensure_operator(db)
+        operator_id = await ensure_operator(db)
         await db.commit()
 
     targets = await _load_targets(limit, operator_id, recent_minutes)

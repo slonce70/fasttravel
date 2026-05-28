@@ -52,7 +52,7 @@ class PriceObservation(Base):
     check_in: Mapped[date] = mapped_column(Date, nullable=False)
     nights: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     meal_plan: Mapped[str] = mapped_column(String(16), nullable=False)
-    room_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    room_category: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
     adults: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="2")
     departure_city: Mapped[str | None] = mapped_column(String(32), nullable=True)
 

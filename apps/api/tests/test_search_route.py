@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from datetime import date
+from http import HTTPStatus
 
 import pytest
+from fastapi import HTTPException
 
+from src.routers.search import _parse_kids
 from src.schemas.search import PaginatedSearchResults
 
 
@@ -79,6 +82,28 @@ async def test_search_route_rejects_invalid_kids(client, kids: str) -> None:
     resp = await client.get(f"/api/search?country=TR&kids={kids}")
 
     assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("kids", ["abc", "-1", "7,nope", "18"])
+def test_parse_kids_rejects_invalid_values_without_db(kids: str) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_kids(kids)
+
+    assert exc_info.value.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_search_route_rejects_more_than_six_kids(client) -> None:
+    resp = await client.get("/api/search?country=TR&kids=1,2,3,4,5,6,7")
+
+    assert resp.status_code == 422
+
+
+def test_parse_kids_rejects_more_than_six_values_without_db() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_kids("1,2,3,4,5,6,7")
+
+    assert exc_info.value.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.asyncio

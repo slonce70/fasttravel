@@ -48,7 +48,8 @@ def get_redis_factory(redis_url: str) -> Callable[[], _Redis]:
         if client is None:
             import redis.asyncio as _async_redis
 
-            client = _async_redis.from_url(
+            from_url: Any = _async_redis.from_url
+            client = from_url(
                 redis_url,
                 decode_responses=True,
                 # Sensible production defaults — short connect timeout

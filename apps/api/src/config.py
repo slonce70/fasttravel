@@ -15,6 +15,7 @@ from __future__ import annotations
 from functools import cached_property, lru_cache
 
 from pydantic import Field
+
 from shared.infra.base_settings import DEV_DEFAULT_MARKERS, BaseAppSettings
 
 
@@ -30,6 +31,7 @@ class Settings(BaseAppSettings):
     # --- API ---
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    public_site_url: str = "https://fasttravel.com.ua"
     # Stored raw to avoid pydantic-settings' JSON pre-parsing of list fields.
     # Use `.cors_origins` to get the parsed list.
     cors_origins_raw: str = Field(

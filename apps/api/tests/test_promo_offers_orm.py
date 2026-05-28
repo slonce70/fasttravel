@@ -196,20 +196,21 @@ async def test_promo_offers_natural_unique_index(db_session: AsyncSession) -> No
     )
     await db_session.flush()
 
-    db_session.add(
-        PromoOffer(
-            observed_at=observed,  # identical timestamp
-            hotel_id=hotel_id,
-            bucket_slug="gorjashhie-tury",  # identical bucket
-            system_key=sk,  # identical system_key
-            check_in=date(2026, 7, 1),
-            nights=7,
-            meal_plan="AI",
-            price_uah=10000,
-        )
-    )
     with pytest.raises(IntegrityError):
-        await db_session.flush()
+        async with db_session.begin_nested():
+            db_session.add(
+                PromoOffer(
+                    observed_at=observed,  # identical timestamp
+                    hotel_id=hotel_id,
+                    bucket_slug="gorjashhie-tury",  # identical bucket
+                    system_key=sk,  # identical system_key
+                    check_in=date(2026, 7, 1),
+                    nights=7,
+                    meal_plan="AI",
+                    price_uah=10000,
+                )
+            )
+            await db_session.flush()
 
 
 async def test_promo_offers_same_system_key_different_bucket_allowed(
@@ -284,7 +285,7 @@ async def test_deal_detection_method_defaults_to_percentile(
 async def test_deal_detection_method_accepts_promo_discount_value(
     db_session: AsyncSession,
 ) -> None:
-    """The promo-discount code path writes a semantic detection method."""
+    """Historical promo-discount rows keep their semantic detection method."""
     hotel_id, operator_id = await _seed_hotel(db_session)
 
     deal_id = (

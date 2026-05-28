@@ -13,21 +13,23 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
-from src.deps import get_db
+from shared.site_urls import public_hotel_url
+from src.config import Settings
+from src.deps import get_app_settings, get_db
 
 router = APIRouter(tags=["seo"])
 
-PUBLIC_SITE_URL = "https://fasttravel.com.ua"
 SITEMAP_LIMIT = 50_000
 
 
 @router.get("/robots.txt", include_in_schema=False)
-async def robots_txt() -> Response:
+async def robots_txt(settings: Settings = Depends(get_app_settings)) -> Response:
+    public_site_url = settings.public_site_url.rstrip("/")
     body = "\n".join(
         [
             "User-agent: *",
             "Allow: /",
-            f"Sitemap: {PUBLIC_SITE_URL}/sitemap.xml",
+            f"Sitemap: {public_site_url}/sitemap.xml",
             "",
         ]
     )
@@ -35,7 +37,11 @@ async def robots_txt() -> Response:
 
 
 @router.get("/sitemap.xml", include_in_schema=False)
-async def sitemap_xml(session: AsyncSession = Depends(get_db)) -> Response:
+async def sitemap_xml(
+    session: AsyncSession = Depends(get_db),
+    settings: Settings = Depends(get_app_settings),
+) -> Response:
+    public_site_url = settings.public_site_url.rstrip("/")
     rows = (
         await session.execute(
             text(
@@ -57,10 +63,10 @@ async def sitemap_xml(session: AsyncSession = Depends(get_db)) -> Response:
         )
     ).all()
 
-    urls = [
-        f"  <url><loc>{escape(f'{PUBLIC_SITE_URL}/hotels/{row.canonical_slug}')}</loc></url>"
-        for row in rows
-    ]
+    urls: list[str] = []
+    for row in rows:
+        loc = public_hotel_url(public_site_url, row.canonical_slug, source="") or public_site_url
+        urls.append(f"  <url><loc>{escape(loc)}</loc></url>")
     body = "\n".join(
         [
             '<?xml version="1.0" encoding="UTF-8"?>',

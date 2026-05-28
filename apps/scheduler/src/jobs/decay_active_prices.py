@@ -19,12 +19,11 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-from typing import Any, cast
-
-from sqlalchemy import text
 
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
+from src.services import price_state
+from src.services.scrape_runs import record_scrape_run
 
 log = get_logger(__name__)
 
@@ -42,14 +41,13 @@ async def _record_run(started_at: datetime, status: str, rows: int, error: str =
     """scrape_runs row for one decay pass — same pattern as snapshot_farvater."""
     try:
         async with async_session_factory() as db:
-            await db.execute(
-                text(
-                    """INSERT INTO scrape_runs
-                         (started_at, finished_at, source, status,
-                          rows_inserted, error_text)
-                       VALUES (:s, NOW(), 'decay_active_prices', :st, :n, :e)"""
-                ),
-                {"s": started_at, "st": status, "n": rows, "e": error[:500]},
+            await record_scrape_run(
+                db,
+                source="decay_active_prices",
+                status=status,
+                rows_inserted=rows,
+                error=error,
+                started_at=started_at,
             )
             await db.commit()
     except Exception as exc:  # noqa: BLE001
@@ -67,19 +65,8 @@ async def decay_active_prices() -> int:
 
     try:
         async with async_session_factory() as db:
-            result = await db.execute(
-                text(
-                    """UPDATE hotels
-                       SET has_active_prices = FALSE
-                       WHERE has_active_prices = TRUE
-                         AND (last_priced_at IS NULL
-                              OR last_priced_at < NOW()
-                                 - make_interval(days => :d))"""
-                ),
-                {"d": threshold},
-            )
+            demoted = await price_state.decay_active_prices(db, threshold)
             await db.commit()
-            demoted = int(cast(Any, result).rowcount or 0)
     except Exception as exc:  # noqa: BLE001
         log.exception("decay_active_prices.failed", error=str(exc))
         await _record_run(started_at, "failed", 0, str(exc))

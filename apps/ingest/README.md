@@ -7,7 +7,7 @@ Data ingestion library. **Not a runnable service** — imported by `apps/schedul
 | Source | Type | Status | Notes |
 |---|---|---|---|
 | **ittour** | JSON API (token) | ⏳ waiting partner agreement | Primary source candidate. Keep disabled until a real token and current partner docs arrive. |
-| **farvater scraper** | HTML/XHR (no token) | 🟢 active bootstrap | Scheduler uses the captured calendar endpoint for real price observations; the library client stays conservative for future generic pipeline use. |
+| **farvater metadata helpers** | HTML only | Scheduler-owned for prices | Production Farvater prices are captured by `apps/scheduler/src/jobs/snapshot_farvater.py` and `static_tours_sweep.py`; `run_snapshot(source="farvater")` is intentionally unsupported. |
 | **TBO Holidays** | JSON API (basic auth) | ⏳ waiting free account | Hotel content only (photos, descriptions, GPS) — no tour prices. Keep disabled until real credentials are configured. |
 
 ## Architecture
@@ -37,9 +37,6 @@ apps/ingest.pipeline.run_snapshot(source="ittour", hotels=[...], ...)
 
 ```bash
 # Tests use VCR cassettes — no real network calls.
-docker compose run --rm scheduler pytest apps/ingest/tests/
-
-# Unit/integration-style ingest checks.
 cd apps/ingest
 poetry install --with dev --no-root
 poetry run pytest tests
@@ -47,8 +44,8 @@ poetry run pytest tests
 
 ## Operational notes
 
-- **farvater circuit breaker:** trips on 3 consecutive 429/403 within 10 minutes, stays open for 1 hour. State lives in Redis (`ingest:farvater:breaker:open_until`).
-- **Daily cap:** 1000 requests/day, counter in Redis with TTL until UTC midnight.
+- **Farvater boundary:** generic price ingest is disabled. Use scheduler's `snapshot_farvater` and `static_tours_sweep` paths for real Farvater prices/promos.
+- **Legacy Farvater helper guardrails:** the HTML helper still has a conservative circuit breaker and daily cap for metadata experiments, but it is not a `run_snapshot` price source.
 - **Dedup window:** 12 hours by default (`DEDUP_TTL_HOURS` env var). Identical fingerprint within that window → skip.
 - **Insert safety:** `pipeline._bulk_insert()` resolves `operator_code`
   to `operators.id` and uses the `uq_price_obs_natural` conflict guard.

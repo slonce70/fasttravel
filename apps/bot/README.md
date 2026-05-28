@@ -26,7 +26,7 @@ apps/bot/
       filters.py            Inline filter pickers (nights/when/budget/meal/stars)
     states/                 FSM state machines for wizard + subscribe
     templates/
-      deal.py               MarkdownV2 renderer — savings UAH + strike-through + why-line
+      deal.py               MarkdownV2 renderer — method-aware baseline wording + why-line
     infra/
       api_client.py         httpx.AsyncClient over apps/api
       db.py                 asyncpg for subscriber tables
@@ -34,7 +34,7 @@ apps/bot/
       metrics.py            Prometheus counters / latency histogram
       logging.py            Thin wrapper over shared.infra.logging
       sentry.py             Thin wrapper over shared.infra.sentry
-  tests/                    43 unit tests; pytest-asyncio
+  tests/                    unit tests; pytest-asyncio
   pyproject.toml            Poetry + ruff config (audit Sprint #8 — was Dockerfile-pinned)
   poetry.lock
   Dockerfile                Multi-stage, USER app, HEALTHCHECK /alerts/health
@@ -86,12 +86,16 @@ user → /subscribe → FSM → telegram_subscriber_filters row
                       ORDER BY discount_pct DESC, id DESC
                                      ↓
                       bot.send_message(chat_id=…, parse_mode="MarkdownV2")
+                                     ↓
+                      telegram_filter_notifications(filter_id, deal_id)
 ```
 
 `notify_subscribers` requires `discount_pct ≥ 25` for `peer_anomaly`
-deals (weaker signal); other detection methods send at any positive
-discount. The cursor `last_notified_deal_id` advances monotonically so
-the same deal never pings twice.
+deals (weaker signal); other detection methods send at `≥ 4%`. Alerts use
+the same 6-hour freshness window as public channel posts.
+Idempotency is tracked per `(filter_id, deal_id)` so the job can
+send the deepest current match first without a scalar cursor hiding other
+valid deals.
 
 ## Running
 
@@ -100,7 +104,7 @@ the same deal never pings twice.
 docker compose up bot                       # tail logs
 docker compose logs -f bot
 
-# Tests (no DB/Redis needed for the 43-test unit suite):
+# Tests (no DB/Redis needed for the unit suite):
 cd apps/bot
 PYTHONPATH=.:.. ../scheduler/.venv/bin/python -m pytest tests/
 ```

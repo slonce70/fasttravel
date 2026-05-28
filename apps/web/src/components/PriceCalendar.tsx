@@ -6,7 +6,7 @@
  * Renders react-day-picker (v9) with a custom `DayButton` that paints each
  * cell with a HSL-heatmap color derived from per-window price percentile and
  * shows the per-night minimum price as a compact label (e.g. "22.4к"). Days
- * flagged as deals get a 🔥 emoji indicator.
+ * flagged as locally interesting dates get a compact marker.
  *
  * API contract: GET /api/hotels/{id}/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD[&meal=AI][&nights=7]
  *   - `mealPlan` is forwarded as `?meal=` so the backend narrows the MV to
@@ -183,16 +183,10 @@ function PriceDayButton({
   const row = byDate.get(key);
   const price = pickPriceForNights(row, nights);
   const bg = colorForPrice(scale, price ?? null);
-  const isDeal = isDealCandidate(row, scale, nights);
+  const priceHint = getServerDateDipHint(row);
+  const isDeal = priceHint != null;
   const isOutside = modifiers.outside;
   const isDisabled = modifiers.disabled;
-
-  // Hover hint: discount estimate if price < scale median.
-  const median = scale.sorted[Math.floor(scale.sorted.length / 2)];
-  const discountHint =
-    price != null && median && price < median
-      ? `Знижка -${Math.round((1 - price / median) * 100)}% від звичайної ${formatPriceCompact(median)}`
-      : undefined;
 
   return (
     <button
@@ -204,7 +198,7 @@ function PriceDayButton({
           ? `${formatDateLong(day.date)}: від ${formatPriceCompact(price)} гривень`
           : `${formatDateLong(day.date)}: цін немає`
       }
-      title={discountHint}
+      title={priceHint?.title}
       className={cn(
         'group relative flex h-11 w-11 flex-col items-center justify-center rounded-lg border border-transparent text-xs transition-all sm:h-14 sm:w-14',
         'focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1',
@@ -229,8 +223,8 @@ function PriceDayButton({
       {isDeal && (
         <span
           className="pointer-events-none absolute right-0.5 top-0.5 text-xs"
-          aria-label="гаряча знижка"
-          title="гаряча знижка"
+          aria-label="цікава дата"
+          title="цікава дата"
         >
           🔥
         </span>
@@ -250,15 +244,16 @@ function stripTime(d: Date): Date {
 }
 
 /**
- * Pick the right per-nights min price from a calendar row.
+ * Pick the exact selected-nights min price from a calendar row.
  *
  * Backend returns `prices_by_night` keyed by stringified night count
- * (e.g. `{"7": 50000, "8": 52000, "14": 47000}`). Falls back to
- * `min_price_uah` when the requested duration has no observations.
+ * (e.g. `{"7": 50000, "8": 52000, "14": 47000}`). The calendar header
+ * names a specific duration, so cross-nights `min_price_uah` must not be
+ * displayed as if it were an exact offer for that duration.
  */
 function pickPriceForNights(row: CalendarDay | undefined, nights: Nights): number | null {
   if (!row) return null;
-  return row.prices_by_night?.[String(nights)] ?? row.min_price_uah ?? null;
+  return row.prices_by_night?.[String(nights)] ?? null;
 }
 
 function buildDayIndex(rows: CalendarDay[], nights: Nights) {
@@ -271,21 +266,15 @@ function buildDayIndex(rows: CalendarDay[], nights: Nights) {
   return { byDate, scale: buildPriceScale(prices) };
 }
 
-/**
- * Local "is this a deal?" approximation: price falls in the lowest 15% of
- * visible-window observations AND is at least 15% below median. This mirrors
- * the backend percentile-rule heuristic (ADR-006) at the display layer so
- * the 🔥 emoji appears even when the `deals` table hasn't been populated yet.
- */
-function isDealCandidate(row: CalendarDay | undefined, scale: ColorScale, nights: Nights): boolean {
-  const price = pickPriceForNights(row, nights);
-  if (price == null || scale.sorted.length < 8) return false;
-  const p15Index = Math.floor(scale.sorted.length * 0.15);
-  const p50Index = Math.floor(scale.sorted.length / 2);
-  const p15 = scale.sorted[p15Index];
-  const p50 = scale.sorted[p50Index];
-  if (p15 == null || p50 == null) return false;
-  return price <= p15 && price <= p50 * 0.85;
+function getServerDateDipHint(row: CalendarDay | undefined): { title: string } | null {
+  const price = row?.date_dip_price_uah ?? null;
+  const baseline = row?.date_dip_baseline_uah ?? null;
+  const pct = row?.date_dip_discount_pct ?? null;
+  if (baseline == null || pct == null || pct <= 0) return null;
+  const priceText = price != null ? `Є варіант за ${formatPriceCompact(price)}. ` : '';
+  return {
+    title: `${priceText}На ${pct}% нижче за орієнтир сусідніх дат ${formatPriceCompact(baseline)}`,
+  };
 }
 
 // ---------------------------------------------------------------------------

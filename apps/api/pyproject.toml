@@ -57,7 +57,7 @@ mypy = "^1.13.0"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["..", "."]
 # `slow` marks long-running tests (e.g. tests/test_seed.py) that we skip in CI.
 # Run them locally with `pytest -m slow`.
 markers = [

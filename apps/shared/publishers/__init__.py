@@ -9,6 +9,8 @@ from shared.publishers.broadcast import (
     MARKDOWN_V2_ESCAPE_CHARS,
     broadcast_deal,
     escape_markdown_v2,
+    escape_markdown_v2_code,
+    escape_markdown_v2_url,
     make_bot,
 )
 
@@ -16,5 +18,7 @@ __all__ = [
     "MARKDOWN_V2_ESCAPE_CHARS",
     "broadcast_deal",
     "escape_markdown_v2",
+    "escape_markdown_v2_code",
+    "escape_markdown_v2_url",
     "make_bot",
 ]

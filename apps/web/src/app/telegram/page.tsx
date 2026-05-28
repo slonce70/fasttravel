@@ -4,9 +4,9 @@ import { Card, CardBody } from '@/components/ui/Card';
 import { TELEGRAM_CHANNEL_URL } from '@/lib/site-config';
 
 export const metadata: Metadata = {
-  title: 'Telegram-канал з гарячими знижками',
+  title: 'Telegram-канал з цікавими датами',
   description:
-    'Підпишіться на Telegram-канал FastTravel — до 30 знижок на тури до Туреччини, Єгипту, ОАЕ, Греції щодня.',
+    'Підпишіться на Telegram-канал FastTravel — до 30 цікавих цін на тури до Туреччини, Єгипту, ОАЕ, Греції щодня.',
 };
 
 const TG_CHANNEL = TELEGRAM_CHANNEL_URL;
@@ -16,10 +16,10 @@ export default function TelegramPage() {
   return (
     <Container className="max-w-3xl space-y-8 py-10">
       <header className="text-center">
-        <h1 className="text-3xl font-bold text-slate-900">Гарячі знижки в Telegram</h1>
+        <h1 className="text-3xl font-bold text-slate-900">Цікаві дати в Telegram</h1>
         <p className="mt-3 text-slate-600">
-          Бот FastTravel постить новини тільки тоді, коли алгоритм знайшов знижку більше ніж -15%
-          від середньої історичної ціни готелю. Без спаму, до 30 постів на добу.
+          Бот FastTravel постить тільки тоді, коли алгоритм бачить дату від 4% дешевшу за сусідні
+          дати в тому самому готелі та конфігурації туру. Без спаму, до 30 постів на добу.
         </p>
       </header>
 
@@ -56,8 +56,11 @@ export default function TelegramPage() {
         </h2>
         <ol className="space-y-2 text-sm text-slate-600">
           <li>1. Двічі на день збираємо ціни з туроператорів по ~3000 готелях у 14 країнах.</li>
-          <li>2. Будуємо профіль звичайної ціни для кожного готелю за останні 60 днів.</li>
-          <li>3. Якщо ціна суттєво нижча за звичайну — постимо знижку в канал.</li>
+          <li>
+            2. Порівнюємо дату із сусідніми датами для того самого готелю, тривалості, харчування і
+            типу номера.
+          </li>
+          <li>3. Якщо поточна ціна нижча за локальний орієнтир — постимо варіант у канал.</li>
           <li>4. Ви бачите кнопку «Купити», яка веде на сайт оператора. Купуєте напряму.</li>
         </ol>
       </section>

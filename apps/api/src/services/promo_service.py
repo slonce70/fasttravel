@@ -4,8 +4,7 @@ Reads from `promo_offers` (written by the static_tours_sweep job) and
 joins hotels + destinations so a single round-trip gives the frontend
 everything a card needs.
 
-Freshness: only rows observed in the last 24 hours surface — same window
-the detect_deals bucket branch uses to decide deal eligibility. Older
+Freshness: only rows observed in the last 24 hours surface. Older
 promo_offers stay in the table for forensics but aren't shown.
 
 DISTINCT ON (system_key, bucket_slug): a tour seen in multiple sweeps
@@ -24,8 +23,7 @@ from src.models import Destination, Hotel
 from src.models.promo_offer import PromoOffer
 from src.schemas.promotion import PaginatedPromotions, PromotionOut
 
-# Window in hours — must match detect_deals._BUCKET_SQL or the
-# /api/promotions feed and the deal-channel feed will drift apart.
+# Window in hours for the public promotions feed.
 FRESHNESS_WINDOW_HOURS = 24
 
 
@@ -62,7 +60,7 @@ def _select_columns() -> tuple[Any, ...]:
 
 
 def _row_to_out(row) -> PromotionOut:  # type: ignore[no-untyped-def]
-    # discount_pct: same formula as detect_deals bucket branch.
+    # discount_pct: real strike-through only; bucket membership alone is not a discount.
     has_real_discount = (
         row.red_price_uah is not None and row.red_price_uah > row.price_uah and row.price_uah > 0
     )
@@ -71,7 +69,7 @@ def _row_to_out(row) -> PromotionOut:  # type: ignore[no-untyped-def]
     else:
         discount_pct = 0.0
 
-    # Reconstruct deep_link — same pattern as detect_deals SQL.
+    # Reconstruct the public Farvater deep link from catalog fields.
     if row.country_iso2 and row.hotel_slug:
         slug_tail = row.hotel_slug
         if slug_tail.startswith(f"fv-{row.country_iso2.lower()}-"):
@@ -156,6 +154,7 @@ async def list_promotions(
             text(
                 "promo_offers.red_price_uah IS NOT NULL "
                 "AND promo_offers.red_price_uah > promo_offers.price_uah "
+                "AND promo_offers.price_uah > 0 "
                 "AND ROUND(100 * (1 - promo_offers.price_uah::numeric / "
                 "promo_offers.red_price_uah), 2) >= :min_pct"
             ).bindparams(min_pct=min_discount_pct)

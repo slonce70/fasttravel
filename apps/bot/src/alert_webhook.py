@@ -31,12 +31,16 @@ from __future__ import annotations
 
 import hmac
 import os
-from typing import Any
+from typing import Any, cast
 
 from aiogram import Bot
 from aiohttp import web
 
-from shared.publishers.broadcast import broadcast_deal, escape_markdown_v2
+from shared.publishers.broadcast import (
+    broadcast_deal,
+    escape_markdown_v2,
+    escape_markdown_v2_code,
+)
 from src.config import get_settings
 from src.infra.logging import get_logger
 
@@ -47,6 +51,8 @@ log = get_logger(__name__)
 # We use a custom header to avoid wiring Basic Auth machinery — operators
 # just put a long random string into `ALERTMANAGER_WEBHOOK_SECRET`.
 SECRET_HEADER = "X-Webhook-Secret"
+_BOT_KEY = web.AppKey("fasttravel_bot", Bot)
+_CHANNEL_ID_KEY = web.AppKey("fasttravel_alert_channel_id", object)
 
 
 def _format_alert(alert: dict[str, Any]) -> str:
@@ -86,7 +92,7 @@ def _format_alert(alert: dict[str, Any]) -> str:
         # Description can be multiline; cap at ~600 chars so a verbose
         # alert doesn't blow past Telegram's 4096 limit.
         trimmed = description[:600] + ("…" if len(description) > 600 else "")
-        parts.append(f"```\n{trimmed}\n```")
+        parts.append(f"```\n{escape_markdown_v2_code(trimmed)}\n```")
     return "\n".join(parts)
 
 
@@ -125,8 +131,8 @@ async def _alerts_handler(request: web.Request) -> web.Response:
     if not isinstance(alerts, list):
         return web.json_response({"error": "alerts_not_list"}, status=400)
 
-    bot: Bot | None = request.app.get("bot")
-    channel_id: str | int | None = request.app.get("channel_id")
+    bot: Bot | None = request.app.get(_BOT_KEY)
+    channel_id = cast(str | int | None, request.app.get(_CHANNEL_ID_KEY))
     if bot is None or not channel_id:
         log.error(
             "alert_webhook.no_channel",
@@ -173,8 +179,8 @@ def build_app(bot: Bot, channel_id: str | int | None) -> web.Application:
     can build isolated apps without polluting process state.
     """
     app = web.Application()
-    app["bot"] = bot
-    app["channel_id"] = channel_id
+    app[_BOT_KEY] = bot
+    app[_CHANNEL_ID_KEY] = channel_id
     app.router.add_post("/alerts", _alerts_handler)
     app.router.add_get("/alerts/health", _health_handler)
     return app

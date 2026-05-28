@@ -26,13 +26,18 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.dedup import is_duplicate, offer_fingerprint
-from src.exceptions import ClientNotConfigured, IngestError, ITTourNotConfigured
+from src.exceptions import (
+    ClientNotConfigured,
+    IngestError,
+    ITTourNotConfigured,
+    UnsupportedGenericFarvaterIngest,
+)
 from src.normalizers.base import NormalizedOffer
 from src.settings import get_settings
 
 log = structlog.get_logger()
 
-SourceName = Literal["ittour", "farvater", "tbo"]
+SourceName = Literal["ittour"]
 
 
 @dataclass(slots=True)
@@ -44,15 +49,14 @@ class HotelTarget:
 
     canonical_hotel_id: int
     external_id: str  # how the upstream source identifies the same hotel
-    operator_code: str | None = None  # ittour returns multi-op; for farvater
-    # we already know which operator's deep_link we'll get
+    operator_code: str | None = None  # ittour can return multi-operator offers
 
 
 @dataclass(slots=True)
 class SnapshotReport:
     """Per-run audit. Lands in `scrape_runs` table + log line."""
 
-    source: SourceName
+    source: str
     started_at: datetime
     finished_at: datetime | None = None
     hotels_processed: int = 0
@@ -76,7 +80,7 @@ async def run_snapshot(
     *,
     db: AsyncSession,
     redis: Redis,
-    source: SourceName,
+    source: str,
     hotels: list[HotelTarget],
     check_in_range: tuple[date, date],
     nights_list: list[int] | None = None,
@@ -119,6 +123,7 @@ async def run_snapshot(
 
     if deduped:
         report.offers_inserted = await _bulk_insert(db, deduped, hotels)
+        await db.commit()
     report.finished_at = datetime.now(UTC)
 
     log.info(
@@ -136,7 +141,7 @@ async def run_snapshot(
 
 async def _collect_offers(
     *,
-    source: SourceName,
+    source: str,
     redis: Redis,
     hotels: list[HotelTarget],
     check_in_range: tuple[date, date],
@@ -181,10 +186,7 @@ async def _collect_offers(
         # bypass the production rate budget, schema canary, and the
         # `static_tours_sweep` promo channel. Remove this branch entirely
         # once we're certain no caller still passes `source='farvater'`.
-        raise ValueError(
-            "farvater is handled by apps/scheduler (snapshot_farvater + "
-            "static_tours_sweep); generic ingest pipeline does not own it."
-        )
+        raise UnsupportedGenericFarvaterIngest()
 
     elif source == "tbo":
         # TBO is content-only — does not produce price offers, only
@@ -238,7 +240,7 @@ async def _bulk_insert(
                 "check_in": offer.check_in,
                 "nights": offer.nights,
                 "meal_plan": offer.meal_plan,
-                "room_category": offer.room_category,
+                "room_category": offer.room_category or "",
                 "adults": offer.adults,
                 "departure_city": offer.departure_city,
                 "price_uah": offer.price_uah,
@@ -264,11 +266,10 @@ async def _bulk_insert(
             :currency, :fx_rate_to_uah, :deep_link, CAST(:raw_payload AS jsonb)
         )
         ON CONFLICT
-          (hotel_id, operator_id, check_in, nights, meal_plan, observed_at)
+          (hotel_id, operator_id, check_in, nights, meal_plan, room_category, observed_at)
         DO NOTHING
     """)
     result = await db.execute(stmt, rows)
-    await db.commit()
     rowcount = getattr(result, "rowcount", None)
     return int(rowcount) if rowcount is not None and rowcount >= 0 else len(rows)
 

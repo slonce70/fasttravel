@@ -32,7 +32,7 @@ async def _seed_minimal_deal(
     baseline_p50: int = 12000,
     discount_pct: float = 33.0,
     source: str | None = "farvater_scrape",
-    detection_method: str = "percentile",
+    detection_method: str = "calendar_anomaly",
     nights: int = 7,
 ) -> SeededDeal:
     """Insert one operator + destination + hotel + deal via raw SQL.
@@ -135,6 +135,39 @@ async def test_get_deal_by_id_returns_enriched_payload(
     assert body["hotel_stars"] == 4
     assert body["hotel_photo_url"] == "https://cdn.example.test/hotel.jpg"
     assert body["destination_name"] == "Анталія"
+
+
+@pytest.mark.asyncio
+async def test_get_deal_by_id_includes_historical_promo_discount_row(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    seeded = await _seed_minimal_deal(
+        db_session,
+        detection_method="promo_discount",
+        discount_pct=50.0,
+    )
+
+    response = await client.get(f"/api/deals/{seeded.deal_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == seeded.deal_id
+    assert body["detection_method"] == "promo_discount"
+    assert body["discount_pct"] == 50.0
+
+
+@pytest.mark.asyncio
+async def test_get_deal_by_id_includes_historical_percentile_row(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    seeded = await _seed_minimal_deal(db_session, detection_method="percentile")
+
+    response = await client.get(f"/api/deals/{seeded.deal_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == seeded.deal_id
+    assert body["detection_method"] == "percentile"
 
 
 @pytest.mark.asyncio

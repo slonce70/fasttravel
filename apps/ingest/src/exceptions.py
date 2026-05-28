@@ -41,6 +41,16 @@ class TBONotConfigured(ClientNotConfigured):
         super().__init__("tbo", "TBO_USERNAME / TBO_PASSWORD")
 
 
+class UnsupportedGenericFarvaterIngest(IngestError):
+    """Farvater price ingest is owned by scheduler jobs, not run_snapshot."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "farvater is handled by apps/scheduler (snapshot_farvater + "
+            "static_tours_sweep); generic ingest pipeline does not own it."
+        )
+
+
 class UpstreamHTTPError(IngestError):
     """Non-2xx response from an upstream source after retries are exhausted."""
 
@@ -62,8 +72,8 @@ class ForbiddenByUpstream(UpstreamHTTPError):
 class CircuitBreakerTripped(IngestError):
     """We saw too many consecutive 429/403 — stop hammering, alert operators.
 
-    Specific to the farvater scraper. The pipeline catches this and marks
-    the run as `circuit_breaker` so the scheduler can disable the source.
+    Kept for sources that implement a generic ingest circuit breaker.
+    Farvater price ingest now lives in scheduler-owned jobs instead.
     """
 
 

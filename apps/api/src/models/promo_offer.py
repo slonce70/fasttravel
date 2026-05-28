@@ -8,7 +8,8 @@ DESIGN NOTE: this is intentionally a *separate* table from
 `price_observations`. Promotions have their own lifecycle (LoadedDate,
 promotionEndDate) and are ingested by a different job at a different
 cadence. Mixing them into the price-observation stream would corrupt
-the percentile baselines that `detect_deals` relies on.
+calendar/history analytics and blur the separate `/api/promotions`
+surface.
 """
 
 from __future__ import annotations

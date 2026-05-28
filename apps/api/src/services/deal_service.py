@@ -28,11 +28,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models import Deal, Destination, Hotel
 from src.schemas.deal import DealOut, PaginatedDeals
 
-# Sprint 2.4 — deals older than this aren't shown on /api/deals. The
-# Sprint 0.5 alerts (`StaleSnapshot`, 14h) and the static_tours_sweep
-# 24h freshness window for promo_offers both feed deals; 48h gives the
-# UI feed a comfortable buffer over them. Past 48h the deep_link is
-# likely to 404 or quote a different price on farvater.
+# Deals older than this aren't shown on /api/deals. The active detector
+# writes date-dip deals from current_prices; historical/imported deal
+# rows stay visible only while they are fresh. Past 48h the deep_link is
+# likely to 404 or quote a different price on Farvater.
 DEAL_FRESHNESS_HOURS = 48
 
 

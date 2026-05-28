@@ -104,7 +104,7 @@ def test_render_deal_full():
         "baseline_p50": 51500,
     }
     out = render_deal(row)
-    assert "\\-38%" in out  # discount in MarkdownV2-escaped form
+    assert "На 38% нижче за ціновий орієнтир" in out
     assert "Belport Beach Hotel" in out
     assert "⭐⭐⭐⭐" in out
     assert "Туреччина" in out
@@ -113,6 +113,8 @@ def test_render_deal_full():
     assert "32 200 ₴" in out
     assert "51 500 ₴" in out
     assert "Все включено" in out
+    assert "економія" not in out
+    assert "~51 500 ₴~" not in out
 
 
 def test_render_deal_handles_missing_destination():
@@ -155,6 +157,28 @@ def test_render_deal_calendar_anomaly_drops_savings_and_strikethrough():
     assert "~128 602 ₴~" not in out
 
 
+def test_render_deal_percentile_uses_same_hotel_baseline_without_savings_claim():
+    row = {
+        "discount_pct": 18,
+        "hotel_name_uk": "Historical Hotel",
+        "hotel_stars": 4,
+        "destination_name": "Анталія",
+        "check_in": "2026-07-10",
+        "nights": 7,
+        "meal_plan": "AI",
+        "price_uah": 32000,
+        "baseline_p50": 39000,
+        "detection_method": "percentile",
+    }
+
+    out = render_deal(row)
+
+    assert "нижча за звичайну" in out
+    assert "орієнтир" in out
+    assert "економія" not in out
+    assert "~39 000 ₴~" not in out
+
+
 def test_render_deal_peer_anomaly_names_peer_baseline_without_savings_claim():
     row = {
         "discount_pct": 29,
@@ -175,6 +199,49 @@ def test_render_deal_peer_anomaly_names_peer_baseline_without_savings_claim():
     assert "орієнтир схожих" in out
     assert "економія" not in out
     assert "~45 500 ₴~" not in out
+
+
+def test_render_deal_promo_discount_uses_operator_savings_claim():
+    row = {
+        "discount_pct": 37,
+        "hotel_name_uk": "Promo Hotel",
+        "hotel_stars": 4,
+        "destination_name": "Анталія",
+        "check_in": "2026-07-10",
+        "nights": 7,
+        "meal_plan": "AI",
+        "price_uah": 21000,
+        "baseline_p50": 33500,
+        "detection_method": "promo_discount",
+    }
+
+    out = render_deal(row)
+
+    assert "економія 12 500 ₴" in out
+    assert "~33 500 ₴~" in out
+    assert "Спецціна від оператора" in out
+
+
+def test_render_deal_unknown_method_uses_neutral_baseline_without_savings_claim():
+    row = {
+        "discount_pct": 18,
+        "hotel_name_uk": "Mystery Hotel",
+        "hotel_stars": 4,
+        "destination_name": "Анталія",
+        "check_in": "2026-07-10",
+        "nights": 7,
+        "meal_plan": "AI",
+        "price_uah": 32000,
+        "baseline_p50": 39000,
+        "detection_method": "legacy_experiment",
+    }
+
+    out = render_deal(row)
+
+    assert "орієнтир" in out
+    assert "економія" not in out
+    assert "~39 000 ₴~" not in out
+    assert "нижча за звичайну" not in out
 
 
 def test_render_deal_includes_optional_short_hotel_context():

@@ -35,7 +35,7 @@ router = Router(name="commands")
 
 def _channel_buttons() -> InlineKeyboardMarkup:
     s = get_settings()
-    buttons = [InlineKeyboardButton(text="📡 Канал з знижками", url=s.public_channel_link)]
+    buttons = [InlineKeyboardButton(text="📡 Канал з варіантами", url=s.public_channel_link)]
     if s.public_site_url:
         buttons.append(InlineKeyboardButton(text="🌐 Сайт", url=s.public_site_url))
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
@@ -51,7 +51,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         "*FastTravel* знаходить *помітно дешевші тури* за кількома сигналами: "
         "інші дати цього готелю, історія цін, спецціна оператора або схожі готелі\\.\n\n"
         "Що далі:\n"
-        "  🏆 /best — ТОП знижок зараз\n"
+        "  🏆 /best — ТОП варіанти зараз\n"
         "  🔍 /search — знайти тур під ваші дати\n"
         "  🔔 /subscribe — алерт коли впаде ціна\n\n"
         "Або тисніть кнопку в меню нижче 👇"
@@ -74,13 +74,13 @@ async def cmd_help(message: Message) -> None:
         "Картка кожної пропозиції показує, з чим саме порівнюється ціна: "
         "іншими датами цього готелю, його історією, спецціною оператора або схожими готелями\\.\n\n"
         "*Команди:*\n"
-        "  • /best — ТОП\\-10 знижок зараз 🏆\n"
+        "  • /best — ТОП\\-10 варіантів зараз 🏆\n"
         "  • /search — знайти тур \\(майстер з 6 кроків\\)\n"
-        "  • /deals — стрічка усіх активних знижок\n"
+        "  • /deals — стрічка усіх активних варіантів\n"
         "  • /destinations — каталог країн\n"
         "  • /subscribe — персональні Telegram\\-алерти за вашими фільтрами\n"
         "  • /profile — мій профіль і підписки\n"
-        "  • /channel — публічний канал з усіма знижками\n\n"
+        "  • /channel — публічний канал з усіма варіантами\n\n"
         "Календар цін — у деталях кожного готелю\\.\n"
         "Питання: hello@fasttravel\\.com\\.ua"
     )
@@ -95,7 +95,7 @@ async def cmd_help(message: Message) -> None:
 @router.message(Command("channel"))
 async def cmd_channel(message: Message) -> None:
     await message.answer(
-        "Канал з гарячими знижками 📡",
+        "Канал з гарячими варіантами 📡",
         reply_markup=_channel_buttons(),
         disable_web_page_preview=True,
     )

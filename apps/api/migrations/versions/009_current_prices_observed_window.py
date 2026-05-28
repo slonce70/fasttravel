@@ -19,19 +19,13 @@ The MV is rebuilt with the new WHERE clause and the unique index is
 re-applied. We DROP + CREATE in one transaction so concurrent reads
 either see the old or the new shape, never a partial state.
 
-Stage 3 (post-audit) NOTE: the `DISTINCT ON (hotel_id, operator_id,
+Historical note: the `DISTINCT ON (hotel_id, operator_id,
 check_in, nights, meal_plan)` ordering below intentionally does NOT
 include `room_category`. Two different rooms at the same key collapse
 into one row (whichever has the latest `observed_at` wins). This
-predates the 2026-05 audit and is left in place because the alternative
-— adding `room_category` to both this MV key and `uq_price_obs_natural`
-(migration 007) — requires rebuilding a 39k+ row index and changing
-downstream consumer contracts. The
-`fasttravel_rooms_collapsed_last_refresh` gauge (set by
-snapshot_farvater after each REFRESH) surfaces how often this happens;
-a future migration 017 should promote room_category into both keys
-when the gauge stays consistently >5 % of priced hotels. See
-~/.claude/plans/mutable-hopping-barto.md Stage 3.
+predates the 2026-05 audit. Migration 020 later promotes
+`room_category` into this MV key and `uq_price_obs_natural`; this older
+revision keeps its original shape for reproducible upgrades/downgrades.
 """
 
 from __future__ import annotations

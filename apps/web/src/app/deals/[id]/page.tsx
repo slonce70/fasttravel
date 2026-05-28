@@ -16,9 +16,9 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   const deal = await fetchDealById(Number(id));
-  if (!deal) return { title: 'Знижка не знайдена' };
+  if (!deal) return { title: 'Пропозиція не знайдена' };
   return {
-    title: `Знижка -${Math.round(deal.discount_pct)}%: ${deal.hotel_name_uk}`,
+    title: `Ціна нижча на ${Math.round(deal.discount_pct)}%: ${deal.hotel_name_uk}`,
     description: `${deal.hotel_name_uk}, ${deal.destination_name ?? 'тур'}, заїзд ${formatDateLong(deal.check_in)}, ${formatNights(deal.nights)}, ${formatMealPlan(deal.meal_plan)}, ${formatPrice(deal.price_uah)}.`,
   };
 }
@@ -34,12 +34,12 @@ export default async function DealPermalinkPage({ params }: { params: Promise<{ 
   return (
     <Container className="max-w-2xl space-y-4 py-8">
       <Link href="/deals" className="text-sm text-slate-500 hover:text-slate-700">
-        ← Усі знижки
+        ← Усі пропозиції
       </Link>
       <DealCard deal={deal} />
       <p className="text-xs text-slate-400">
-        Permalink на цю знижку — посилання активне доти, доки оператор тримає ціну. Якщо при кліку
-        «Купити» ви бачите іншу ціну — найімовірніше тур уже викупили.
+        Permalink на цю пропозицію активний доти, доки оператор тримає ціну. Якщо при кліку «Купити»
+        ви бачите іншу ціну — найімовірніше тур уже змінився або його викупили.
       </p>
     </Container>
   );
