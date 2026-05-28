@@ -84,23 +84,26 @@ async def main() -> None:
     if not settings.telegram_bot_token:
         log.warning(
             "bot.no_token",
-            note="TELEGRAM_BOT_TOKEN unset — polling skipped; alert webhook still runs",
+            note="TELEGRAM_BOT_TOKEN unset — polling skipped",
         )
-        # Sprint 2.3 — even without a bot token the /alerts webhook
-        # stays up so AlertManager doesn't see persistent connection
-        # refusals; it returns 202 with a "no_channel" note that
+        # Sprint 2.3 — when the alert webhook is enabled it stays up even
+        # without a bot token, so AlertManager doesn't see persistent
+        # connection refusals; it returns 202 with a "no_channel" note that
         # tells operators why nothing reaches Telegram.
-        from src.alert_webhook import start_alert_webhook
+        alert_runner = None
+        if settings.alert_webhook_enabled:
+            from src.alert_webhook import start_alert_webhook
 
-        alert_runner = await start_alert_webhook(
-            None,  # type: ignore[arg-type]
-            port=int(settings.alert_webhook_port),
-            channel_id=None,
-        )
+            alert_runner = await start_alert_webhook(
+                None,  # type: ignore[arg-type]
+                port=int(settings.alert_webhook_port),
+                channel_id=None,
+            )
         try:
             await _idle_until_signal()
         finally:
-            await alert_runner.cleanup()
+            if alert_runner is not None:
+                await alert_runner.cleanup()
         log.info("bot.stopped", reason="no_token")
         return
 
@@ -142,16 +145,18 @@ async def main() -> None:
     dp.include_router(discovery_router)
 
     log.info("bot.starting", environment=settings.environment)
-    # Sprint 2.3 — spawn aiohttp.web server for AlertManager webhooks.
-    # Lives alongside aiogram polling; both share the same event loop.
-    # Port 9103 (after 9101 scheduler, 9102 bot metrics).
-    from src.alert_webhook import start_alert_webhook
+    # Sprint 2.3 — optional aiohttp.web server for AlertManager webhooks.
+    # Only starts when enabled (mirrors the `observability` compose profile
+    # that runs AlertManager); shares the aiogram event loop. Port 9103.
+    alert_runner = None
+    if settings.alert_webhook_enabled:
+        from src.alert_webhook import start_alert_webhook
 
-    alert_runner = await start_alert_webhook(
-        bot,
-        port=int(settings.alert_webhook_port),
-        channel_id=settings.telegram_alerts_chat_id,
-    )
+        alert_runner = await start_alert_webhook(
+            bot,
+            port=int(settings.alert_webhook_port),
+            channel_id=settings.telegram_alerts_chat_id,
+        )
     try:
         # Publish command list + open it via the blue MenuButton. Idempotent;
         # cheap to call on every boot so we don't drift if @BotFather is
@@ -166,7 +171,8 @@ async def main() -> None:
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot, handle_signals=True)
     finally:
-        await alert_runner.cleanup()
+        if alert_runner is not None:
+            await alert_runner.cleanup()
         await close_client()
         await close_engine()
         await bot.session.close()

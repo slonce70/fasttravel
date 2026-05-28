@@ -56,7 +56,7 @@ def test_prod_requires_telegram_credentials() -> None:
         settings.assert_prod_secrets()
 
 
-def test_prod_requires_alertmanager_webhook_secret() -> None:
+def test_prod_requires_alertmanager_webhook_secret_when_webhook_enabled() -> None:
     settings = Settings(
         _env_file=None,
         environment="prod",
@@ -64,11 +64,29 @@ def test_prod_requires_alertmanager_webhook_secret() -> None:
         telegram_bot_token="123456:prod-token",
         telegram_channel_id="-1003825850110",
         telegram_alerts_chat_id="-1009999999999",
+        alert_webhook_enabled=True,
         alertmanager_webhook_secret=None,
     )
 
     with pytest.raises(RuntimeError, match="ALERTMANAGER_WEBHOOK_SECRET"):
         settings.assert_prod_secrets()
+
+
+def test_prod_skips_webhook_secret_when_webhook_disabled() -> None:
+    # With the AlertManager webhook off (the $0 single-VM default), prod does
+    # not require the secret — nothing posts to the listener.
+    settings = Settings(
+        _env_file=None,
+        environment="prod",
+        database_url="postgresql+asyncpg://fasttravel:secret@postgres:5432/fasttravel",
+        telegram_bot_token="123456:prod-token",
+        telegram_channel_id="-1003825850110",
+        telegram_alerts_chat_id="-1009999999999",
+        alert_webhook_enabled=False,
+        alertmanager_webhook_secret=None,
+    )
+
+    settings.assert_prod_secrets()
 
 
 def test_prod_requires_separate_alerts_chat_id() -> None:

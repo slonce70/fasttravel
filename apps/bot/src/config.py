@@ -37,6 +37,11 @@ class Settings(BaseAppSettings):
 
     # Sprint 2.3 — Prometheus AlertManager webhook listener. Port chosen
     # next-after metrics_port; both internal-only in docker-compose.
+    # Opt-in: the listener only starts when enabled, mirroring the
+    # `observability` docker-compose profile that runs AlertManager. With the
+    # monitoring stack off (the $0 single-VM default) nothing posts here, so
+    # there's no point binding the port.
+    alert_webhook_enabled: bool = False
     alert_webhook_port: int = 9103
     alertmanager_webhook_secret: str | None = None
 
@@ -65,9 +70,10 @@ class Settings(BaseAppSettings):
             offenders.append("TELEGRAM_ALERTS_CHAT_ID_MUST_DIFFER_FROM_TELEGRAM_CHANNEL_ID")
         # Audit #2 — without this secret the /alerts webhook would silently
         # accept any spoofed AlertManager payload from anyone with network
-        # reach. Required in prod; the alert_webhook handler also fail-closes
-        # at request time so a misconfigured deploy can't slip past.
-        if not self.alertmanager_webhook_secret:
+        # reach. Required in prod *when the webhook is enabled*; the
+        # alert_webhook handler also fail-closes at request time so a
+        # misconfigured deploy can't slip past.
+        if self.alert_webhook_enabled and not self.alertmanager_webhook_secret:
             offenders.append("ALERTMANAGER_WEBHOOK_SECRET")
         return offenders
 
