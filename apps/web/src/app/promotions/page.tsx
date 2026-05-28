@@ -142,7 +142,7 @@ export default async function PromotionsPage({
                       <a
                         href={promo.deep_link}
                         target="_blank"
-                        rel="sponsored noopener noreferrer"
+                        rel="nofollow sponsored noopener"
                         className="hover:bg-accent-700 shrink-0 rounded-full bg-accent-600 px-4 py-1.5 text-sm font-medium text-white"
                       >
                         На сайт оператора

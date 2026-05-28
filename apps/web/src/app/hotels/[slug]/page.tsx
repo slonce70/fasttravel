@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import type { Metadata } from 'next';
 import { notFound, permanentRedirect } from 'next/navigation';
 import { Container } from '@/components/layout/Container';
@@ -12,13 +13,18 @@ import { HotelView } from './HotelView';
 // via TanStack Query so it stays fresh independently of the page cache.
 export const revalidate = 3600;
 
+// Per-request memoised hotel lookup: generateMetadata and the page component
+// render in the same request, so this collapses them to a single backend call
+// (which is itself ISR-cached for an hour via fetchHotel's default).
+const getHotel = cache((slug: string) => fetchHotel(slug));
+
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }): Promise<Metadata> {
   const { slug } = await params;
-  const hotel = await fetchHotel(slug, { cache: 'no-store' });
+  const hotel = await getHotel(slug);
   if (!hotel) return { title: 'Готель не знайдено' };
   return {
     title: `${hotel.name_uk} — календар цін на тур`,
@@ -33,7 +39,7 @@ export async function generateMetadata({
 
 export default async function HotelPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const hotel = await fetchHotel(slug, { cache: 'no-store' });
+  const hotel = await getHotel(slug);
   if (!hotel) notFound();
   if (slug !== hotel.canonical_slug) permanentRedirect(`/hotels/${hotel.canonical_slug}`);
 
