@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Container } from './Container';
+import { DestinationsMenu } from './DestinationsMenu';
 import { fetchDestinations } from '@/lib/api-client';
 import { uniqueCountriesByIso } from '@/lib/countries';
 import type { CountryOut } from '@/lib/types';
@@ -52,29 +53,7 @@ export async function Header() {
                 </Link>
               </li>
             ))}
-            {topCountries.length > 0 && (
-              <li className="group relative">
-                {/* CSS-only dropdown — keeps Header a server component. The
-                    trigger is a non-interactive visual hint; the actual menu
-                    items are real <Link>s that focus-within keeps reachable
-                    via keyboard tabbing. */}
-                <span className="block cursor-default rounded px-3 py-2 text-sm text-slate-700 transition-colors group-hover:bg-slate-100 group-hover:text-brand-800">
-                  Напрямки ▾
-                </span>
-                <div className="invisible absolute right-0 top-full z-40 mt-1 w-56 rounded-lg border border-slate-200 bg-white p-1 opacity-0 shadow-lg transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
-                  {topCountries.map((c) => (
-                    <Link
-                      key={`${c.country_iso2}-${c.id}`}
-                      href={`/destinations/${c.country_slug}`}
-                      className="block rounded px-3 py-2 text-sm text-slate-700 hover:bg-slate-100 hover:text-brand-800"
-                    >
-                      {c.name_uk}
-                      <span className="ml-2 text-xs text-slate-400">{c.hotel_count}</span>
-                    </Link>
-                  ))}
-                </div>
-              </li>
-            )}
+            {topCountries.length > 0 && <DestinationsMenu countries={topCountries} />}
             {TAIL_NAV.map((item) => (
               <li key={item.href}>
                 <Link
