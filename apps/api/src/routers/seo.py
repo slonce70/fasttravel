@@ -9,11 +9,11 @@ from __future__ import annotations
 from xml.sax.saxutils import escape
 
 from fastapi import APIRouter, Depends
+from shared.site_urls import public_hotel_url
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
-from shared.site_urls import public_hotel_url
 from src.config import Settings
 from src.deps import get_app_settings, get_db
 

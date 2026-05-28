@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from shared.infra.logging import configure_logging as _shared_configure
 from shared.infra.logging import get_logger as _shared_get_logger
+
 from src.config import get_settings
 
 

@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from datetime import date
 
+from shared.deal_detection import DATE_DIP_POLICY, date_dip_neighbor_stats_lateral_sql
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.deal_detection import DATE_DIP_POLICY, date_dip_neighbor_stats_lateral_sql
 from src.schemas.calendar import CalendarDay, OfferOut
 from src.services.meal_normalizer import raw_codes_for
 

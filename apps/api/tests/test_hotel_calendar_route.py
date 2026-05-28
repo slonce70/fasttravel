@@ -4,10 +4,10 @@ from datetime import date, timedelta
 
 import pytest
 from httpx import AsyncClient
+from shared.deal_detection import DATE_DIP_POLICY
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.deal_detection import DATE_DIP_POLICY
 from src.routers import hotels as hotels_router
 from src.services.calendar_service import get_calendar
 

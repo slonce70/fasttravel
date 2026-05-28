@@ -1,5 +1,6 @@
 from shared.meal_plans import CANONICAL_LABELS_UK, RAW_LABELS_UK, RAW_TO_CANONICAL
 from shared.text_uk import format_meal_plan
+
 from src.services import meal_normalizer
 
 
