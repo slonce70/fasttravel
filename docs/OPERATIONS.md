@@ -185,28 +185,28 @@ targeted PR closes them.
 
 ## 5. Observability
 
-### Default
+### Default: OFF (opt-in)
 
-- Prometheus + AlertManager + Grafana always run in compose.
-- 9 alert rules in `infra/prometheus/rules/fasttravel.yml`. AlertManager
-  posts firing alerts to the bot's `/alerts` endpoint → Telegram.
-- node + postgres + redis exporters scraped on the `fasttravel` network.
-
-### Optional: log aggregation
-
-Loki + Vector are gated by the `observability` compose profile:
+To keep the $0 single-VM deploy lean, `docker compose up` runs only
+postgres/redis/api/bot/scheduler. The entire monitoring stack —
+Prometheus, AlertManager, Grafana, node/postgres/redis exporters, and
+Loki + Vector — sits behind the `observability` profile:
 
 ```bash
 docker compose --profile observability up -d
-# adds:
-#   loki     (Grafana Loki receiver, port 3100 internal)
-#   vector   (sidecar tailing /var/lib/docker/containers/*.log → loki)
+# adds: prometheus, alertmanager, grafana, node/postgres/redis exporters,
+#       loki (port 3100 internal), vector (tails containers → loki)
 ```
 
-Then add Loki as a data source in Grafana (`http://loki:3100`).
+- 9 alert rules in `infra/prometheus/rules/fasttravel.yml`. AlertManager
+  posts firing alerts to the bot's `/alerts` endpoint → Telegram **when the
+  bot has `ALERT_WEBHOOK_ENABLED=true`** (off by default; turn it on
+  together with the profile + `ALERTMANAGER_WEBHOOK_SECRET`).
+- node + postgres + redis exporters scraped on the `fasttravel` network.
+- Add Loki as a Grafana data source (`http://loki:3100`).
 
-Don't enable on a free-tier VM unless you've checked `docker stats` —
-Loki adds ~150-300 MB RSS.
+Check `docker stats` before enabling on a free-tier VM — the full stack
+adds a few hundred MB RSS (Loki alone ~150-300 MB).
 
 ---
 

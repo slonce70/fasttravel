@@ -182,6 +182,9 @@ services:
     container_name: ft_prometheus
     restart: unless-stopped
     logging: *default-logging
+    # Opt-in on the $0 single-VM deploy: `docker compose --profile observability up`.
+    # Default `up` runs only postgres/redis/api/bot/scheduler to keep RAM free.
+    profiles: ["observability"]
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/prometheus/rules:/etc/prometheus/rules:ro
@@ -212,6 +215,7 @@ services:
     container_name: ft_node_exporter
     restart: unless-stopped
     logging: *default-logging
+    profiles: ["observability"]
     command:
       - '--path.rootfs=/host'
     pid: host
@@ -225,6 +229,7 @@ services:
     container_name: ft_postgres_exporter
     restart: unless-stopped
     logging: *default-logging
+    profiles: ["observability"]
     environment:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-fasttravel}:${POSTGRES_PASSWORD:-fasttravel_dev_change_me}@postgres:5432/${POSTGRES_DB:-fasttravel}?sslmode=disable"
     depends_on:
@@ -238,6 +243,7 @@ services:
     container_name: ft_redis_exporter
     restart: unless-stopped
     logging: *default-logging
+    profiles: ["observability"]
     environment:
       REDIS_ADDR: "redis://redis:6379"
     depends_on:
@@ -251,6 +257,7 @@ services:
     container_name: ft_alertmanager
     restart: unless-stopped
     logging: *default-logging
+    profiles: ["observability"]
     volumes:
       - ./infra/prometheus/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
       # Webhook secret file (gitignored). AlertManager reads via
@@ -301,6 +308,7 @@ services:
     container_name: ft_grafana
     restart: unless-stopped
     logging: *default-logging
+    profiles: ["observability"]
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       # No dev fallback to `admin` — Grafana boots only when the operator
