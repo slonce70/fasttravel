@@ -67,7 +67,11 @@ DATE_DIP_POLICY = DateDipPolicy(
     lookahead_end_days=90,
     neighbor_window_days=14,
     min_sample_size=4,
-    max_spread_ratio=Decimal("2.5"),
+    # Reject bimodal neighbourhoods: if the priciest nearby date is >1.8x the
+    # cheapest, the ±window is straddling a seasonal price step and the target
+    # is "cheap" only versus the wrong season. Real same-hotel date-dips are
+    # unimodal (spread well under 1.8); cross-season artifacts run ~2.0-2.2.
+    max_spread_ratio=Decimal("1.8"),
     discount_multiplier=Decimal("0.96"),
     min_absolute_saving_uah=1500,
     max_discount_pct=50,

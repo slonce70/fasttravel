@@ -508,6 +508,61 @@ async def test_detect_deals_rejects_implausible_discount_above_cap(
 
 
 @pytest.mark.asyncio
+async def test_detect_deals_rejects_bimodal_window_below_discount_cap(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bimodal (two-cluster) neighbourhood must not produce a deal even when
+    the discount is under the cap.
+
+    The real failure mode behind the channel's "deals": the ±window straddles a
+    seasonal price step, so the target sits in the cheap cluster while the
+    baseline is pulled toward the expensive cluster (Adrovic "-49.76%":
+    42 825 ₴ tied with nearby June dates, baseline from ~85k July dates). The
+    discount stays under the cap, so only the price-spread guard can catch it —
+    real dips are unimodal (low spread), artifacts are bimodal (high spread).
+    """
+    await session.execute(text("UPDATE deals SET posted_at = NOW() WHERE posted_at IS NULL"))
+    hotel_id, operator_id, _ = await _seed_market(session, country_iso2="MZ")
+    await _seed_price_rows(
+        session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+        rows=[
+            (40, "Standard", 50000),  # target — tied with the cheap cluster
+            (30, "STD", 52000),  # cheap cluster
+            (33, "STD", 52000),
+            (47, "STD", 90000),  # expensive cluster (spread ~1.83 > 1.8)
+            (49, "STD", 92000),
+            (52, "STD", 95000),
+        ],
+    )
+    monkeypatch.setattr(
+        detect_deals_module,
+        "async_session_factory",
+        lambda: _SessionContext(session),
+    )
+
+    await detect_deals_module.detect_deals(cooldown_hours=0, max_per_run=200)
+
+    deals = (
+        await session.execute(
+            text(
+                """
+                SELECT discount_pct
+                FROM deals
+                WHERE hotel_id = :hotel_id
+                  AND detection_method = 'calendar_anomaly'
+                """
+            ),
+            {"hotel_id": hotel_id},
+        )
+    ).all()
+    # ~45% discount (under the cap) but spread ~1.83 — the spread guard rejects it.
+    assert deals == []
+
+
+@pytest.mark.asyncio
 async def test_detect_deals_counts_unique_neighbor_dates_not_room_aliases(
     session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
