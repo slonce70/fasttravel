@@ -139,6 +139,7 @@ _DATE_DIP_SQL = text(
                   AND (cp.trimmed_mean - cp.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}
             ) cand
             WHERE cand.discount_pct > 0
+              AND cand.discount_pct <= {DATE_DIP_POLICY.max_discount_pct_sql}
               AND cand.country_iso2 IS NOT NULL
               AND NOT EXISTS (
                   SELECT 1

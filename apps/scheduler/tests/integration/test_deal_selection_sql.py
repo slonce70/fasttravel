@@ -455,6 +455,59 @@ async def test_detect_deals_does_not_compare_standard_target_to_premium_neighbor
 
 
 @pytest.mark.asyncio
+async def test_detect_deals_rejects_implausible_discount_above_cap(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A discount larger than the policy cap must NOT become a deal.
+
+    Real tour date-dips are modest. Huge "discounts" are almost always a
+    baseline artifact — a synthetic placeholder price (Sura "-78%"), or a
+    ±14-day window straddling a seasonal price step so a normal cheap-season
+    price reads as a deal against peak-season neighbours (Garni "-55%":
+    37 352 ₴ on 01-Jul vs ~82k July neighbours). Cap them out.
+    """
+    await session.execute(text("UPDATE deals SET posted_at = NOW() WHERE posted_at IS NULL"))
+    hotel_id, operator_id, _ = await _seed_market(session, country_iso2="SY")
+    await _seed_price_rows(
+        session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+        rows=[
+            (30, "STD", 38000),  # cheap-season neighbours
+            (33, "STD", 38000),
+            (40, "Standard", 36000),  # would-be target — normal cheap-season price
+            (47, "STD", 78000),  # peak-season neighbours (within 2.5x spread)
+            (49, "STD", 80000),
+            (52, "STD", 82000),
+        ],
+    )
+    monkeypatch.setattr(
+        detect_deals_module,
+        "async_session_factory",
+        lambda: _SessionContext(session),
+    )
+
+    await detect_deals_module.detect_deals(cooldown_hours=0, max_per_run=200)
+
+    deals = (
+        await session.execute(
+            text(
+                """
+                SELECT discount_pct
+                FROM deals
+                WHERE hotel_id = :hotel_id
+                  AND detection_method = 'calendar_anomaly'
+                """
+            ),
+            {"hotel_id": hotel_id},
+        )
+    ).all()
+    # The only candidate here discounts ~54% — above the cap — so nothing posts.
+    assert deals == []
+
+
+@pytest.mark.asyncio
 async def test_detect_deals_counts_unique_neighbor_dates_not_room_aliases(
     session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,

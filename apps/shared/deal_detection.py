@@ -18,6 +18,7 @@ class DateDipPolicy:
     max_spread_ratio: Decimal
     discount_multiplier: Decimal
     min_absolute_saving_uah: int
+    max_discount_pct: int
 
     def __post_init__(self) -> None:
         if self.lookahead_start_days < 0:
@@ -34,6 +35,8 @@ class DateDipPolicy:
             raise ValueError("discount_multiplier must be between 0 and 1")
         if self.min_absolute_saving_uah <= 0:
             raise ValueError("min_absolute_saving_uah must be positive")
+        if not 0 < self.max_discount_pct <= 100:
+            raise ValueError("max_discount_pct must be in (0, 100]")
 
     @property
     def max_spread_ratio_sql(self) -> str:
@@ -42,6 +45,21 @@ class DateDipPolicy:
     @property
     def discount_multiplier_sql(self) -> str:
         return str(self.discount_multiplier)
+
+    @property
+    def max_discount_pct_sql(self) -> str:
+        """Upper discount bound for the channel, as a SQL numeric literal.
+
+        Real tour date-dips are modest; a larger "discount" is almost always a
+        baseline artifact (synthetic placeholder price, or a ±neighbour window
+        straddling a seasonal price step). Cap it so those never publish."""
+        return str(self.max_discount_pct)
+
+    @property
+    def min_price_ratio_sql(self) -> str:
+        """price / baseline floor equivalent to ``max_discount_pct`` — for SQL
+        that filters on price rather than on a computed discount column."""
+        return str((Decimal(100) - Decimal(self.max_discount_pct)) / Decimal(100))
 
 
 DATE_DIP_POLICY = DateDipPolicy(
@@ -52,6 +70,7 @@ DATE_DIP_POLICY = DateDipPolicy(
     max_spread_ratio=Decimal("2.5"),
     discount_multiplier=Decimal("0.96"),
     min_absolute_saving_uah=1500,
+    max_discount_pct=50,
 )
 
 
