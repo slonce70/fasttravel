@@ -13,7 +13,7 @@ from shared.deal_detection import (
 
 def test_date_dip_policy_renders_stable_sql_literals() -> None:
     assert DATE_DIP_POLICY.discount_multiplier_sql == "0.96"
-    assert DATE_DIP_POLICY.max_spread_ratio_sql == "2.5"
+    assert DATE_DIP_POLICY.max_spread_ratio_sql == "1.8"
     assert DATE_DIP_POLICY.max_discount_pct_sql == "50"
     # price/baseline floor equivalent to a 50% cap.
     assert DATE_DIP_POLICY.min_price_ratio_sql == "0.5"
