@@ -30,11 +30,10 @@ def test_render_peer_anomaly_uses_neighboring_hotels_copy_without_savings_claim(
     assert "~45 500 ₴~" not in out
 
 
-def test_render_calendar_anomaly_drops_savings_and_strikethrough() -> None:
-    # date_dip baseline is a trimmed neighbouring-date comparison, not a
-    # price the subscriber would otherwise pay for THIS booking. "економія X"
-    # + ~strikethrough~ would imply "save by buying now" — fix renders honest
-    # comparison wording instead.
+def test_render_calendar_anomaly_shows_neighbour_average_strikethrough() -> None:
+    # The date-dip baseline is the average across nearby dates. Show it
+    # struck-through ("у середньому ~X~") so the card answers "cheaper than
+    # what?" — but never as a fake "економія"/"save by buying now" claim.
     row = SimpleNamespace(
         discount_pct=19,
         hotel_name_uk="Albatros Dana Beach Resort",
@@ -54,8 +53,34 @@ def test_render_calendar_anomaly_drops_savings_and_strikethrough() -> None:
 
     assert "Цікава дата за вашою підпискою" in out
     assert "дешевше за сусідні дати" in out
+    assert "у середньому ~128 602 ₴~" in out
     assert "економія" not in out
-    assert "~128 602 ₴~" not in out
+
+
+def test_render_includes_rating_and_description_when_present() -> None:
+    row = SimpleNamespace(
+        discount_pct=19,
+        hotel_name_uk="Blue Istanbul Hotel",
+        hotel_stars=4,
+        destination_name="Стамбул",
+        country_name="Туреччина",
+        check_in=date(2026, 6, 13),
+        nights=7,
+        meal_plan="RO",
+        price_uah=27401,
+        baseline_p50=38389,
+        detection_method="calendar_anomaly",
+        country_iso2="TR",
+        review_score=8.6,
+        review_count=412,
+        description_uk="Сучасний готель у центрі Стамбула, поряд із Блакитною мечеттю.",
+    )
+
+    out = _render(row, "https://fasttravel.test")
+
+    assert "⭐ 8\\.6/10" in out
+    assert "відгук" in out  # review-count word (declined form)
+    assert "Сучасний готель у центрі Стамбула" in out
 
 
 def test_render_percentile_uses_same_hotel_baseline_without_savings_claim() -> None:

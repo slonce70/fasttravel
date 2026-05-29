@@ -135,7 +135,7 @@ def test_render_deal_handles_missing_destination():
     assert "📍" not in out
 
 
-def test_render_deal_calendar_anomaly_drops_savings_and_strikethrough():
+def test_render_deal_calendar_anomaly_shows_neighbour_average_strikethrough():
     row = {
         "discount_pct": 19,
         "hotel_name_uk": "Albatros Dana Beach Resort",
@@ -153,8 +153,8 @@ def test_render_deal_calendar_anomaly_drops_savings_and_strikethrough():
 
     assert "📉" in out
     assert "дешевше за сусідні дати в цьому готелі" in out
+    assert "у середньому ~128 602 ₴~" in out
     assert "економія" not in out
-    assert "~128 602 ₴~" not in out
 
 
 def test_render_deal_percentile_uses_same_hotel_baseline_without_savings_claim():
