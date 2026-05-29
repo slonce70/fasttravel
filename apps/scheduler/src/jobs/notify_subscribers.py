@@ -25,7 +25,7 @@ from typing import Any
 
 from sqlalchemy import text
 
-from shared.deal_rendering import render_deal_price_semantics
+from shared.deal_rendering import render_deal_hotel_context, render_deal_price_semantics
 from shared.deal_signals import get_deal_signal_copy
 from shared.meal_plans import meal_plan_match_sql
 from shared.publishers.broadcast import escape_markdown_v2, make_bot
@@ -76,6 +76,9 @@ _MATCH_SQL = text(
         h.name_uk      AS hotel_name_uk,
         h.canonical_slug AS hotel_slug,
         h.stars        AS hotel_stars,
+        h.description_uk AS description_uk,
+        h.review_score AS review_score,
+        h.review_count AS review_count,
         dest.name_uk   AS destination_name,
         country.name_uk AS country_name
     FROM telegram_subscriber_filters f
@@ -153,6 +156,11 @@ def _render(row: Any, public_site_url: str) -> str:
         price_uah=row.price_uah,
         baseline_uah=row.baseline_p50,
     )
+    hotel_context = render_deal_hotel_context(
+        review_score=getattr(row, "review_score", None),
+        review_count=getattr(row, "review_count", None),
+        description_uk=getattr(row, "description_uk", None),
+    )
     why_line = f"\n_{escape_markdown_v2(semantics.why_line)}_" if semantics.why_line else ""
     if signal.peer_comparison or signal.neutral_comparison:
         title = "🔔 *Варіант за вашою підпискою*"
@@ -165,6 +173,7 @@ def _render(row: Any, public_site_url: str) -> str:
         f"{title}\n\n" f"🏨 *{name}* {stars}".rstrip()
         + "\n"
         + (f"📍 {location}\n" if location else "")
+        + hotel_context
         + f"📅 {check_in} · {escape_markdown_v2(format_nights(nights))} · {meal}\n\n"
         + f"{semantics.price_line}\n"
         + semantics.headline
