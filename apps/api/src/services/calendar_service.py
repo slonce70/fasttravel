@@ -96,6 +96,7 @@ async def get_calendar(
                 WHERE cp.check_in BETWEEN CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'
                                       AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'
                   AND cp.price_uah < hs.trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}
+                  AND cp.price_uah >= hs.trimmed_mean * {DATE_DIP_POLICY.min_price_ratio_sql}
                   AND hs.trimmed_mean - cp.price_uah >= {DATE_DIP_POLICY.min_absolute_saving_uah}
             ),
             best_date_dip AS (

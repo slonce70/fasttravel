@@ -14,19 +14,36 @@ from shared.deal_detection import (
 def test_date_dip_policy_renders_stable_sql_literals() -> None:
     assert DATE_DIP_POLICY.discount_multiplier_sql == "0.96"
     assert DATE_DIP_POLICY.max_spread_ratio_sql == "2.5"
+    assert DATE_DIP_POLICY.max_discount_pct_sql == "50"
+    # price/baseline floor equivalent to a 50% cap.
+    assert DATE_DIP_POLICY.min_price_ratio_sql == "0.5"
+
+
+def _policy(**overrides: object) -> DateDipPolicy:
+    kwargs: dict[str, object] = {
+        "lookahead_start_days": 5,
+        "lookahead_end_days": 90,
+        "neighbor_window_days": 14,
+        "min_sample_size": 4,
+        "max_spread_ratio": Decimal("2.5"),
+        "discount_multiplier": Decimal("0.96"),
+        "min_absolute_saving_uah": 1500,
+        "max_discount_pct": 50,
+    }
+    kwargs.update(overrides)
+    return DateDipPolicy(**kwargs)  # type: ignore[arg-type]
 
 
 def test_date_dip_policy_rejects_invalid_thresholds() -> None:
     with pytest.raises(ValueError, match="discount_multiplier"):
-        DateDipPolicy(
-            lookahead_start_days=5,
-            lookahead_end_days=90,
-            neighbor_window_days=14,
-            min_sample_size=4,
-            max_spread_ratio=Decimal("2.5"),
-            discount_multiplier=Decimal("1.0"),
-            min_absolute_saving_uah=1500,
-        )
+        _policy(discount_multiplier=Decimal("1.0"))
+
+
+def test_date_dip_policy_rejects_out_of_range_discount_cap() -> None:
+    with pytest.raises(ValueError, match="max_discount_pct"):
+        _policy(max_discount_pct=0)
+    with pytest.raises(ValueError, match="max_discount_pct"):
+        _policy(max_discount_pct=101)
 
 
 def test_date_dip_neighbor_stats_sql_collapses_aliases_to_unique_dates() -> None:
