@@ -101,6 +101,25 @@ DATE_DIP_POLICY = DateDipPolicy(
 )
 
 
+PROMO_MAX_DISCOUNT_PCT = 70
+"""Implausibility ceiling for operator strike-through promos.
+
+Sibling of ``DATE_DIP_POLICY.max_discount_pct`` (the #44 date-dip guard) for
+the promo path: a "red price" far above the live price is almost always an
+inflated anchor, not a real saving, and a too-good-to-be-true promo erodes
+trust just like a synthetic date-dip does. Shared so the detector (which
+refuses to publish such a promo) and the public ``/api/promotions`` feed
+(which refuses to *frame* it as a discount) apply one honest line.
+
+Deliberately more permissive than the 50 % date-dip cap because a genuine
+operator strike-through (last-minute / clearance) can run steeper than a
+same-hotel neighbouring-date dip; >70 % is the inflated-anchor zone. A
+default worth revisiting once real strike-through promo data exists to
+calibrate against — kept independent of the date-dip policy so each tunes
+alone.
+"""
+
+
 def date_dip_local_v_cte_sql(*, extra_series_filter: str = "") -> str:
     """Render the ``series`` -> ``framed`` -> ``local_stats`` CTE chain for the
     regime-local two-sided V date-dip detector.

@@ -25,7 +25,11 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.deal_detection import DATE_DIP_POLICY, date_dip_local_v_cte_sql
+from shared.deal_detection import (
+    DATE_DIP_POLICY,
+    PROMO_MAX_DISCOUNT_PCT,
+    date_dip_local_v_cte_sql,
+)
 from shared.deal_signals import metric_detection_method_for_reason
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -72,7 +76,11 @@ _DATE_DIP_SQL = text(
                 PARTITION BY country_iso2 ORDER BY discount_pct DESC, hotel_id
             ) AS country_rank
         FROM (
-            -- Best (highest-discount) row per hotel after the cooldown filter.
+            -- Best *traveler* offer per hotel after the cooldown filter:
+            -- cheapest real price first, then the steeper discount, then the
+            -- sooner check-in, then deterministic keys so the published row
+            -- is stable across runs. Highest-discount alone would prefer a
+            -- pricier room just because its local dip is a touch deeper.
             SELECT DISTINCT ON (cand.hotel_id)
                 cand.hotel_id,
                 cand.operator_id,
@@ -127,7 +135,21 @@ _DATE_DIP_SQL = text(
                     AND d.meal_plan = cand.meal_plan
                     AND d.detection_method = 'calendar_anomaly'
               )
-            ORDER BY cand.hotel_id, cand.discount_pct DESC
+            -- Best *traveler* offer per hotel: cheapest real price first, then
+            -- the steeper discount, then the sooner check-in, then
+            -- deterministic keys so the published row is stable across runs.
+            -- Highest-discount alone would prefer a pricier room just because
+            -- its local dip is a touch deeper. Every candidate here already
+            -- passed the dip/depth/absolute-saving gates above.
+            ORDER BY
+                cand.hotel_id,
+                cand.price_uah ASC,
+                cand.discount_pct DESC,
+                cand.check_in ASC,
+                cand.nights ASC,
+                cand.meal_plan ASC,
+                cand.operator_id ASC,
+                cand.room_category ASC
         ) per_hotel
     ) ranked
     WHERE country_rank <= :country_cap
@@ -187,7 +209,11 @@ _PROMO_DISCOUNT_SQL = text(
         -- Publication floor: both consumers (post_deals / notify_subscribers)
         -- drop deals below MIN_BROADCAST_DISCOUNT_PCT, so a shallower promo
         -- would never be published yet still arm the per-hotel cooldown.
+        -- Implausibility ceiling: a strike-through deeper than
+        -- PROMO_MAX_DISCOUNT_PCT is almost always an inflated anchor, not a
+        -- real saving — refuse to store it as a deal at all.
         WHERE cand.discount_pct >= :min_discount_pct
+          AND cand.discount_pct <= {PROMO_MAX_DISCOUNT_PCT}
           AND NOT EXISTS (
               SELECT 1
               FROM deals d

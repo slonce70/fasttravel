@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from shared.deal_detection import PROMO_MAX_DISCOUNT_PCT
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -64,9 +65,16 @@ def _row_to_out(row) -> PromotionOut:  # type: ignore[no-untyped-def]
     has_real_discount = (
         row.red_price_uah is not None and row.red_price_uah > row.price_uah and row.price_uah > 0
     )
-    if has_real_discount:
-        discount_pct = round(100 * (1 - row.price_uah / row.red_price_uah), 2)
-    else:
+    discount_pct = (
+        round(100 * (1 - row.price_uah / row.red_price_uah), 2) if has_real_discount else 0.0
+    )
+
+    # An implausibly deep strike-through is an inflated anchor, not a real
+    # saving (same honest line the scheduler detector draws with
+    # PROMO_MAX_DISCOUNT_PCT). Degrade it to the no-discount state so the feed
+    # lists the tour without vouching for a fake "-90%".
+    if has_real_discount and discount_pct > PROMO_MAX_DISCOUNT_PCT:
+        has_real_discount = False
         discount_pct = 0.0
 
     # Reconstruct the public Farvater deep link from catalog fields.
@@ -149,15 +157,18 @@ async def list_promotions(
         base = base.where(Destination.country_iso2 == country.upper())
     if min_discount_pct is not None and min_discount_pct > 0:
         # discount_pct computed in the SELECT; use raw expression so the
-        # filter applies in SQL rather than post-query.
+        # filter applies in SQL rather than post-query. Keep this aligned
+        # with `_row_to_out`: implausibly deep anchors are not real discounts.
         base = base.where(
             text(
                 "promo_offers.red_price_uah IS NOT NULL "
                 "AND promo_offers.red_price_uah > promo_offers.price_uah "
                 "AND promo_offers.price_uah > 0 "
                 "AND ROUND(100 * (1 - promo_offers.price_uah::numeric / "
-                "promo_offers.red_price_uah), 2) >= :min_pct"
-            ).bindparams(min_pct=min_discount_pct)
+                "promo_offers.red_price_uah), 2) >= :min_pct "
+                "AND ROUND(100 * (1 - promo_offers.price_uah::numeric / "
+                "promo_offers.red_price_uah), 2) <= :max_pct"
+            ).bindparams(min_pct=min_discount_pct, max_pct=PROMO_MAX_DISCOUNT_PCT)
         )
 
     ranked = base.subquery()

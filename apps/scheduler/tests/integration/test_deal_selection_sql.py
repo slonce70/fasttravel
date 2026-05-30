@@ -701,3 +701,146 @@ async def test_detect_deals_ignores_bucket_promos_without_real_strike_through(
         )
     ).all()
     assert promo_deals == []
+
+
+@pytest.mark.asyncio
+async def test_detect_deals_per_hotel_picks_lowest_price_offer_not_highest_discount(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per hotel, the published deal is the best *traveler* offer.
+
+    One hotel has two independent valid V-dips in two room families, so each
+    is compared only against its own neighbours:
+
+    - Standard family: flat 130 000 run, dip 100 000 → −23.08 %.
+    - Deluxe family:   flat 108 000 run, dip  90 000 → −16.67 %.
+
+    The Standard offer has the *steeper discount*, but the Deluxe offer is
+    *cheaper in absolute hryvnia* — what the traveler actually pays. The
+    detector must keep the lower-price offer, not merely the highest
+    discount percent.
+    """
+    await session.execute(text("UPDATE deals SET posted_at = NOW() WHERE posted_at IS NULL"))
+    hotel_id, operator_id, _ = await _seed_market(session, country_iso2="BO")
+    rows = [(o, "Standard Room", 130000) for o in range(20, 35) if o != 27]
+    rows.append((27, "Standard Room", 100000))
+    rows += [(o, "Deluxe Room", 108000) for o in range(20, 35) if o != 27]
+    rows.append((27, "Deluxe Room", 90000))
+    await _seed_price_rows(session, hotel_id=hotel_id, operator_id=operator_id, rows=rows)
+    monkeypatch.setattr(
+        detect_deals_module,
+        "async_session_factory",
+        lambda: _SessionContext(session),
+    )
+
+    await detect_deals_module.detect_deals(cooldown_hours=0, max_per_run=200)
+
+    row = (
+        (
+            await session.execute(
+                text(
+                    """
+                SELECT price_uah, discount_pct
+                FROM deals
+                WHERE hotel_id = :hotel_id
+                  AND detection_method = 'calendar_anomaly'
+                """
+                ),
+                {"hotel_id": hotel_id},
+            )
+        )
+        .mappings()
+        .one()
+    )
+    assert row["price_uah"] == 90000  # cheapest for the traveler wins
+
+
+@pytest.mark.asyncio
+async def test_detect_deals_rejects_promo_with_implausible_strike_through(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An implausibly deep strike-through must NOT become a promo deal.
+
+    The same skepticism the date-dip detector applies to its baseline
+    (commit #44: a discount above the cap is almost always a synthetic
+    placeholder / inflated anchor, not a real saving) must apply to
+    operator strike-through promos. A "red price" of 100 000 ₴ against a
+    10 000 ₴ live price is a −90 % anchor — reject it rather than push a
+    too-good-to-be-true deal to the channel.
+    """
+    hotel_id, operator_id, _ = await _seed_market(session, country_iso2="IA")
+    await _seed_promo_offer(
+        session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+        price_uah=10000,
+        red_price_uah=100000,  # → −90 %, implausible
+    )
+    monkeypatch.setattr(
+        detect_deals_module,
+        "async_session_factory",
+        lambda: _SessionContext(session),
+    )
+
+    await detect_deals_module.detect_deals(cooldown_hours=0, max_per_run=20)
+
+    promo_deals = (
+        await session.execute(
+            text(
+                """
+                SELECT discount_pct
+                FROM deals
+                WHERE hotel_id = :hotel_id
+                  AND detection_method = 'promo_discount'
+                """
+            ),
+            {"hotel_id": hotel_id},
+        )
+    ).all()
+    assert promo_deals == []
+
+
+@pytest.mark.asyncio
+async def test_detect_deals_keeps_plausible_promo_strike_through(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A plausible operator strike-through still becomes a promo deal.
+
+    Guards the implausibility cap against over-suppression: a 35 % real
+    strike-through (65 000 ₴ vs a 100 000 ₴ red price) is well within the
+    range of a genuine operator promo and must still publish.
+    """
+    hotel_id, operator_id, _ = await _seed_market(session, country_iso2="IB")
+    await _seed_promo_offer(
+        session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+        price_uah=65000,
+        red_price_uah=100000,  # → −35 %, plausible
+    )
+    monkeypatch.setattr(
+        detect_deals_module,
+        "async_session_factory",
+        lambda: _SessionContext(session),
+    )
+
+    await detect_deals_module.detect_deals(cooldown_hours=0, max_per_run=20)
+
+    promo_deals = (
+        await session.execute(
+            text(
+                """
+                SELECT discount_pct
+                FROM deals
+                WHERE hotel_id = :hotel_id
+                  AND detection_method = 'promo_discount'
+                """
+            ),
+            {"hotel_id": hotel_id},
+        )
+    ).all()
+    assert len(promo_deals) == 1
+    assert float(promo_deals[0].discount_pct) == 35.0

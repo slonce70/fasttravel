@@ -136,4 +136,15 @@ describe('DealCard', () => {
     expect(screen.queryByText(/зазвичай/i)).toBeNull();
     expect(screen.getByText(/^орієнтир/)).not.toHaveClass('line-through');
   });
+
+  it('strikes the baseline for promo deals — the one method with a real prior price', () => {
+    // promo_discount is the ONLY method whose baseline is a genuine
+    // operator strike-through (a price the user would otherwise pay), so
+    // it renders line-through. Every comparison method above must NOT, or
+    // the card would imply a saving it can't prove. Guards that asymmetry.
+    render(<DealCard deal={{ ...fullDeal, detection_method: 'promo_discount' }} />);
+
+    expect(screen.getByText(/Спецціна від оператора/i)).toBeInTheDocument();
+    expect(screen.getByText(/ціна оператора до акції/i)).toHaveClass('line-through');
+  });
 });
