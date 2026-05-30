@@ -6,17 +6,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.handlers import search_wizard
+from src.handlers import search_wizard, wizard_render
 
 
 def test_results_header_pluralizes_tours() -> None:
-    assert search_wizard._format_results_header(total=1, page=1, total_pages=1) == (
+    assert wizard_render.format_results_header(total=1, page=1, total_pages=1) == (
         "✅ Знайдено *1* тур · сторінка *1/1*"
     )
-    assert search_wizard._format_results_header(total=2, page=1, total_pages=1) == (
+    assert wizard_render.format_results_header(total=2, page=1, total_pages=1) == (
         "✅ Знайдено *2* тури · сторінка *1/1*"
     )
-    assert search_wizard._format_results_header(total=5, page=1, total_pages=1) == (
+    assert wizard_render.format_results_header(total=5, page=1, total_pages=1) == (
         "✅ Знайдено *5* турів · сторінка *1/1*"
     )
 
