@@ -25,9 +25,7 @@ def test_hit_renders_both_booking_and_site_buttons() -> None:
     assert booking.text == "🛒 Забронювати · Bin Billa Hotel"
     assert booking.url == "https://farvater.travel/?q=abc"
     site = next(b for b in row if b.url and "/hotels/" in b.url)
-    assert site.url == (
-        f"{_BASE}/hotels/fv-tr-bin-billa-hotel?utm_source=tg_bot&utm_medium=wizard"
-    )
+    assert site.url == (f"{_BASE}/hotels/fv-tr-bin-billa-hotel?utm_source=tg_bot&utm_medium=wizard")
 
 
 def test_site_only_hit_renders_when_deep_link_missing() -> None:

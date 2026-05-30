@@ -131,7 +131,9 @@ async def test_show_results_threads_public_site_url_into_markup(monkeypatch) -> 
     # through to results_markup so per-hit site buttons can be built.
     captured: dict[str, Any] = {}
     monkeypatch.setattr(
-        search_wizard, "get_settings", lambda: SimpleNamespace(public_site_url="https://site.example")
+        search_wizard,
+        "get_settings",
+        lambda: SimpleNamespace(public_site_url="https://site.example"),
     )
     monkeypatch.setattr(search_wizard, "render_search_hit", lambda _h: "hit")
     monkeypatch.setattr(search_wizard, "results_markup", _capturing_markup(captured))
@@ -167,7 +169,9 @@ async def test_subscribe_rerender_threads_public_site_url_into_markup(monkeypatc
     monkeypatch.setattr(search_wizard, "ensure_subscriber", AsyncMock())
     monkeypatch.setattr(search_wizard, "add_subscription", AsyncMock(return_value=1))
     monkeypatch.setattr(
-        search_wizard, "get_settings", lambda: SimpleNamespace(public_site_url="https://site.example")
+        search_wizard,
+        "get_settings",
+        lambda: SimpleNamespace(public_site_url="https://site.example"),
     )
     monkeypatch.setattr(search_wizard, "results_markup", _capturing_markup(captured))
     message = SimpleNamespace(edit_reply_markup=AsyncMock())
