@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from sqlalchemy import text
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -67,8 +68,6 @@ async def close_engine() -> None:
 async def ensure_subscriber(chat_id: int, username: str | None = None) -> None:
     """Idempotent INSERT — used by `/start` and any DB-writing flow to
     guarantee the FK target exists before we touch subscriber_filters."""
-    from sqlalchemy import text
-
     async with get_session_factory()() as db:
         await db.execute(
             text(
@@ -99,8 +98,6 @@ async def add_subscription(
     meal_plan: str | None,
 ) -> int:
     """Returns the new filter id."""
-    from sqlalchemy import text
-
     async with get_session_factory()() as db:
         result = await db.execute(
             text(
@@ -125,8 +122,6 @@ async def add_subscription(
 
 
 async def list_subscriptions(chat_id: int) -> list[dict[str, Any]]:
-    from sqlalchemy import text
-
     async with get_session_factory()() as db:
         rows = (
             await db.execute(
@@ -147,8 +142,6 @@ async def list_subscriptions(chat_id: int) -> list[dict[str, Any]]:
 async def delete_subscription(chat_id: int, sub_id: int) -> bool:
     """Hard delete — same effect as is_active=false but cleaner table.
     Returns True if a row was removed."""
-    from sqlalchemy import text
-
     async with get_session_factory()() as db:
         result = await db.execute(
             text(
@@ -165,8 +158,6 @@ async def delete_subscription(chat_id: int, sub_id: int) -> bool:
 
 async def delete_all_user_data(chat_id: int) -> None:
     """GDPR right-to-be-forgotten — wipes subscriber + filters cascade."""
-    from sqlalchemy import text
-
     async with get_session_factory()() as db:
         await db.execute(
             text("DELETE FROM telegram_subscribers WHERE chat_id = :chat_id"),

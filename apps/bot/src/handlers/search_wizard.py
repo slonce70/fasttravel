@@ -20,15 +20,13 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     Message,
 )
 
 from shared.publishers.broadcast import escape_markdown_v2
 from shared.site_urls import public_hotel_url
-from shared.text_uk import plural_uk
 from src.config import get_settings
+from src.handlers.wizard_render import format_results_header, results_markup
 from src.infra.api_client import ApiError, get_destinations, search_hotels
 from src.infra.callbacks import callback_int_tail, callback_message, callback_tail
 from src.infra.db import add_subscription, ensure_subscriber
@@ -54,34 +52,11 @@ _PAGE_KEY = "page"
 _PAGE_SIZE = 5
 
 
-def _format_results_header(*, total: int, page: int, total_pages: int) -> str:
-    tour_word = plural_uk(total, "тур", "тури", "турів")
-    return f"✅ Знайдено *{total}* {tour_word} · сторінка *{page}/{total_pages}*"
-
-
 def _hotel_site_url(slug: str | None, medium: str = "wizard") -> str | None:
     if not slug:
         return None
     settings = get_settings()
     return public_hotel_url(settings.public_site_url, slug, medium=medium)
-
-
-def _result_link_rows(items: list[dict[str, Any]]) -> list[list[InlineKeyboardButton]]:
-    """One row per hit: a single "🛒 Забронювати · <name>" button to the
-    operator. The internal-site button (📖) was dropped because the web
-    app at public_site_url returns 404 for /hotels/{slug} — keeping it
-    only confused users. Re-add when apps/web/ is deployed (helper
-    `_hotel_site_url` left in place for that day)."""
-    rows: list[list[InlineKeyboardButton]] = []
-    for h in items:
-        deep_link = h.get("deep_link")
-        if not deep_link:
-            continue
-        # 22-char name cap leaves room for the "🛒 Забронювати · " prefix
-        # in Telegram's ~64-byte button label budget.
-        name = (h.get("name_uk") or "Тур")[:22]
-        rows.append([InlineKeyboardButton(text=f"🛒 Забронювати · {name}", url=deep_link)])
-    return rows
 
 
 async def start_wizard(message: Message, state: FSMContext) -> None:
@@ -358,11 +333,11 @@ async def _show_results(
     start = (page - 1) * _PAGE_SIZE
     chunk = items[start : start + _PAGE_SIZE]
 
-    header = _format_results_header(total=int(total), page=int(page), total_pages=int(total_pages))
+    header = format_results_header(total=int(total), page=int(page), total_pages=int(total_pages))
     body = "\n\n— · — · —\n\n".join(render_search_hit(h) for h in chunk)
     text = f"{header}\n\n{body}"
 
-    combined = _results_markup(
+    combined = results_markup(
         chunk=chunk,
         has_prev=page > 1,
         has_next=page < total_pages,
@@ -419,26 +394,6 @@ async def cb_noop(query: CallbackQuery) -> None:
     await query.answer()
 
 
-def _results_markup(
-    *,
-    chunk: list[dict[str, Any]],
-    has_prev: bool,
-    has_next: bool,
-    page: int,
-    total_pages: int,
-    subscribed: bool,
-) -> InlineKeyboardMarkup:
-    detail_rows = _result_link_rows(chunk)
-    nav_kb = results_actions_kb(
-        has_prev=has_prev,
-        has_next=has_next,
-        page=page,
-        total_pages=total_pages,
-        subscription_set=subscribed,
-    )
-    return InlineKeyboardMarkup(inline_keyboard=detail_rows + nav_kb.inline_keyboard)
-
-
 @router.callback_query(F.data == "res:subscribe", SearchState.viewing_results)
 async def cb_subscribe(query: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
@@ -467,7 +422,7 @@ async def cb_subscribe(query: CallbackQuery, state: FSMContext) -> None:
         start = (page - 1) * _PAGE_SIZE
         chunk = items[start : start + _PAGE_SIZE]
         await message.edit_reply_markup(
-            reply_markup=_results_markup(
+            reply_markup=results_markup(
                 chunk=chunk,
                 has_prev=page > 1,
                 has_next=page < total_pages,
