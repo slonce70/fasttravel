@@ -33,7 +33,6 @@ from shared.deal_detection import (
 from shared.deal_signals import metric_detection_method_for_reason
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
-from src.jobs.post_deals import MIN_BROADCAST_DISCOUNT_PCT
 
 # Inserted-deal tuple: (deal_id, hotel_id, discount_pct). Hoisted into
 # a type alias because the strategy runners + record helper all use it.
@@ -76,11 +75,6 @@ _DATE_DIP_SQL = text(
                 PARTITION BY country_iso2 ORDER BY discount_pct DESC, hotel_id
             ) AS country_rank
         FROM (
-            -- Best *traveler* offer per hotel after the cooldown filter:
-            -- cheapest real price first, then the steeper discount, then the
-            -- sooner check-in, then deterministic keys so the published row
-            -- is stable across runs. Highest-discount alone would prefer a
-            -- pricier room just because its local dip is a touch deeper.
             SELECT DISTINCT ON (cand.hotel_id)
                 cand.hotel_id,
                 cand.operator_id,
@@ -183,6 +177,7 @@ _PROMO_DISCOUNT_SQL = text(
             cand.red_price_uah AS baseline_p50,
             cand.discount_pct,
             cand.deep_link,
+            cand.discount_pct >= :min_publish_pct AS publishable,
             'farvater_scrape' AS source,
             'promo_discount' AS detection_method
         FROM (
@@ -206,13 +201,13 @@ _PROMO_DISCOUNT_SQL = text(
               AND po.check_in BETWEEN CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'
                                   AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'
         ) cand
-        -- Publication floor: both consumers (post_deals / notify_subscribers)
-        -- drop deals below MIN_BROADCAST_DISCOUNT_PCT, so a shallower promo
-        -- would never be published yet still arm the per-hotel cooldown.
         -- Implausibility ceiling: a strike-through deeper than
         -- PROMO_MAX_DISCOUNT_PCT is almost always an inflated anchor, not a
-        -- real saving — refuse to store it as a deal at all.
-        WHERE cand.discount_pct >= :min_discount_pct
+        -- real saving — refuse to store it as a deal at all. There is
+        -- deliberately NO discount floor: a real 2% strike-through is a valid
+        -- candidate for the web deals feed even though the channel/alerts
+        -- (post_deals / notify_subscribers) won't broadcast it.
+        WHERE cand.discount_pct > 0
           AND cand.discount_pct <= {PROMO_MAX_DISCOUNT_PCT}
           AND NOT EXISTS (
               SELECT 1
@@ -232,12 +227,27 @@ _PROMO_DISCOUNT_SQL = text(
                 AND d.meal_plan = cand.meal_plan
                 AND d.detection_method = 'promo_discount'
           )
-        ORDER BY cand.hotel_id, cand.discount_pct DESC, cand.price_uah ASC
+        -- Best traveler offer per hotel: keep the ones that actually publish
+        -- (discount >= the broadcast/alert floor) ahead of cheaper sub-floor
+        -- ones, then prefer the lowest real price, then the steeper
+        -- strike-through, then the sooner check-in. Without the
+        -- publishable-first key a cheaper 2% promo could displace a 40% one
+        -- and the hotel would go silent below MIN_BROADCAST_DISCOUNT_PCT.
+        ORDER BY
+            cand.hotel_id,
+            (cand.discount_pct >= :min_publish_pct) DESC,
+            cand.price_uah ASC,
+            cand.discount_pct DESC,
+            cand.check_in ASC,
+            cand.nights ASC,
+            cand.meal_plan ASC,
+            cand.operator_id ASC
     ) per_hotel
     -- DISTINCT ON forces hotel_id to lead the inner ORDER BY, so the LIMIT
-    -- budget is applied out here by discount depth (same two-level pattern
-    -- as the date-dip query) instead of by whichever hotels have low ids.
-    ORDER BY discount_pct DESC, hotel_id
+    -- budget is applied out here (same two-level pattern as the date-dip
+    -- query): publishable promos first, then by discount depth — never by
+    -- whichever hotels have low ids.
+    ORDER BY publishable DESC, discount_pct DESC, hotel_id
     LIMIT :max_per_run
     ON CONFLICT DO NOTHING
     RETURNING id, hotel_id, discount_pct, detection_method
@@ -324,12 +334,19 @@ async def _run_date_dip_query(db: AsyncSession, cooldown_hours: int, max_per_run
 async def _run_promo_discount_query(
     db: AsyncSession, cooldown_hours: int, max_per_run: int
 ) -> _RowList:
+    # Single source of truth for the publishable-first guard: the floor must
+    # equal the channel's broadcast threshold so the detector never prefers a
+    # cheaper promo that post_deals would then refuse to publish. Imported
+    # lazily (like the metrics import below) to keep the module load order
+    # independent of post_deals.
+    from src.jobs.post_deals import MIN_BROADCAST_DISCOUNT_PCT
+
     result = await db.execute(
         _PROMO_DISCOUNT_SQL,
         {
             "cooldown_hours": cooldown_hours,
             "max_per_run": max_per_run,
-            "min_discount_pct": MIN_BROADCAST_DISCOUNT_PCT,
+            "min_publish_pct": MIN_BROADCAST_DISCOUNT_PCT,
         },
     )
     rows = result.all()

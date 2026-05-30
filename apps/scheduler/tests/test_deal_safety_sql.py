@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import importlib
 
-from shared.deal_detection import DATE_DIP_POLICY
+from shared.deal_detection import DATE_DIP_POLICY, PROMO_MAX_DISCOUNT_PCT
 
 detect_deals = importlib.import_module("src.jobs.detect_deals")
 post_deals = importlib.import_module("src.jobs.post_deals")
@@ -125,26 +125,37 @@ def test_promo_discount_branch_requires_real_operator_strike_through() -> None:
     assert "'bucket_'" not in sql
 
 
-def test_promo_discount_branch_enforces_publication_floor() -> None:
-    """Promos below the broadcast floor are never published by post_deals or
-    notify_subscribers, yet would still arm the 24h per-hotel cooldown — so
-    they must not be inserted at all, and all three jobs must share one floor."""
+def test_promo_discount_branch_guards_publishable_first() -> None:
+    """Promos deliberately have NO discount floor (a real 2% strike-through
+    still feeds the web deals feed), so the per-hotel pick must rank
+    publishable promos (>= the broadcast floor) ahead of cheaper sub-floor
+    ones — otherwise a 2% promo displaces a 40% one and the hotel goes
+    silent in the channel. The floor constant is shared by all consumers."""
     sql = detect_deals._PROMO_DISCOUNT_SQL.text
 
-    assert "cand.discount_pct >= :min_discount_pct" in sql
-    assert "cand.discount_pct > 0" not in sql
-    assert detect_deals.MIN_BROADCAST_DISCOUNT_PCT == post_deals.MIN_BROADCAST_DISCOUNT_PCT
+    assert "cand.discount_pct > 0" in sql
+    assert "(cand.discount_pct >= :min_publish_pct) DESC" in sql
+    assert "cand.discount_pct >= :min_discount_pct" not in sql  # no hard floor
     assert post_deals.MIN_BROADCAST_DISCOUNT_PCT == notify_subscribers.MIN_ALERT_DISCOUNT_PCT
 
 
-def test_promo_discount_budget_is_spent_by_discount_depth_not_hotel_id() -> None:
-    """LIMIT must apply to an outer ORDER BY discount_pct DESC (two-level
-    pattern, like the date-dip query); the hotel_id-led inner ORDER BY exists
-    only to satisfy DISTINCT ON and must not decide who gets budget slots."""
+def test_promo_discount_ceiling_rejects_implausible_strike_through() -> None:
+    """A strike-through deeper than PROMO_MAX_DISCOUNT_PCT is an inflated
+    anchor, not a saving — the detector must refuse to store it at all."""
     sql = detect_deals._PROMO_DISCOUNT_SQL.text
 
-    inner = sql.index("ORDER BY cand.hotel_id, cand.discount_pct DESC")
-    outer = sql.index("ORDER BY discount_pct DESC, hotel_id")
+    assert f"cand.discount_pct <= {PROMO_MAX_DISCOUNT_PCT}" in sql
+
+
+def test_promo_discount_budget_is_spent_by_publishable_then_depth_not_hotel_id() -> None:
+    """LIMIT must apply to an outer ORDER BY (two-level pattern, like the
+    date-dip query): publishable promos first, then discount depth. The
+    hotel_id-led inner ORDER BY exists only to satisfy DISTINCT ON and must
+    not decide who gets budget slots."""
+    sql = detect_deals._PROMO_DISCOUNT_SQL.text
+
+    inner = sql.index("ORDER BY\n            cand.hotel_id,")
+    outer = sql.index("ORDER BY publishable DESC, discount_pct DESC, hotel_id")
     assert inner < outer < sql.index("LIMIT :max_per_run")
 
 

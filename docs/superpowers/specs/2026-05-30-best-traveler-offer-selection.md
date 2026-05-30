@@ -66,9 +66,9 @@ one honest line:
 
 1. **Scheduler detector** (`_PROMO_DISCOUNT_SQL`): promo candidates must
    satisfy `cand.discount_pct <= PROMO_MAX_DISCOUNT_PCT`, so an inflated
-   anchor never becomes a published `promo_discount` deal. Existing promo
-   ordering stays highest-discount-first (date-dip's price-first ordering
-   is *not* applied to promos — see Out of scope).
+   anchor never becomes a published `promo_discount` deal. Per-hotel promo
+   ordering is now best-traveler too, guarded by a publishable-first key —
+   see Change 3.
 2. **`/api/promotions` feed** (`promo_service._row_to_out`): an implausible
    strike-through degrades to the existing `has_real_discount = False`,
    `discount_pct = 0.0` state — the tour still lists, but without a fake
@@ -85,10 +85,6 @@ data yet to calibrate against (the path is dormant in local dev).
 
 ### Out of scope (deliberately unchanged)
 
-- Price-first per-hotel ordering for `_PROMO_DISCOUNT_SQL`. The promo detector
-  has no 4 % discount floor gate, so leading with `price_uah` could choose a
-  cheaper sub-4 % promo over a steeper one and drop the hotel below the
-  broadcast floor. Promo ordering remains unchanged.
 - The per-country `ROW_NUMBER() OVER (PARTITION BY country_iso2 …)` cap
   and the final `ORDER BY discount_pct DESC … LIMIT :max_per_run`. Those
   rank hotels against each other for channel diversity / top-N — a
@@ -97,6 +93,23 @@ data yet to calibrate against (the path is dormant in local dev).
   min saving, lookahead). No gate moves; the candidate set is identical,
   only the per-hotel winner changes.
 
+## Change 3: Promo Winner (publishable-first guard)
+
+`_PROMO_DISCOUNT_SQL`'s per-hotel `DISTINCT ON (cand.hotel_id)` selection now
+mirrors the date-dip "best traveler offer" intent, but guarded so it can never
+silence a hotel. Promos have **no** discount-floor gate (only `discount_pct >
+0`), so a real 2 % strike-through is a valid candidate — leading purely with
+`price_uah` could pick it over a 40 % promo and the hotel would go silent below
+`MIN_BROADCAST_DISCOUNT_PCT`. Ordering:
+
+1. `(cand.discount_pct >= :min_publish_pct) DESC` — publishable promos first.
+2. `price_uah ASC` — then the cheapest real price.
+3. `discount_pct DESC`, `check_in ASC`, then deterministic keys.
+
+`:min_publish_pct` is bound from `post_deals.MIN_BROADCAST_DISCOUNT_PCT` (a
+single source of truth, imported lazily to keep module load order independent),
+so the detector's guard floor can never drift from the channel's publish floor.
+
 ## Acceptance
 
 - New integration test seeds two valid date-dip candidates for one hotel
@@ -104,6 +117,9 @@ data yet to calibrate against (the path is dormant in local dev).
   inserts the lower-price offer. Fails on the old ordering, passes on new.
 - New integration tests seed promo strike-through candidates:
   a 90 % promo is rejected, and a 35 % promo is still inserted.
+- New integration tests seed two promos per hotel: the detector keeps the
+  cheaper publishable offer, and the publishable-first guard keeps a 40 %
+  promo over a cheaper sub-4 % one (no silent suppression).
 - New API unit tests on `promo_service`: a 90 % strike-through reports
   `has_real_discount = False` / `discount_pct = 0.0`; a 35 % one keeps its
   discount; `min_discount_pct` SQL filtering uses the same cap.

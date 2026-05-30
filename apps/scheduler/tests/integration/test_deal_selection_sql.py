@@ -186,7 +186,9 @@ async def _seed_promo_offer(
     *,
     hotel_id: int,
     operator_id: int,
+    price_uah: int = 25000,
     red_price_uah: int | None = 50000,
+    check_in_days: int = 30,
 ) -> None:
     await session.execute(
         text(
@@ -197,14 +199,17 @@ async def _seed_promo_offer(
             )
             VALUES (
                 NOW(), :hotel_id, :operator_id, 'gorjashhie-tury', :system_key,
-                CURRENT_DATE + INTERVAL '30 days', 7, 'AI', TRUE, 25000, :red_price_uah
+                CURRENT_DATE + make_interval(days => :check_in_days),
+                7, 'AI', TRUE, :price_uah, :red_price_uah
             )
             """
         ),
         {
             "hotel_id": hotel_id,
             "operator_id": operator_id,
+            "price_uah": price_uah,
             "red_price_uah": red_price_uah,
+            "check_in_days": check_in_days,
             "system_key": f"promo-{uuid4().hex[:12]}",
         },
     )
@@ -844,3 +849,125 @@ async def test_detect_deals_keeps_plausible_promo_strike_through(
     ).all()
     assert len(promo_deals) == 1
     assert float(promo_deals[0].discount_pct) == 35.0
+
+
+@pytest.mark.asyncio
+async def test_detect_deals_promo_picks_lowest_price_publishable_offer(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per hotel, the published promo is the best *traveler* offer.
+
+    Two publishable promos for one hotel: the cheaper one has the smaller
+    (still publishable) discount. Like the date-dip detector, the promo path
+    must keep the lower absolute price the traveler pays, not merely the
+    steepest strike-through percent.
+    """
+    hotel_id, operator_id, _ = await _seed_market(session, country_iso2="PX")
+    await _seed_promo_offer(
+        session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+        price_uah=80000,
+        red_price_uah=100000,  # −20 %, cheaper
+        check_in_days=30,
+    )
+    await _seed_promo_offer(
+        session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+        price_uah=90000,
+        red_price_uah=150000,  # −40 %, steeper but pricier
+        check_in_days=31,
+    )
+    monkeypatch.setattr(
+        detect_deals_module,
+        "async_session_factory",
+        lambda: _SessionContext(session),
+    )
+
+    await detect_deals_module.detect_deals(cooldown_hours=0, max_per_run=20)
+
+    rows = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT price_uah, discount_pct
+                    FROM deals
+                    WHERE hotel_id = :hotel_id
+                      AND detection_method = 'promo_discount'
+                    """
+                ),
+                {"hotel_id": hotel_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+
+    assert len(rows) == 1  # DISTINCT ON (hotel_id)
+    assert rows[0]["price_uah"] == 80000  # cheaper offer, despite smaller discount
+    assert float(rows[0]["discount_pct"]) == 20.0
+
+
+@pytest.mark.asyncio
+async def test_detect_deals_promo_guard_keeps_publishable_over_cheaper_subfloor(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cheaper promo below the publication floor must not displace a pricier
+    one that actually publishes.
+
+    Unlike date-dip, promos have no discount-floor gate, so a real 2 % operator
+    strike-through is a valid candidate. Price-first selection alone would pick
+    it over a 40 % promo and the hotel would go silent (2 % is under
+    ``MIN_BROADCAST_DISCOUNT_PCT``). The publishable-first guard prevents that.
+    """
+    hotel_id, operator_id, _ = await _seed_market(session, country_iso2="PY")
+    await _seed_promo_offer(
+        session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+        price_uah=80000,
+        red_price_uah=82000,  # ~2.44 % — below the publication floor, cheaper
+        check_in_days=30,
+    )
+    await _seed_promo_offer(
+        session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+        price_uah=90000,
+        red_price_uah=150000,  # −40 %, publishable, pricier
+        check_in_days=31,
+    )
+    monkeypatch.setattr(
+        detect_deals_module,
+        "async_session_factory",
+        lambda: _SessionContext(session),
+    )
+
+    await detect_deals_module.detect_deals(cooldown_hours=0, max_per_run=20)
+
+    rows = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT price_uah, discount_pct
+                    FROM deals
+                    WHERE hotel_id = :hotel_id
+                      AND detection_method = 'promo_discount'
+                    """
+                ),
+                {"hotel_id": hotel_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+
+    assert len(rows) == 1
+    # The publishable 40 % promo is kept, not the cheaper sub-floor one.
+    assert rows[0]["price_uah"] == 90000
+    assert float(rows[0]["discount_pct"]) >= MIN_BROADCAST_DISCOUNT_PCT
