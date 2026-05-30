@@ -24,7 +24,6 @@ from aiogram.types import (
 )
 
 from shared.publishers.broadcast import escape_markdown_v2
-from shared.site_urls import public_hotel_url
 from src.config import get_settings
 from src.handlers.wizard_render import format_results_header, results_markup
 from src.infra.api_client import ApiError, get_destinations, search_hotels
@@ -50,13 +49,6 @@ log = get_logger(__name__)
 _RESULTS_KEY = "results"
 _PAGE_KEY = "page"
 _PAGE_SIZE = 5
-
-
-def _hotel_site_url(slug: str | None, medium: str = "wizard") -> str | None:
-    if not slug:
-        return None
-    settings = get_settings()
-    return public_hotel_url(settings.public_site_url, slug, medium=medium)
 
 
 async def start_wizard(message: Message, state: FSMContext) -> None:
@@ -344,6 +336,7 @@ async def _show_results(
         page=page,
         total_pages=total_pages,
         subscribed=bool(data.get("subscribed", False)),
+        site_base_url=get_settings().public_site_url,
     )
 
     if edit:
@@ -429,6 +422,7 @@ async def cb_subscribe(query: CallbackQuery, state: FSMContext) -> None:
                 page=page,
                 total_pages=total_pages,
                 subscribed=True,
+                site_base_url=get_settings().public_site_url,
             )
         )
     await query.answer(

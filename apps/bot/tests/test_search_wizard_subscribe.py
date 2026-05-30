@@ -115,3 +115,85 @@ async def test_search_nights_ignores_malformed_callback_without_mutating_state(m
     assert "state" not in state.data
     message.edit_text.assert_not_awaited()
     query.answer.assert_awaited_once_with()
+
+
+def _capturing_markup(captured: dict[str, Any]):
+    def _fake(**kwargs: Any) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(inline_keyboard=[])
+
+    return _fake
+
+
+@pytest.mark.asyncio
+async def test_show_results_threads_public_site_url_into_markup(monkeypatch) -> None:
+    # Initial render path: _show_results must pass settings.public_site_url
+    # through to results_markup so per-hit site buttons can be built.
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(
+        search_wizard, "get_settings", lambda: SimpleNamespace(public_site_url="https://site.example")
+    )
+    monkeypatch.setattr(search_wizard, "render_search_hit", lambda _h: "hit")
+    monkeypatch.setattr(search_wizard, "results_markup", _capturing_markup(captured))
+    message = SimpleNamespace(edit_text=AsyncMock())
+    monkeypatch.setattr(search_wizard, "callback_message", lambda _query: message)
+    query = SimpleNamespace(message=message, answer=AsyncMock())
+    state = FakeState(
+        {
+            "page": 1,
+            "results": {
+                "total": 1,
+                "items": [
+                    {
+                        "name_uk": "H",
+                        "canonical_slug": "fv-tr-h",
+                        "deep_link": "https://op/x",
+                    }
+                ],
+            },
+        }
+    )
+
+    await search_wizard._show_results(query, state, edit=True)
+
+    assert captured.get("site_base_url") == "https://site.example"
+
+
+@pytest.mark.asyncio
+async def test_subscribe_rerender_threads_public_site_url_into_markup(monkeypatch) -> None:
+    # Subscribe re-render path: cb_subscribe rebuilds the markup to hide the
+    # subscribe button and must thread the same site URL through.
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(search_wizard, "ensure_subscriber", AsyncMock())
+    monkeypatch.setattr(search_wizard, "add_subscription", AsyncMock(return_value=1))
+    monkeypatch.setattr(
+        search_wizard, "get_settings", lambda: SimpleNamespace(public_site_url="https://site.example")
+    )
+    monkeypatch.setattr(search_wizard, "results_markup", _capturing_markup(captured))
+    message = SimpleNamespace(edit_reply_markup=AsyncMock())
+    monkeypatch.setattr(search_wizard, "callback_message", lambda _query: message)
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=1, username="u"),
+        message=message,
+        answer=AsyncMock(),
+    )
+    state = FakeState(
+        {
+            "country": "TR",
+            "page": 1,
+            "results": {
+                "total": 1,
+                "items": [
+                    {
+                        "name_uk": "H",
+                        "canonical_slug": "fv-tr-h",
+                        "deep_link": "https://op/x",
+                    }
+                ],
+            },
+        }
+    )
+
+    await search_wizard.cb_subscribe(query, state)
+
+    assert captured.get("site_base_url") == "https://site.example"

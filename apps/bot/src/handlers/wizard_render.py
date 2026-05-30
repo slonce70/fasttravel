@@ -14,6 +14,7 @@ from typing import Any
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from shared.site_urls import public_hotel_url
 from shared.text_uk import plural_uk
 from src.keyboards.filters import results_actions_kb
 
@@ -23,21 +24,35 @@ def format_results_header(*, total: int, page: int, total_pages: int) -> str:
     return f"✅ Знайдено *{total}* {tour_word} · сторінка *{page}/{total_pages}*"
 
 
-def result_link_rows(items: list[dict[str, Any]]) -> list[list[InlineKeyboardButton]]:
-    """One row per hit: a single "🛒 Забронювати · <name>" button to the
-    operator. The internal-site button (📖) was dropped because the web
-    app at public_site_url returns 404 for /hotels/{slug} — keeping it
-    only confused users. Re-add when apps/web/ is deployed (helper
-    `_hotel_site_url` in search_wizard left in place for that day)."""
+def result_link_rows(
+    items: list[dict[str, Any]], *, site_base_url: str | None = None
+) -> list[list[InlineKeyboardButton]]:
+    """One row per hit with up to two buttons: the operator booking deep link
+    and an internal price-calendar link to ``/hotels/{slug}`` on the public
+    site (``apps/web/src/app/hotels/[slug]``).
+
+    A hit with no operator deep link is still shown when its slug resolves to a
+    site URL; a hit with neither is dropped (no empty button rows). With no
+    ``site_base_url`` configured, falls back to operator-only.
+    """
     rows: list[list[InlineKeyboardButton]] = []
     for h in items:
         deep_link = h.get("deep_link")
-        if not deep_link:
-            continue
-        # 22-char name cap leaves room for the "🛒 Забронювати · " prefix
-        # in Telegram's ~64-byte button label budget.
+        # 22-char name cap leaves room for the emoji/prefix in Telegram's
+        # ~64-byte button-label budget.
         name = (h.get("name_uk") or "Тур")[:22]
-        rows.append([InlineKeyboardButton(text=f"🛒 Забронювати · {name}", url=deep_link)])
+        site_url = public_hotel_url(site_base_url, h.get("canonical_slug"), medium="wizard")
+
+        buttons: list[InlineKeyboardButton] = []
+        if deep_link:
+            buttons.append(InlineKeyboardButton(text=f"🛒 Забронювати · {name}", url=deep_link))
+        if site_url:
+            # Paired with the named booking button the site button stays terse;
+            # a site-only hit carries the name for per-hit disambiguation.
+            site_text = "📖 Деталі" if deep_link else f"📖 {name}"
+            buttons.append(InlineKeyboardButton(text=site_text, url=site_url))
+        if buttons:
+            rows.append(buttons)
     return rows
 
 
@@ -49,8 +64,9 @@ def results_markup(
     page: int,
     total_pages: int,
     subscribed: bool,
+    site_base_url: str | None = None,
 ) -> InlineKeyboardMarkup:
-    detail_rows = result_link_rows(chunk)
+    detail_rows = result_link_rows(chunk, site_base_url=site_base_url)
     nav_kb = results_actions_kb(
         has_prev=has_prev,
         has_next=has_next,
