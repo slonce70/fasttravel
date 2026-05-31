@@ -50,6 +50,12 @@ def test_sitemap_long_tail_uses_catalog_slug_helper_directly() -> None:
     assert not hasattr(sl, "_make_slug")
 
 
+def test_sitemap_ingest_defaults_match_operator_docs() -> None:
+    """Guard .env.example and OPERATIONS.md runtime-tuning defaults."""
+    assert sl.CONCURRENCY == 12
+    assert sl.PER_REQUEST_DELAY_S == 0.05
+
+
 @pytest.fixture(autouse=True)
 def _fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     """Collapse exponential backoff to zero — tests should run in ms not

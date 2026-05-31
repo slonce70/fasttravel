@@ -267,7 +267,28 @@ before first prod use.
 
 ---
 
-## 9. Related docs
+## 9. Runtime tuning knobs
+
+These values are optional. Leave them at the shipped defaults unless logs,
+metrics, or a recovery run show a concrete need to change them.
+
+| Var | Default | Service | When to change it |
+|---|---:|---|---|
+| `RATE_LIMIT_TRUSTED_HEADER` | empty = `CF-Connecting-IP,X-Forwarded-For` | api | Only when a trusted proxy chain other than Cloudflare/nginx sits in front of the API. Keep the first spoof-protected client-IP header first. |
+| `FT_FARVATER_CONCURRENCY` | `3` | scheduler | Snapshot job fan-out. In that job, this also becomes the HTTP-client concurrency fallback when `FT_FARVATER_HTTP_CONCURRENCY` is unset. |
+| `FT_FARVATER_HTTP_CONCURRENCY` | `3` | scheduler | Farvater HTTP-client concurrency. Set it explicitly when it should differ from snapshot fan-out; raising it is the fastest way to trigger 429/403 storms. |
+| `FT_FARVATER_DAILY_CAP` | `0` | scheduler | Daily Farvater request cap. `0` disables enforcement; set a cap during recovery or catalog expansion when you need a hard upstream budget. |
+| `FT_FARVATER_HTTP_TIMEOUT_S` | `30.0` | scheduler | Per-request Farvater HTTP timeout. Increase only for confirmed upstream slowness; lower only after checking retry/error logs. |
+| `FT_SITEMAP_INGEST_CONCURRENCY` | `12` | scheduler | Long-tail sitemap ingest fan-out. Lower before enabling startup ingest on a small VM or after 429/timeout evidence. |
+| `FT_SITEMAP_INGEST_DELAY_S` | `0.05` | scheduler | Per-request delay for long-tail sitemap ingest. Increase before raising ingest concurrency. |
+
+Related quick references: `.env.example` has the editable template values,
+`apps/api/README.md` summarizes rate-limit header behavior, and
+`apps/scheduler/src/infra/farvater_http.py` documents the Farvater breaker.
+
+---
+
+## 10. Related docs
 
 - [`README.md`](../README.md) — project overview, quick start, structure
 - [`infra/SETUP.md`](../infra/SETUP.md) — full Oracle Cloud VM provisioning runbook
