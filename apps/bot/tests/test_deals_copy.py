@@ -138,13 +138,17 @@ async def test_channel_copy_uses_neutral_variant_language(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_help_copy_uses_neutral_variant_language() -> None:
     message = SimpleNamespace(answer=AsyncMock())
+    # cmd_help now clears FSM state (so tapping it mid-wizard discards the
+    # stale flow); pass a stub state with an awaitable clear().
+    state = SimpleNamespace(clear=AsyncMock())
 
-    await commands.cmd_help(message)
+    await commands.cmd_help(message, state)
 
     text = message.answer.await_args.args[0]
 
     assert "варіант" in text.casefold()
     assert "зниж" not in text.casefold()
+    state.clear.assert_awaited_once()
 
 
 @pytest.mark.asyncio

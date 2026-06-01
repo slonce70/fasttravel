@@ -30,6 +30,7 @@ from src.infra.db import (
     add_subscription,
     delete_subscription,
     ensure_subscriber,
+    find_subscription,
     list_subscriptions,
 )
 from src.infra.logging import get_logger
@@ -252,27 +253,53 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
         return
     data = await state.get_data()
     chat_id = query.from_user.id
+    country_iso2 = data["country"]
+    max_price_uah = data.get("max_price_uah")
 
     await ensure_subscriber(chat_id, query.from_user.username)
-    sub_id = await add_subscription(
+    # Conservative dedup: reuse an identical existing subscription instead of
+    # piling up a duplicate row (which would double the alert DMs).
+    existing_id = await find_subscription(
         chat_id,
-        country_iso2=data["country"],
-        max_price_uah=data.get("max_price_uah"),
+        country_iso2=country_iso2,
+        max_price_uah=max_price_uah,
         min_stars=min_stars,
         meal_plan=None,
     )
+    if existing_id is not None:
+        sub_id = existing_id
+        is_duplicate = True
+    else:
+        sub_id = await add_subscription(
+            chat_id,
+            country_iso2=country_iso2,
+            max_price_uah=max_price_uah,
+            min_stars=min_stars,
+            meal_plan=None,
+        )
+        is_duplicate = False
     await state.clear()
 
     subs = await list_subscriptions(chat_id)
+    if is_duplicate:
+        header = (
+            "ℹ️ *Ви вже маєте таку підписку\\!*\n\n"
+            "Нову не створювали — щоб не дублювати сповіщення\\.\n\n"
+        )
+        answer = "Ви вже маєте таку підписку"
+    else:
+        header = (
+            "✅ *Підписку створено\\!*\n\n"
+            "Ми надішлемо вам особисте повідомлення, коли знайдемо тур, що "
+            "відповідає цим критеріям \\(і не настирливі сповіщення\\)\\.\n\n"
+        )
+        answer = f"Підписка #{sub_id} створена"
     await message.edit_text(
-        "✅ *Підписку створено\\!*\n\n"
-        "Ми надішлемо вам особисте повідомлення, коли знайдемо тур, що "
-        "відповідає цим критеріям \\(і не настирливі сповіщення\\)\\.\n\n"
-        + _render_subscriptions(subs),
+        header + _render_subscriptions(subs),
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=_subs_kb(subs),
     )
-    await query.answer(f"Підписка #{sub_id} створена")
+    await query.answer(answer)
 
 
 # ---------------------------------------------------------------------------

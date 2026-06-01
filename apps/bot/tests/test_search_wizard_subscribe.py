@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -18,6 +19,116 @@ def test_results_header_pluralizes_tours() -> None:
     )
     assert wizard_render.format_results_header(total=5, page=1, total_pages=1) == (
         "✅ Знайдено *5* турів · сторінка *1/1*"
+    )
+
+
+def test_results_header_qualifies_when_total_exceeds_browsable() -> None:
+    # The wizard caches only the first 60 hits and never refetches on a page
+    # turn. When the catalog has more matches than that, the header must say
+    # so honestly instead of implying all `total` tours are reachable.
+    header = wizard_render.format_results_header(total=200, page=1, total_pages=12, shown=60)
+    assert "Знайдено *200* турів" in header
+    assert "показано перші *60*" in header
+    assert "сторінка *1/12*" in header
+
+
+def test_results_header_no_qualifier_when_all_browsable() -> None:
+    # When everything found fits in the cached page, no "показано перші"
+    # qualifier — it would be noise (and misleading).
+    header = wizard_render.format_results_header(total=12, page=1, total_pages=3, shown=12)
+    assert "показано перші" not in header
+    assert header == "✅ Знайдено *12* турів · сторінка *1/3*"
+
+
+def test_step_prefix_maps_each_step_to_its_index() -> None:
+    # /help advertises a "майстер з 6 кроків"; the prefixes must match that
+    # count and order so advertised and actual stay in sync.
+    assert wizard_render.WIZARD_STEP_COUNT == 6
+    assert wizard_render.step_prefix("country") == "Крок 1/6 · "
+    assert wizard_render.step_prefix("nights") == "Крок 2/6 · "
+    assert wizard_render.step_prefix("when") == "Крок 3/6 · "
+    assert wizard_render.step_prefix("budget") == "Крок 4/6 · "
+    assert wizard_render.step_prefix("meal") == "Крок 5/6 · "
+    assert wizard_render.step_prefix("stars") == "Крок 6/6 · "
+
+
+def test_step_prefix_unknown_step_is_empty() -> None:
+    assert wizard_render.step_prefix("nope") == ""
+
+
+def test_when_bucket_range_maps_buckets_to_inclusive_date_windows() -> None:
+    # Each "when" bucket is a *range* of check-in days, not one pinned day.
+    # The old behaviour stored a single date (today+7/+30/+60) and queried
+    # exact-day match, so window-labelled buckets matched almost nothing.
+    today = date(2026, 6, 1)
+
+    soon = search_wizard.when_bucket_range("soon", today=today)
+    assert soon == ("2026-06-01", "2026-06-22")  # today .. +21
+
+    month = search_wizard.when_bucket_range("month", today=today)
+    assert month == ("2026-06-23", "2026-07-16")  # +22 .. +45
+
+    season = search_wizard.when_bucket_range("season", today=today)
+    assert season == ("2026-07-17", "2026-08-30")  # +46 .. +90
+
+    # The windows are contiguous and non-overlapping (no gap, no double-count).
+    assert soon[1] < month[0]
+    assert month[1] < season[0]
+
+
+def test_when_bucket_range_any_and_unknown_are_no_filter() -> None:
+    assert search_wizard.when_bucket_range("any", today=date(2026, 6, 1)) is None
+    assert search_wizard.when_bucket_range("garbage", today=date(2026, 6, 1)) is None
+
+
+@pytest.mark.asyncio
+async def test_results_subscribe_reuses_existing_subscription(monkeypatch) -> None:
+    # A second subscribe with the same natural key must NOT INSERT a duplicate
+    # (which would double the alert DMs); it reuses the existing id and tells
+    # the user. This is the conservative dedup contract.
+    ensure = AsyncMock()
+    add = AsyncMock(return_value=999)
+    find = AsyncMock(return_value=42)
+    monkeypatch.setattr(search_wizard, "ensure_subscriber", ensure)
+    monkeypatch.setattr(search_wizard, "add_subscription", add)
+    monkeypatch.setattr(search_wizard, "find_subscription", find)
+    monkeypatch.setattr(
+        search_wizard,
+        "get_settings",
+        lambda: SimpleNamespace(public_site_url=None),
+    )
+
+    message = SimpleNamespace(edit_reply_markup=AsyncMock())
+    monkeypatch.setattr(search_wizard, "callback_message", lambda _query: message)
+    query = SimpleNamespace(
+        from_user=SimpleNamespace(id=12345, username="traveler"),
+        message=message,
+        answer=AsyncMock(),
+    )
+    state = FakeState(
+        {
+            "country": "TR",
+            "price_max": None,
+            "stars_min": None,
+            "meal_plan": None,
+            "page": 1,
+            "results": {"total": 1, "items": [{"name_uk": "H", "canonical_slug": "fv-tr-h"}]},
+        }
+    )
+
+    await search_wizard.cb_subscribe(query, state)
+
+    find.assert_awaited_once_with(
+        12345,
+        country_iso2="TR",
+        max_price_uah=None,
+        min_stars=None,
+        meal_plan=None,
+    )
+    add.assert_not_awaited()  # the whole point — no duplicate row
+    query.answer.assert_awaited_once_with(
+        "Ви вже маєте таку підписку — нову не створювали",
+        show_alert=True,
     )
 
 
@@ -41,8 +152,10 @@ class FakeState:
 async def test_results_subscribe_creates_real_filter_and_hides_button(monkeypatch) -> None:
     ensure = AsyncMock()
     add = AsyncMock(return_value=77)
+    find = AsyncMock(return_value=None)
     monkeypatch.setattr(search_wizard, "ensure_subscriber", ensure)
     monkeypatch.setattr(search_wizard, "add_subscription", add)
+    monkeypatch.setattr(search_wizard, "find_subscription", find)
 
     message = SimpleNamespace(edit_reply_markup=AsyncMock())
     query = SimpleNamespace(
@@ -168,6 +281,7 @@ async def test_subscribe_rerender_threads_public_site_url_into_markup(monkeypatc
     captured: dict[str, Any] = {}
     monkeypatch.setattr(search_wizard, "ensure_subscriber", AsyncMock())
     monkeypatch.setattr(search_wizard, "add_subscription", AsyncMock(return_value=1))
+    monkeypatch.setattr(search_wizard, "find_subscription", AsyncMock(return_value=None))
     monkeypatch.setattr(
         search_wizard,
         "get_settings",

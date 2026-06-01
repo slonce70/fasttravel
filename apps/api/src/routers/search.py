@@ -80,6 +80,7 @@ async def search(
     country: str | None = Query(default=None, min_length=2, max_length=2),
     check_in: date | None = Query(default=None),
     check_in_min: date | None = Query(default=None),
+    check_in_max: date | None = Query(default=None),
     nights: int | None = Query(default=None, ge=1, le=30),
     meal_plan: str | None = Query(default=None, max_length=16),
     price_max: int | None = Query(default=None, ge=0),
@@ -91,10 +92,20 @@ async def search(
     offset: int | None = Query(default=None, ge=0),
     session: AsyncSession = Depends(get_db),
 ) -> PaginatedSearchResults:
+    # Date semantics (backward compatible):
+    #  * `check_in` (or a lone legacy `check_in_min` with no max) → exact-day
+    #    match, used by the web date-picker. The lone-`check_in_min` collapse
+    #    preserves the original vestigial behaviour.
+    #  * `check_in_min` AND `check_in_max` together → an inclusive range, used
+    #    by the bot "when" buckets which advertise a window, not one day.
+    has_range = check_in_min is not None and check_in_max is not None
+    exact_check_in = check_in if has_range else (check_in or check_in_min)
     return await search_hotels(
         session,
         country=country,
-        check_in=check_in or check_in_min,
+        check_in=exact_check_in,
+        check_in_min=check_in_min if has_range else None,
+        check_in_max=check_in_max if has_range else None,
         nights=nights,
         meal_plan=meal_plan,
         price_max=price_max,

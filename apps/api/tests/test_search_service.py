@@ -214,6 +214,176 @@ async def test_search_hotels_marks_duration_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_hotels_uses_between_for_check_in_range() -> None:
+    """The bot "when" buckets advertise a window, so they pass
+    check_in_min + check_in_max and the price filter must use BETWEEN, not an
+    exact-day equality (which matched almost nothing)."""
+    session = _FakeSession()
+
+    await search_hotels(
+        session,
+        country="TR",
+        check_in_min=date(2026, 6, 1),
+        check_in_max=date(2026, 6, 22),
+    )
+
+    assert (
+        "cp.check_in BETWEEN CAST(:check_in_min AS DATE) AND CAST(:check_in_max AS DATE)"
+        in session.execute_sql
+    )
+    # Range mode must not also pin an exact day.
+    assert "cp.check_in = CAST(:check_in AS DATE)" not in session.execute_sql
+
+
+@pytest.mark.asyncio
+async def test_search_hotels_exact_check_in_takes_precedence_over_range() -> None:
+    """The web date-picker path (exact check_in) is preserved and wins over a
+    range if both are somehow supplied — backward compatibility."""
+    session = _FakeSession()
+
+    await search_hotels(
+        session,
+        country="TR",
+        check_in=date(2026, 6, 15),
+        check_in_min=date(2026, 6, 1),
+        check_in_max=date(2026, 6, 22),
+    )
+
+    assert "cp.check_in = CAST(:check_in AS DATE)" in session.execute_sql
+    assert "BETWEEN" not in session.execute_sql
+
+
+@pytest.mark.asyncio
+async def test_search_hotels_no_date_filter_when_range_incomplete() -> None:
+    """A lone check_in_min (no max) does not emit a date filter at the service
+    layer — the router collapses that legacy case to an exact check_in before
+    calling, so the service only sees a complete range or nothing."""
+    session = _FakeSession()
+
+    await search_hotels(session, country="TR", check_in_min=date(2026, 6, 1))
+
+    assert "BETWEEN" not in session.execute_sql
+    assert "cp.check_in = CAST(:check_in AS DATE)" not in session.execute_sql
+
+
+@pytest.mark.asyncio
+async def test_search_hotels_matches_only_departures_inside_window(
+    db_session: AsyncSession,
+) -> None:
+    """End-to-end range filter: a hotel with a departure inside the window is
+    returned at that price; one only outside the window is excluded."""
+    suffix = uuid4().hex[:10]
+    operator_id = await db_session.scalar(
+        text(
+            """
+            INSERT INTO operators (code, display_name)
+            VALUES (:code, 'Range Window Operator')
+            RETURNING id
+            """
+        ),
+        {"code": f"range-window-{suffix}"},
+    )
+    country_iso2 = "ZY"
+    destination_id = await db_session.scalar(
+        text(
+            """
+            INSERT INTO destinations (country_iso2, region_slug, name_uk)
+            VALUES (:country_iso2, :slug, 'Range Window Destination')
+            RETURNING id
+            """
+        ),
+        {"country_iso2": country_iso2, "slug": f"range-window-{suffix}"},
+    )
+    in_window_hotel_id = await db_session.scalar(
+        text(
+            """
+            INSERT INTO hotels (
+                canonical_slug, name_uk, destination_id, is_active, has_active_prices
+            )
+            VALUES (:slug, 'In Window Hotel', :destination_id, TRUE, TRUE)
+            RETURNING id
+            """
+        ),
+        {"slug": f"fv-zy-in-window-{suffix}", "destination_id": destination_id},
+    )
+    out_window_hotel_id = await db_session.scalar(
+        text(
+            """
+            INSERT INTO hotels (
+                canonical_slug, name_uk, destination_id, is_active, has_active_prices
+            )
+            VALUES (:slug, 'Out Of Window Hotel', :destination_id, TRUE, TRUE)
+            RETURNING id
+            """
+        ),
+        {"slug": f"fv-zy-out-window-{suffix}", "destination_id": destination_id},
+    )
+    assert isinstance(operator_id, int)
+    assert isinstance(in_window_hotel_id, int)
+    assert isinstance(out_window_hotel_id, int)
+
+    today = date.today()
+    check_in_min = today + timedelta(days=10)
+    check_in_max = today + timedelta(days=20)
+    inside = today + timedelta(days=15)
+    outside = today + timedelta(days=40)
+    observed_at = datetime.now(UTC)
+    await db_session.execute(
+        text(
+            """
+            INSERT INTO price_observations (
+                observed_at, hotel_id, operator_id, check_in, nights, meal_plan,
+                room_category, price_uah, currency, deep_link
+            )
+            VALUES (
+                :observed_at, :hotel_id, :operator_id, :check_in, :nights, :meal_plan,
+                :room_category, :price_uah, 'UAH', :deep_link
+            )
+            """
+        ),
+        [
+            {
+                "observed_at": observed_at,
+                "hotel_id": in_window_hotel_id,
+                "operator_id": operator_id,
+                "check_in": inside,
+                "nights": 7,
+                "meal_plan": "AI",
+                "room_category": "Standard",
+                "price_uah": 33000,
+                "deep_link": f"https://example.test/{suffix}/inside",
+            },
+            {
+                "observed_at": observed_at,
+                "hotel_id": out_window_hotel_id,
+                "operator_id": operator_id,
+                "check_in": outside,
+                "nights": 7,
+                "meal_plan": "AI",
+                "room_category": "Standard",
+                "price_uah": 29000,
+                "deep_link": f"https://example.test/{suffix}/outside",
+            },
+        ],
+    )
+    await db_session.execute(text("REFRESH MATERIALIZED VIEW current_prices"))
+
+    result = await search_hotels(
+        db_session,
+        country=country_iso2,
+        check_in_min=check_in_min,
+        check_in_max=check_in_max,
+        limit=20,
+    )
+    found_ids = {item.hotel_id for item in result.items}
+
+    assert in_window_hotel_id in found_ids
+    assert out_window_hotel_id not in found_ids
+    in_window = next(i for i in result.items if i.hotel_id == in_window_hotel_id)
+    assert in_window.min_price_uah == 33000
+
+
+@pytest.mark.asyncio
 async def test_search_hotels_falls_back_to_price_sort_for_unknown_sort() -> None:
     session = _FakeSession()
 

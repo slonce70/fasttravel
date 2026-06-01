@@ -73,6 +73,8 @@ async def search_hotels(
     *,
     country: str | None = None,
     check_in: date | None = None,
+    check_in_min: date | None = None,
+    check_in_max: date | None = None,
     nights: int | None = None,
     meal_plan: str | None = None,
     price_max: int | None = None,
@@ -91,9 +93,21 @@ async def search_hotels(
     # When omitted, the SQL skips the meal filter entirely.
     meal_codes = raw_codes_for(meal_plan) if meal_plan else None
     current_price_meal_filter = "AND cp.meal_plan IN :meal_codes" if meal_codes else ""
-    current_price_date_filter = (
-        "AND cp.check_in = CAST(:check_in AS DATE)" if check_in is not None else ""
-    )
+    # Date filter precedence (backward compatible):
+    #  * exact `check_in` → single-day match (web date-picker), unchanged.
+    #  * `check_in_min` + `check_in_max` → inclusive range (bot "when" windows),
+    #    so a window-labelled bucket actually matches departures spread across
+    #    the window instead of pinning one arbitrary day.
+    #  * neither → no date filter (cheapest current offer per hotel).
+    use_range = check_in is None and check_in_min is not None and check_in_max is not None
+    if check_in is not None:
+        current_price_date_filter = "AND cp.check_in = CAST(:check_in AS DATE)"
+    elif use_range:
+        current_price_date_filter = (
+            "AND cp.check_in BETWEEN CAST(:check_in_min AS DATE) " "AND CAST(:check_in_max AS DATE)"
+        )
+    else:
+        current_price_date_filter = ""
     exact_first_order = (
         "CASE WHEN cp.nights = CAST(:nights AS INTEGER) THEN 0 ELSE 1 END,"
         if nights is not None
@@ -104,6 +118,8 @@ async def search_hotels(
     params: dict[str, object] = {
         "country": country.upper() if country else None,
         "check_in": check_in,
+        "check_in_min": check_in_min,
+        "check_in_max": check_in_max,
         "nights": nights,
         "price_max": price_max,
         "stars_min": stars_min,

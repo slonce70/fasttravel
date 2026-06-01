@@ -18,10 +18,50 @@ from shared.site_urls import public_hotel_url
 from shared.text_uk import plural_uk
 from src.keyboards.filters import results_actions_kb
 
+# Deterministic step order for the 6-step search wizard. /help advertises a
+# "майстер з 6 кроків", so each prompt is prefixed with its position
+# («Крок k/6 · …») to match that promise. Kept here, pure and testable,
+# rather than scattering literal indices across the handler.
+WIZARD_STEPS: tuple[str, ...] = (
+    "country",
+    "nights",
+    "when",
+    "budget",
+    "meal",
+    "stars",
+)
+WIZARD_STEP_COUNT = len(WIZARD_STEPS)
 
-def format_results_header(*, total: int, page: int, total_pages: int) -> str:
+
+def step_prefix(step: str) -> str:
+    """Return the «Крок k/6 · » marker for a named wizard step.
+
+    Unknown steps return an empty prefix so a future step rename degrades to
+    the bare prompt rather than raising mid-flow.
+    """
+    try:
+        index = WIZARD_STEPS.index(step) + 1
+    except ValueError:
+        return ""
+    return f"Крок {index}/{WIZARD_STEP_COUNT} · "
+
+
+def format_results_header(
+    *, total: int, page: int, total_pages: int, shown: int | None = None
+) -> str:
+    """Results-page header.
+
+    ``total`` is the API's full COUNT(*) of matching hotels, but only the
+    first ``shown`` items are cached/browsable (the wizard pulls a single
+    capped page and never refetches on page-turn). When the catalog holds
+    more matches than we fetched, say so honestly instead of implying all
+    ``total`` tours are reachable through the pager.
+    """
     tour_word = plural_uk(total, "тур", "тури", "турів")
-    return f"✅ Знайдено *{total}* {tour_word} · сторінка *{page}/{total_pages}*"
+    base = f"✅ Знайдено *{total}* {tour_word}"
+    if shown is not None and total > shown:
+        base += f" · показано перші *{shown}*"
+    return f"{base} · сторінка *{page}/{total_pages}*"
 
 
 def result_link_rows(
