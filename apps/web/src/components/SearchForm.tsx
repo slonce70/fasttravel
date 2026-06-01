@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useState, useTransition, type FormEvent } from 'react';
 import { Button } from './ui/Button';
 import { PaxPicker, paxFromSearchParams, paxToSearchParams, type PaxValue } from './PaxPicker';
 import { toApiSearchParams, type RouteSearchParams } from '@/lib/search-params';
@@ -44,6 +44,10 @@ const NIGHT_OPTIONS = PRECOMPUTED_NIGHTS;
 export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) {
   const router = useRouter();
   const params = useSearchParams();
+  const [isPending, startTransition] = useTransition();
+  // Min check-in is today (UTC midnight is a harmless UA edge) so the native
+  // picker greys out past dates, which always dead-end on zero results.
+  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const selectableCountries = useMemo(() => uniqueCountriesByIso(countries), [countries]);
   const sanitizedInitial = useMemo(
     () =>
@@ -95,8 +99,15 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
 
   const selectedCountry = country ? countryByIso.get(country) : undefined;
 
+  // An active `nights` from a hand-edited/external URL can be valid for the
+  // API (1..30) yet absent from the precomputed options (7..14). Without a
+  // matching <option> the browser would silently fall back to "Будь-яка",
+  // hiding the real filter, so inject a synthetic option to keep it visible.
+  const hasCustomNights = nights !== '' && !NIGHT_OPTIONS.some((n) => String(n) === nights);
+
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (isPending) return;
     const qs = new URLSearchParams();
     const currentSort = normalizeSearchSort(readSearchParam(params, 'sort'));
     const raw: RouteSearchParams = {
@@ -123,7 +134,13 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
       kids: sanitized.kids ?? [],
     });
     const query = qs.toString();
-    router.push(query ? `/search?${query}` : '/search');
+    // useTransition keeps `isPending` true through the server round-trip on
+    // /search (force-dynamic), so the submit button can show a pending state
+    // without remounting the form (which would lose focus). `push` runs
+    // synchronously inside the callback.
+    startTransition(() => {
+      router.push(query ? `/search?${query}` : '/search');
+    });
   }
 
   const submitLabel = selectedCountry
@@ -158,6 +175,7 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
           <input
             type="date"
             value={checkIn}
+            min={today}
             onChange={(e) => setCheckIn(e.target.value)}
             className="input"
           />
@@ -170,6 +188,11 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
             aria-label="Кількість ночей"
           >
             <option value="">Будь-яка</option>
+            {hasCustomNights && (
+              <option key={`custom-${nights}`} value={nights}>
+                {nights}
+              </option>
+            )}
             {NIGHT_OPTIONS.map((n) => (
               <option key={n} value={n}>
                 {n}
@@ -216,8 +239,14 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
         </Field>
       </div>
       <div className="mt-4 flex justify-end">
-        <Button type="submit" size="lg" className="w-full sm:w-auto">
-          {submitLabel}
+        <Button
+          type="submit"
+          size="lg"
+          className="w-full sm:w-auto"
+          disabled={isPending}
+          aria-busy={isPending}
+        >
+          {isPending ? 'Шукаємо…' : submitLabel}
         </Button>
       </div>
       {/* Inline utility class for inputs (Tailwind doesn't allow `.input` in
@@ -230,13 +259,32 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
           padding: 0 0.75rem;
           border-radius: 0.5rem;
           border: 1px solid rgb(203 213 225);
-          background: white;
+          background-color: white;
           font-size: 0.875rem;
           color: rgb(15 23 42);
+          /* Strip OS-default control chrome (dropdown arrows, inner spin) so
+             native select/date/number all share the hero's flat look. */
+          appearance: none;
+          -webkit-appearance: none;
+          -moz-appearance: none;
         }
         .input:focus {
           outline: 2px solid rgb(37 99 235);
           outline-offset: 1px;
+        }
+        /* Custom chevron only for selects (the PaxPicker button ships its own
+           SVG, and date/number fields keep their own affordances). */
+        select.input {
+          padding-right: 2rem;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%2364748b'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z' clip-rule='evenodd'/%3E%3C/svg%3E");
+          background-position: right 0.5rem center;
+          background-repeat: no-repeat;
+          background-size: 1.25rem 1.25rem;
+        }
+        /* Normalize (don't remove) the native date picker affordance. */
+        .input::-webkit-calendar-picker-indicator {
+          cursor: pointer;
+          opacity: 0.6;
         }
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(4px); }

@@ -7,7 +7,7 @@ import { isoDate } from '@/lib/utils';
 import { Card, CardBody } from './ui/Card';
 import { Skeleton } from './ui/Skeleton';
 import { Badge } from './ui/Badge';
-import { formatPrice, formatMealPlan, formatRelativeTime } from '@/lib/format';
+import { formatPrice, formatMealPlan, formatRelativeTime, plural } from '@/lib/format';
 
 export interface OffersListProps {
   hotelId: number;
@@ -49,10 +49,12 @@ export function OffersList({ hotelId, date, nights, mealPlan }: OffersListProps)
 
   if (isLoading) {
     return (
-      <div className="space-y-2">
-        {[0, 1, 2].map((i) => (
-          <Skeleton key={i} className="h-20 w-full" />
-        ))}
+      <div role="status" aria-live="polite" aria-label="Завантаження пропозицій">
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-20 w-full" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -60,7 +62,7 @@ export function OffersList({ hotelId, date, nights, mealPlan }: OffersListProps)
   if (isError) {
     return (
       <Card>
-        <CardBody className="text-center text-sm text-danger-600">
+        <CardBody role="status" aria-live="polite" className="text-center text-sm text-danger-600">
           Не вдалося завантажити пропозиції. Спробуйте оновити сторінку.
         </CardBody>
       </Card>
@@ -70,7 +72,7 @@ export function OffersList({ hotelId, date, nights, mealPlan }: OffersListProps)
   if (!data || data.length === 0) {
     return (
       <Card>
-        <CardBody className="text-center text-sm text-slate-500">
+        <CardBody role="status" aria-live="polite" className="text-center text-sm text-slate-500">
           На цю дату пропозицій немає. Оберіть іншу дату.
         </CardBody>
       </Card>
@@ -81,13 +83,18 @@ export function OffersList({ hotelId, date, nights, mealPlan }: OffersListProps)
   const cheapest = sorted[0]?.price_uah ?? 0;
 
   return (
-    <ul className="space-y-2" aria-label="Пропозиції операторів">
-      {sorted.map((offer) => (
-        <li key={offerKey(offer)}>
-          <OfferRow offer={offer} isCheapest={offer.price_uah === cheapest} />
-        </li>
-      ))}
-    </ul>
+    <div aria-live="polite" aria-atomic="true">
+      <p className="sr-only">
+        {sorted.length} {plural(sorted.length, 'пропозиція', 'пропозиції', 'пропозицій')}
+      </p>
+      <ul className="space-y-2" aria-label="Пропозиції операторів">
+        {sorted.map((offer) => (
+          <li key={offerKey(offer)}>
+            <OfferRow offer={offer} isCheapest={offer.price_uah === cheapest} />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -117,14 +124,14 @@ function OfferRow({ offer, isCheapest }: { offer: Offer; isCheapest: boolean }) 
           {offer.nights} ноч. · {formatMealPlan(offer.meal_plan)}
           {offer.room_category ? ` · ${offer.room_category}` : ''}
         </p>
-        <p className="mt-1 text-[11px] text-slate-400">
+        <p className="mt-1 text-[11px] text-slate-500">
           оновлено {formatRelativeTime(offer.observed_at)}
         </p>
       </div>
       <div className="text-right">
         <p className="text-xl font-bold text-brand-800">{formatPrice(offer.price_uah)}</p>
         {offer.price_original != null && offer.currency !== 'UAH' && (
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500">
             {offer.price_original} {offer.currency}
           </p>
         )}
@@ -135,12 +142,12 @@ function OfferRow({ offer, isCheapest }: { offer: Offer; isCheapest: boolean }) 
             href={offer.deep_link}
             target="_blank"
             rel="nofollow sponsored noopener"
-            className="inline-flex h-10 items-center justify-center rounded-lg bg-accent-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-600"
+            className="inline-flex h-10 items-center justify-center rounded-lg bg-accent-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-700"
           >
             Купити →
           </a>
           {/* Visible sponsorship marker — see DealCard for rationale. */}
-          <span className="text-[10px] uppercase tracking-wider text-slate-400">
+          <span className="text-[10px] uppercase tracking-wider text-slate-500">
             Спонсорське посилання
           </span>
         </div>

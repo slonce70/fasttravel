@@ -129,7 +129,7 @@ export default async function CountryDestinationPage({
             </p>
             <Link
               href="/telegram"
-              className="mt-4 inline-flex h-10 items-center justify-center rounded-lg bg-accent-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-600"
+              className="mt-4 inline-flex h-10 items-center justify-center rounded-lg bg-accent-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-700"
             >
               Підписатись на Telegram →
             </Link>

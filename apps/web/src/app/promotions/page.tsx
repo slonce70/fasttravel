@@ -59,11 +59,13 @@ export default async function PromotionsPage({
     <Container className="space-y-6 py-8">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Добірки Farvater</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {initial.total > 0
-            ? `Зараз активних пропозицій у добірках: ${initial.total}`
-            : 'Зараз активних добірок немає — заходьте пізніше.'}
-        </p>
+        {!error && (
+          <p className="mt-1 text-sm text-slate-500">
+            {initial.total > 0
+              ? `Зараз активних пропозицій у добірках: ${initial.total}`
+              : 'Зараз активних добірок немає — заходьте пізніше.'}
+          </p>
+        )}
       </div>
 
       {error ? (
@@ -137,19 +139,19 @@ export default async function PromotionsPage({
                         <div className="text-lg font-bold text-slate-900">
                           {formatPrice(promo.price_uah)}
                         </div>
-                        <div className="mt-1 text-[11px] text-slate-400">Партнерське посилання</div>
+                        <div className="mt-1 text-[11px] text-slate-500">Партнерське посилання</div>
                       </div>
                       <a
                         href={promo.deep_link}
                         target="_blank"
                         rel="nofollow sponsored noopener"
-                        className="hover:bg-accent-700 shrink-0 rounded-full bg-accent-600 px-4 py-1.5 text-sm font-medium text-white"
+                        className="shrink-0 rounded-full bg-accent-600 px-4 py-1.5 text-sm font-medium text-white hover:bg-accent-700"
                       >
                         На сайт оператора
                       </a>
                     </div>
                     {promo.operator_name && (
-                      <p className="text-xs text-slate-400">від {promo.operator_name}</p>
+                      <p className="text-xs text-slate-500">від {promo.operator_name}</p>
                     )}
                   </CardBody>
                 </Card>

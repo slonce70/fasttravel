@@ -41,7 +41,7 @@ export function DealCard({ deal }: DealCardProps) {
           <Badge variant={signal.badgeVariant} size="md">
             {signal.badgeIcon} -{Math.round(deal.discount_pct)}%
           </Badge>
-          <span className="text-xs text-slate-400">{formatDateMedium(deal.detected_at)}</span>
+          <span className="text-xs text-slate-500">{formatDateMedium(deal.detected_at)}</span>
         </div>
         <div className="space-y-0.5">
           <Link href={href} className="text-base font-semibold leading-tight hover:underline">
@@ -86,14 +86,14 @@ export function DealCard({ deal }: DealCardProps) {
               target="_blank"
               rel="nofollow sponsored noopener"
               aria-label={`Купити тур у ${heading} на сайті оператора (зовнішнє посилання)`}
-              className="inline-flex h-9 items-center justify-center rounded-lg bg-accent-500 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-600"
+              className="inline-flex h-9 items-center justify-center rounded-lg bg-accent-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-700"
             >
               Купити →
             </a>
             {/* Ukrainian Advertising Law + Google guidance — affiliate /
                 sponsored links must be marked visibly, not only via
                 rel="sponsored" (which is invisible to users). */}
-            <span className="text-[10px] uppercase tracking-wider text-slate-400">
+            <span className="text-[10px] uppercase tracking-wider text-slate-500">
               Спонсорське посилання
             </span>
           </div>

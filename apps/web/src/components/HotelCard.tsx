@@ -14,7 +14,7 @@ export function HotelCard({ hotel }: HotelCardProps) {
   // neutral placeholder so the grid keeps its rhythm.
   const photo = hotel.photos?.[0];
   return (
-    <Card className="flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
+    <Card className="group flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
       <Link
         href={`/hotels/${hotel.canonical_slug}`}
         className="flex flex-1 flex-col"
@@ -37,8 +37,22 @@ export function HotelCard({ hotel }: HotelCardProps) {
               className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center text-3xl text-slate-300">
-              🏨
+            <div className="flex h-full w-full items-center justify-center bg-slate-100 text-slate-300">
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.5}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-10 w-10"
+              >
+                <path d="M3 21h18" />
+                <path d="M5 21V5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v16" />
+                <path d="M14 9h4a1 1 0 0 1 1 1v11" />
+                <path d="M8 8h2M8 12h2M8 16h2" />
+              </svg>
             </div>
           )}
         </div>
@@ -71,7 +85,7 @@ export function HotelCard({ hotel }: HotelCardProps) {
               )}
               {/* Sprint 2.5 — show price age when it's older than 6h. */}
               {hotel.last_observed_at && _isPriceStale(hotel.last_observed_at) && (
-                <p className="mt-0.5 text-[10px] text-slate-400">
+                <p className="mt-0.5 text-[10px] text-slate-500">
                   оновлено {_relativeHours(hotel.last_observed_at)} год тому
                 </p>
               )}

@@ -47,7 +47,16 @@ export default async function HomePage() {
             {/* useSearchParams() inside SearchForm requires Suspense in Next 15
                 — otherwise the page is forced to dynamic and ISR is lost. */}
             <Suspense
-              fallback={<div className="h-44 animate-pulse rounded-2xl bg-white/10" aria-hidden />}
+              fallback={
+                // Track the real form's height at each breakpoint to avoid CLS
+                // when SearchForm hydrates. The form's grid reflows from 4 rows
+                // on mobile (grid-cols-2) → 3 rows (sm) → 2 rows (lg) → 1 row
+                // (xl:grid-cols-7), so the reserved box shrinks the same way.
+                <div
+                  className="h-[372px] animate-pulse rounded-2xl bg-white/10 sm:h-[316px] lg:h-[244px] xl:h-44"
+                  aria-hidden
+                />
+              }
             >
               <SearchForm countries={countries} />
             </Suspense>

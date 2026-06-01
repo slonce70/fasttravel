@@ -1,7 +1,9 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { Container } from '@/components/layout/Container';
 import { DealsFeed } from './DealsFeed';
-import { fetchDeals, userMessageForApiError } from '@/lib/api-client';
+import { fetchDeals, fetchDestinations, userMessageForApiError } from '@/lib/api-client';
+import type { CountryOut } from '@/lib/types';
 
 export const metadata: Metadata = {
   title: 'Гарячі знижки на тури',
@@ -26,8 +28,19 @@ export default async function DealsPage({
   const country = sp.country?.toUpperCase();
   let initial;
   let error: string | null = null;
+  // Resolve the filtered country's display name the same way /search does:
+  // look it up in the destinations list by ISO2. Best-effort — a failed lookup
+  // just leaves the generic heading.
+  let countryName: string | undefined;
   try {
-    initial = await fetchDeals({ limit: 50, country }, { revalidate: 300 });
+    const [deals, countries] = await Promise.all([
+      fetchDeals({ limit: 50, country }, { revalidate: 300 }),
+      country ? getCountries() : Promise.resolve<CountryOut[]>([]),
+    ]);
+    initial = deals;
+    countryName = country
+      ? countries.find((c) => c.country_iso2.toUpperCase() === country)?.name_uk
+      : undefined;
   } catch (e) {
     error = userMessageForApiError(e);
     initial = { items: [], total: 0, limit: 50, offset: 0 };
@@ -36,10 +49,22 @@ export default async function DealsPage({
   return (
     <Container className="space-y-6 py-8">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Гарячі знижки</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Усього виявлено {initial.total} {pluralDeals(initial.total)}.
-        </p>
+        <h1 className="text-2xl font-bold text-slate-900">
+          {countryName ? `Гарячі знижки: ${countryName}` : 'Гарячі знижки'}
+        </h1>
+        {!error && (
+          <p className="mt-1 text-sm text-slate-500">
+            Усього виявлено {initial.total} {pluralDeals(initial.total)}.
+          </p>
+        )}
+        {country && (
+          <Link
+            href="/deals"
+            className="mt-1 inline-block text-sm font-medium text-brand-700 hover:text-brand-900"
+          >
+            Усі країни →
+          </Link>
+        )}
       </div>
 
       {error ? (
@@ -47,10 +72,18 @@ export default async function DealsPage({
           Не вдалося завантажити дані: {error}
         </div>
       ) : (
-        <DealsFeed initial={initial} country={country} />
+        <DealsFeed initial={initial} country={country} countryName={countryName} />
       )}
     </Container>
   );
+}
+
+async function getCountries(): Promise<CountryOut[]> {
+  try {
+    return await fetchDestinations({ revalidate: 3600 });
+  } catch {
+    return [];
+  }
 }
 
 function pluralDeals(n: number): string {

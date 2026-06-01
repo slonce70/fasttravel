@@ -183,11 +183,11 @@ export function HotelView({ hotel }: { hotel: Hotel }) {
         <div
           role="status"
           aria-live="polite"
-          className="ring-brand-200 flex items-center gap-2 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-800 ring-1"
+          className="flex items-center gap-2 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-800 ring-1 ring-brand-200"
         >
           <span
             aria-hidden
-            className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand-600"
+            className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand-600 motion-reduce:animate-none"
           />
           Оновлюємо ціни у фоні…
         </div>
@@ -221,7 +221,7 @@ export function HotelView({ hotel }: { hotel: Hotel }) {
                 onChange={(e) => {
                   setSelectedDate(e.target.value ? parseLocalDate(e.target.value) : null);
                 }}
-                className="focus:ring-brand-200 h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2"
+                className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 aria-label="Дата заїзду"
               />
             </FilterGroup>

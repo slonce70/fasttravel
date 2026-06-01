@@ -81,9 +81,31 @@ describe('HotelCard', () => {
     expect(screen.getByText(/оновлено 8 год тому/)).toBeInTheDocument(); // 8h → stale
   });
 
-  it('renders the placeholder when there is no photo', () => {
-    render(<HotelCard hotel={{ ...baseHotel, photos: [] }} />);
-    expect(screen.getByText('🏨')).toBeInTheDocument();
+  it('renders an inline SVG placeholder (not a platform emoji) when there is no photo', () => {
+    const { container } = render(<HotelCard hotel={{ ...baseHotel, photos: [] }} />);
+    // No <img> for a photoless hotel, and the placeholder is a decorative SVG
+    // glyph rather than the OS/font-dependent 🏨 emoji.
     expect(screen.queryByRole('img')).toBeNull();
+    expect(screen.queryByText('🏨')).toBeNull();
+    const svg = container.querySelector('svg[aria-hidden="true"]');
+    expect(svg).not.toBeNull();
+  });
+
+  it('puts a `group` class on an ancestor so the image group-hover zoom can fire', () => {
+    const { container } = render(<HotelCard hotel={baseHotel} />);
+    const img = screen.getByRole('img');
+    // The zoom uses group-hover:scale-105, which only resolves under a literal
+    // `group` ancestor. Walk up from the image and assert one carries it.
+    let node: HTMLElement | null = img.parentElement;
+    let hasGroupAncestor = false;
+    while (node && node !== container) {
+      if (node.classList.contains('group')) {
+        hasGroupAncestor = true;
+        break;
+      }
+      node = node.parentElement;
+    }
+    expect(hasGroupAncestor).toBe(true);
+    expect(img.className).toContain('group-hover:scale-105');
   });
 });
