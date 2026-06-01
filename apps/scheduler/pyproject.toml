@@ -52,7 +52,7 @@ pytest-cov = "^6.0.0"
 # (snapshot_hot, refresh_worker) without spinning a real Redis.
 fakeredis = "^2.26.1"
 ruff = "^0.7.4"
-mypy = "^1.13.0"
+mypy = ">=1.13,<3.0"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
