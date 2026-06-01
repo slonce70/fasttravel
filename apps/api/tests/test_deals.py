@@ -34,6 +34,7 @@ async def _seed_minimal_deal(
     source: str | None = "farvater_scrape",
     detection_method: str = "calendar_anomaly",
     nights: int = 7,
+    detected_at: datetime | None = None,
 ) -> SeededDeal:
     """Insert one operator + destination + hotel + deal via raw SQL.
 
@@ -99,9 +100,10 @@ async def _seed_minimal_deal(
                 "dl": "https://example.com/affiliate?h=1",
                 # Sprint 2.4 added a 48h freshness filter to deal_service.
                 # Seed with a "just now" timestamp so the public endpoint
-                # returns the row; tests that need an explicitly stale
-                # deal can override `detected_at` via kwargs.
-                "dt": datetime.now(timezone.utc),
+                # returns the row; tests that need an explicitly stale deal
+                # (or several rows sharing an identical detected_at, to
+                # exercise the id tie-break) can override `detected_at`.
+                "dt": detected_at if detected_at is not None else datetime.now(timezone.utc),
                 "source": source,
                 "method": detection_method,
             },
@@ -293,3 +295,47 @@ async def test_list_deals_excludes_zero_discount_deals(
     assert response.status_code == 200
     body = response.json()
     assert all(item["id"] != seeded.deal_id for item in body["items"])
+
+
+@pytest.mark.asyncio
+async def test_list_deals_orders_equal_key_rows_by_id_deterministically(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Equal-key rows must tie-break on the PK so paging is deterministic.
+
+    detect_deals inserts a batch via one INSERT...SELECT, so every deal in
+    a tick shares an identical server-default detected_at. Under the
+    `newest` sort (detected_at DESC alone, pre-fix) that whole batch is
+    fully tied and Postgres gives no stable order across the separate
+    statements backing consecutive pages — rows can duplicate or be
+    skipped. Appending Deal.id.desc() makes the order total.
+    """
+    shared_detected_at = datetime.now(timezone.utc)
+    seeded = [
+        await _seed_minimal_deal(db_session, detected_at=shared_detected_at) for _ in range(6)
+    ]
+    seeded_ids = [s.deal_id for s in seeded]
+
+    # `newest` = detected_at.desc(), id.desc(); with detected_at identical
+    # across the batch, the id tie-break fully determines the order.
+    response = await client.get("/api/deals?limit=200&sort=newest")
+    assert response.status_code == 200
+    all_ids = [item["id"] for item in response.json()["items"]]
+
+    # The shared test DB may hold other committed deals, so isolate our
+    # seeded rows as a subsequence (existing tests filter the same way).
+    ours = [deal_id for deal_id in all_ids if deal_id in set(seeded_ids)]
+    assert ours == sorted(seeded_ids, reverse=True)
+
+    # Secondary: two consecutive offset pages over the same stable ordering
+    # must equal the first 2*limit rows — no overlap, no gap.
+    page_size = 3
+    page1 = await client.get(f"/api/deals?limit={page_size}&offset=0&sort=newest")
+    page2 = await client.get(f"/api/deals?limit={page_size}&offset={page_size}&sort=newest")
+    assert page1.status_code == 200
+    assert page2.status_code == 200
+    page1_ids = [item["id"] for item in page1.json()["items"]]
+    page2_ids = [item["id"] for item in page2.json()["items"]]
+    # Within our seeded set the first six rows of the stable order are the
+    # seeded ids, descending. No id appears on both pages.
+    assert set(page1_ids).isdisjoint(set(page2_ids))

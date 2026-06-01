@@ -129,14 +129,23 @@ async def list_deals(
     # Product default is "biggest steal first". `newest` was the legacy
     # default but it buried 40% promos under fresh 15% ones; the product
     # claim is "we find the deals", so the deal goes first.
+    # Append Deal.id as the final ORDER BY key in every branch so
+    # limit/offset paging is deterministic. detect_deals inserts a batch
+    # via one INSERT...SELECT, so server_default func.now() gives every
+    # deal in a tick an identical detected_at; without a unique tail key
+    # those fully-tied rows have no stable order across the separate
+    # statements backing consecutive pages — rows can duplicate or be
+    # skipped. The PK only disambiguates exact ties; primary ranking is
+    # unchanged. Mirrors search_service (appends h.id) and promo_service
+    # (appends ranked.c.id).
     if sort == "newest":
-        base = base.order_by(Deal.detected_at.desc())
+        base = base.order_by(Deal.detected_at.desc(), Deal.id.desc())
     elif sort == "price":
-        base = base.order_by(Deal.price_uah.asc(), Deal.discount_pct.desc())
+        base = base.order_by(Deal.price_uah.asc(), Deal.discount_pct.desc(), Deal.id.desc())
     else:
         # "discount" + tie-break by freshness so the same deal isn't
         # always at the top while a newer matching deal exists.
-        base = base.order_by(Deal.discount_pct.desc(), Deal.detected_at.desc())
+        base = base.order_by(Deal.discount_pct.desc(), Deal.detected_at.desc(), Deal.id.desc())
 
     # COUNT over the same JOIN topology so filters apply uniformly.
     total = await session.scalar(select(func.count()).select_from(base.subquery())) or 0
