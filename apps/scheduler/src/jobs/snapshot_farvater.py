@@ -321,9 +321,12 @@ async def snapshot_farvater(
                     errors=errors,
                     cumulative_inserted=total_inserted,
                 )
-                # Sprint 3.1 — wall-clock budget. Coroutines already
-                # in-flight in the next chunk get cancelled by the
-                # outer task scope when we break.
+                # Sprint 3.1 — wall-clock budget. `tasks` holds bare
+                # coroutine objects; only the current chunk has been passed
+                # to asyncio.gather, so later-chunk coroutines were never
+                # scheduled and nothing is in-flight. Close them before the
+                # break, otherwise CPython emits a 'coroutine was never
+                # awaited' RuntimeWarning at GC.
                 if (
                     max_runtime_s is not None
                     and time.monotonic() - wall_clock_started > max_runtime_s
@@ -335,6 +338,8 @@ async def snapshot_farvater(
                         of=len(tasks),
                         cumulative_inserted=total_inserted,
                     )
+                    for coro in tasks[i + chunk :]:
+                        coro.close()
                     partial_due_to_budget = True
                     break
 

@@ -1,5 +1,7 @@
 import asyncio
+import gc
 import importlib
+import warnings
 from datetime import date
 from types import SimpleNamespace
 
@@ -370,6 +372,105 @@ async def test_snapshot_marks_run_partial_when_hotel_tasks_error(monkeypatch) ->
     assert inserted == 0
     assert recorded == [("partial", 0, "hotel_task_errors=2")]
     assert refresh_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_wall_clock_break_closes_later_chunk_coroutines(monkeypatch) -> None:
+    """Tripping the wall-clock budget on a non-final chunk must close the
+    later-chunk coroutines, which were never scheduled — otherwise CPython
+    emits 'coroutine was never awaited' RuntimeWarning at GC.
+    """
+    module = importlib.import_module("src.jobs.snapshot_farvater")
+    recorded: list[tuple[str, int, str]] = []
+
+    # >200 so, with chunk=200, exactly tasks[200:] is left un-scheduled.
+    target_count = 201
+
+    class _FakeClient:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return object()
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+    class _FakeSession:
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+        async def execute(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(scalar=lambda: 0)
+
+    async def fake_ensure_operator(_db):  # type: ignore[no-untyped-def]
+        return 18
+
+    async def fake_refresh_targets(_db, _iso_filter, _max_per_country):  # type: ignore[no-untyped-def]
+        return [
+            (f"/uk/hotel/tr/hotel-{n}/", "TR", 100 + n, str(45000 + n)) for n in range(target_count)
+        ]
+
+    async def fake_country_dest_id(_db, _iso2):  # type: ignore[no-untyped-def]
+        return 7
+
+    # Must be a real `async def` so a never-awaited one produces the
+    # RuntimeWarning the regression guards against.
+    async def fake_process_hotel(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return 0
+
+    async def fake_refresh_price_views(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return {"current_prices": "concurrent", "hotel_calendar_prices": "concurrent"}
+
+    async def fake_record_run(
+        _db,
+        _operator_id,
+        status,
+        rows_inserted,
+        *,
+        error="",
+        started_at=None,
+    ):  # type: ignore[no-untyped-def]
+        recorded.append((status, rows_inserted, error))
+
+    # Stateful clock: first call captures wall_clock_started at 0.0, every
+    # subsequent check is far past a 1-minute (60s) budget so the budget
+    # trips on the FIRST chunk's check, leaving tasks[200:] un-scheduled.
+    calls = {"n": 0}
+
+    def fake_monotonic() -> float:
+        calls["n"] += 1
+        return 0.0 if calls["n"] == 1 else 10_000.0
+
+    monkeypatch.setattr(module, "CATALOG_COUNTRIES", [("Turkey", "TR")])
+    monkeypatch.setattr(module, "async_session_factory", lambda: _FakeSession())
+    monkeypatch.setattr(module, "_ensure_operator", fake_ensure_operator)
+    monkeypatch.setattr(module, "_refresh_targets", fake_refresh_targets)
+    monkeypatch.setattr(module, "_country_dest_id", fake_country_dest_id)
+    monkeypatch.setattr(module, "_process_hotel", fake_process_hotel)
+    monkeypatch.setattr(module, "_http_client", lambda: _FakeClient())
+    monkeypatch.setattr(module, "refresh_price_views", fake_refresh_price_views)
+    monkeypatch.setattr(module, "_record_run", fake_record_run)
+    monkeypatch.setattr(module.time, "monotonic", fake_monotonic)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        inserted = await snapshot_farvater(max_runtime_minutes=1)
+        # Force GC so any un-awaited coroutine surfaces its RuntimeWarning now.
+        gc.collect()
+
+    never_awaited = [w for w in caught if "never awaited" in str(w.message)]
+    assert (
+        not never_awaited
+    ), f"leaked un-awaited coroutines: {[str(w.message) for w in never_awaited]}"
+
+    # The first chunk (200 targets) ran, returning 0 inserts; the run is
+    # recorded as partial because the budget tripped before the last chunk.
+    assert inserted == 0
+    assert recorded == [("partial", 0, "wall_clock_budget_exhausted (1m)")]
 
 
 def test_snapshot_has_no_extra_request_sleep_by_default(monkeypatch) -> None:

@@ -277,15 +277,6 @@ async def _notify_subscribers_locked(settings: Settings) -> int:
                     disable_web_page_preview=True,
                 )
                 sent += 1
-                # Mark this filter/deal pair as notified so we don't resend
-                # it on the next tick. The scalar cursor remains a high-water
-                # marker for legacy/admin visibility only.
-                async with async_session_factory() as db:
-                    await db.execute(
-                        _MARK_NOTIFIED,
-                        {"deal_id": row.deal_id, "filter_id": row.filter_id},
-                    )
-                    await db.commit()
             except Exception as exc:  # noqa: BLE001
                 failed += 1
                 log.warning(
@@ -294,6 +285,34 @@ async def _notify_subscribers_locked(settings: Settings) -> int:
                     filter_id=row.filter_id,
                     error=str(exc),
                 )
+            else:
+                # The send succeeded — mark this (filter, deal) pair as
+                # notified so we don't resend it on the next tick. This write
+                # is in its OWN try/except: a sent-but-unrecorded alert is a
+                # distinct, narrower failure than a failed send. If we folded
+                # it back into the generic 'failed' bucket the row would
+                # double-count (sent+1 then failed+1) AND the completion log
+                # would be inaccurate. The message is already delivered, so we
+                # keep sent+=1; only the ledger row (the idempotency guard) is
+                # missing, which risks a duplicate alert within the freshness
+                # window — logged loudly here for operator visibility. The
+                # scalar cursor remains a high-water marker for legacy/admin
+                # visibility only.
+                try:
+                    async with async_session_factory() as db:
+                        await db.execute(
+                            _MARK_NOTIFIED,
+                            {"deal_id": row.deal_id, "filter_id": row.filter_id},
+                        )
+                        await db.commit()
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "notify_subscribers.mark_notified_failed",
+                        chat_id=row.chat_id,
+                        filter_id=row.filter_id,
+                        deal_id=row.deal_id,
+                        error=str(exc),
+                    )
             await asyncio.sleep(SEND_DELAY_S)
 
     finally:
