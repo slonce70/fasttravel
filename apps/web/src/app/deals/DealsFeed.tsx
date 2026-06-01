@@ -8,7 +8,15 @@ import { Button } from '@/components/ui/Button';
 
 const PAGE_SIZE = 50;
 
-export function DealsFeed({ initial, country }: { initial: PaginatedDeals; country?: string }) {
+export function DealsFeed({
+  initial,
+  country,
+  countryName,
+}: {
+  initial: PaginatedDeals;
+  country?: string;
+  countryName?: string;
+}) {
   const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useInfiniteQuery({
     queryKey: ['deals', 'feed', country ?? null],
     initialPageParam: 0,
@@ -29,7 +37,11 @@ export function DealsFeed({ initial, country }: { initial: PaginatedDeals; count
   if (items.length === 0) {
     return (
       <div className="rounded-xl bg-white p-10 text-center text-sm text-slate-500 ring-1 ring-slate-200">
-        Поки немає виявлених знижок.
+        {countryName
+          ? `Поки немає виявлених знижок для напрямку «${countryName}».`
+          : country
+            ? 'Поки немає виявлених знижок для цього напрямку.'
+            : 'Поки немає виявлених знижок.'}
       </div>
     );
   }

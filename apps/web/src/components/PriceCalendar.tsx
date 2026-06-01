@@ -5,8 +5,9 @@
  *
  * Renders react-day-picker (v9) with a custom `DayButton` that paints each
  * cell with a HSL-heatmap color derived from per-window price percentile and
- * shows the per-night minimum price as a compact label (e.g. "22.4к"). Days
- * flagged as locally interesting dates get a compact marker.
+ * shows the per-night minimum price as a compact label (e.g. "22к", or
+ * "9,8к" with the uk-UA decimal comma). Days flagged as locally interesting
+ * dates get a compact marker.
  *
  * API contract: GET /api/hotels/{id}/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD[&meal=AI][&nights=7]
  *   - `mealPlan` is forwarded as `?meal=` so the backend narrows the MV to
@@ -32,7 +33,7 @@ import {
   formatRelativeTime,
   formatDateLong,
 } from '@/lib/format';
-import { buildPriceScale, colorForPrice, type ColorScale } from '@/lib/deal-color';
+import { buildPriceScale, colorForPrice, priceColor, type ColorScale } from '@/lib/deal-color';
 import { Skeleton } from './ui';
 
 import 'react-day-picker/style.css';
@@ -188,16 +189,23 @@ function PriceDayButton({
   const isOutside = modifiers.outside;
   const isDisabled = modifiers.disabled;
 
+  // The 🔥 deal marker's own aria-label is discarded by the accessible-name
+  // algorithm because this button supplies an explicit aria-label. So when the
+  // day is an interesting date, append the EXISTING honest dip wording (the
+  // exact text getServerDateDipHint already produces, also shown in the title)
+  // to the button's own label so screen readers get the same signal.
+  const baseLabel =
+    price != null
+      ? `${formatDateLong(day.date)}: від ${formatPriceCompact(price)} гривень`
+      : `${formatDateLong(day.date)}: цін немає`;
+  const ariaLabel = priceHint ? `${baseLabel}. ${priceHint.title}` : baseLabel;
+
   return (
     <button
       {...buttonProps}
       type="button"
       disabled={isDisabled}
-      aria-label={
-        price != null
-          ? `${formatDateLong(day.date)}: від ${formatPriceCompact(price)} гривень`
-          : `${formatDateLong(day.date)}: цін немає`
-      }
+      aria-label={ariaLabel}
       title={priceHint?.title}
       className={cn(
         'group relative flex h-11 w-11 flex-col items-center justify-center rounded-lg border border-transparent text-xs transition-all sm:h-14 sm:w-14',
@@ -288,8 +296,10 @@ function Legend() {
       <span
         className="h-3 w-32 rounded"
         style={{
-          background:
-            'linear-gradient(to right, hsl(140 70% 88%), hsl(45 70% 82%), hsl(5 70% 76%))',
+          // Generate the swatch stops from priceColor() so the legend tracks
+          // the exact gradient the cells paint (the rank-0.5 mid-tone is hsl
+          // 72.5, not the warmer hsl 45 a hardcoded stop used to advertise).
+          background: `linear-gradient(to right, ${priceColor(0)}, ${priceColor(0.5)}, ${priceColor(1)})`,
         }}
       />
       <span>дорого</span>
@@ -298,18 +308,24 @@ function Legend() {
 }
 
 function CalendarSkeleton() {
+  // Mirror the real DayPicker breakpoints (months stack on mobile, side-by-side
+  // at md+; cells h-11 growing to sm:h-14) so the load→loaded swap doesn't shift
+  // layout. One status live-region wraps the whole skeleton — the Skeleton
+  // tiles themselves are decorative.
   return (
-    <div className="grid grid-cols-2 gap-4">
-      {[0, 1].map((m) => (
-        <div key={m} className="rounded-xl bg-white p-3 shadow-sm">
-          <Skeleton className="mb-3 h-5 w-32" />
-          <div className="grid grid-cols-7 gap-1">
-            {Array.from({ length: 35 }).map((_, i) => (
-              <Skeleton key={i} className="h-14 w-full" />
-            ))}
+    <div role="status" aria-live="polite" aria-label="Завантаження календаря цін">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {[0, 1].map((m) => (
+          <div key={m} className="rounded-xl bg-white p-3 shadow-sm">
+            <Skeleton className="mb-3 h-5 w-32" />
+            <div className="grid grid-cols-7 gap-1">
+              {Array.from({ length: 35 }).map((_, i) => (
+                <Skeleton key={i} className="h-11 w-full sm:h-14" />
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }

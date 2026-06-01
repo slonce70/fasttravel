@@ -67,7 +67,13 @@ export async function Header() {
           </ul>
         </nav>
         {/* Mobile: minimalist quick-links. Hamburger comes in Phase 2. */}
-        <nav aria-label="Швидкі дії" className="md:hidden">
+        <nav aria-label="Швидкі дії" className="flex items-center gap-1 md:hidden">
+          <Link
+            href="/search"
+            className="rounded px-3 py-2 text-sm font-medium text-slate-700 hover:text-brand-800"
+          >
+            Пошук
+          </Link>
           <Link href="/deals" className="rounded px-3 py-2 text-sm font-medium text-accent-600">
             Знижки
           </Link>

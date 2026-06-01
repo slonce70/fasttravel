@@ -40,6 +40,23 @@
   }
 }
 
+/* Respect users who prefer reduced motion (WCAG 2.2.2): stop the looping
+   skeleton shimmer and collapse all animation/transition durations to ~0. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* react-day-picker base reset — we override most styles via DayButton and
    classNames overrides, but keep the layout primitives. */
 .rdp-root {

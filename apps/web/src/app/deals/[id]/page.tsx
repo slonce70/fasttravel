@@ -15,7 +15,9 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const deal = await fetchDealById(Number(id));
+  const numericId = Number(id);
+  if (!Number.isFinite(numericId)) return { title: 'Пропозиція не знайдена' };
+  const deal = await fetchDealById(numericId);
   if (!deal) return { title: 'Пропозиція не знайдена' };
   return {
     title: `Ціна нижча на ${Math.round(deal.discount_pct)}%: ${deal.hotel_name_uk}`,
@@ -37,7 +39,7 @@ export default async function DealPermalinkPage({ params }: { params: Promise<{ 
         ← Усі пропозиції
       </Link>
       <DealCard deal={deal} />
-      <p className="text-xs text-slate-400">
+      <p className="text-xs text-slate-500">
         Permalink на цю пропозицію активний доти, доки оператор тримає ціну. Якщо при кліку «Купити»
         ви бачите іншу ціну — найімовірніше тур уже змінився або його викупили.
       </p>

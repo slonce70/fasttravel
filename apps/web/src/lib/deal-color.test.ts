@@ -30,6 +30,14 @@ describe('priceRank', () => {
     expect(priceRank(buildPriceScale([100]), 100)).toBe(0.5);
   });
 
+  it('returns the neutral midpoint for a flat window (all prices equal)', () => {
+    // min === max → no cheap/expensive spread, so the percentile is undefined.
+    // It must not paint a flat window the brightest "cheapest" green (rank 0).
+    const flat = buildPriceScale([50_000, 50_000, 50_000, 50_000]);
+    expect(priceRank(flat, 50_000)).toBe(0.5);
+    expect(colorForPrice(flat, 50_000)).toBe(priceColor(0.5));
+  });
+
   it('ranks a value below/above the window outside [0,1] (priceColor clamps)', () => {
     expect(priceRank(scale, 50)).toBe(0);
     expect(priceRank(scale, 500)).toBe(1.5);

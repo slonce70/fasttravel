@@ -87,7 +87,7 @@ export default async function SearchPage({
           {error
             ? 'Не вдалося завантажити результати.'
             : `${results.total} ${plural(results.total)} знайдено${
-                results.total > 0 ? ` · показуємо ${from}-${to}` : ''
+                results.items.length > 0 ? ` · показуємо ${from}-${to}` : ''
               }`}
         </p>
       </div>
@@ -130,8 +130,26 @@ export default async function SearchPage({
         </div>
       ) : results.items.length === 0 ? (
         <div className="rounded-xl bg-white p-10 text-center text-sm text-slate-500 ring-1 ring-slate-200">
-          Нічого не знайдено серед готелів з актуальними цінами. Спробуйте змінити дату, харчування,
-          зірковість або країну.
+          <p>
+            Нічого не знайдено серед готелів з актуальними цінами. Спробуйте змінити дату,
+            харчування, зірковість або країну.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href="/search"
+              className="rounded-lg px-3 py-2 font-medium text-brand-700 ring-1 ring-slate-300 hover:bg-slate-50"
+            >
+              Скинути фільтри
+            </Link>
+            {params.country && (
+              <Link
+                href={searchHref({ ...params, country: undefined }, 0)}
+                className="rounded-lg px-3 py-2 font-medium text-brand-700 ring-1 ring-slate-300 hover:bg-slate-50"
+              >
+                Шукати по всіх країнах
+              </Link>
+            )}
+          </div>
         </div>
       ) : (
         <>

@@ -55,4 +55,34 @@ describe('SearchForm', () => {
 
     expect(push).toHaveBeenCalledWith('/search?country=TR&nights=7&stars_min=5&adults=2');
   });
+
+  it('constrains the check-in input to today and later', () => {
+    render(<SearchForm countries={countries} />);
+
+    const today = new Date().toISOString().slice(0, 10);
+    expect(screen.getByLabelText('Дата заїзду')).toHaveAttribute('min', today);
+  });
+
+  it('navigates through a transition so the submit URL is still pushed once', async () => {
+    const user = userEvent.setup();
+    render(<SearchForm countries={countries} />);
+
+    await user.selectOptions(screen.getByLabelText('Країна призначення'), 'TR');
+    await user.click(screen.getByRole('button', { name: /знайти тури/i }));
+
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith('/search?country=TR&adults=2');
+  });
+
+  it('injects a synthetic option so an out-of-range nights filter stays visible', () => {
+    currentParams.set('nights', '3');
+
+    render(<SearchForm countries={countries} />);
+
+    // The controlled select holds the URL value and now has a matching option,
+    // so it is not silently reset to "Будь-яка".
+    expect(screen.getByLabelText('Кількість ночей')).toHaveValue('3');
+    const options = screen.getByLabelText('Кількість ночей').querySelectorAll('option');
+    expect(Array.from(options).map((o) => o.value)).toContain('3');
+  });
 });

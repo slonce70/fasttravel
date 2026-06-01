@@ -27,6 +27,10 @@ export function priceRank(scale: ColorScale, price: number): number {
   const n = scale.sorted.length;
   if (n === 0) return 0.5;
   if (n === 1) return 0.5;
+  // A flat window (all prices equal) has no cheap/expensive spread, so the
+  // percentile is undefined — return the neutral midpoint instead of painting
+  // every cell the brightest "cheapest" green. Matches the n<=1 fallback.
+  if (scale.sorted[0] === scale.sorted[n - 1]) return 0.5;
   // Binary search for first index >= price.
   let lo = 0;
   let hi = n;

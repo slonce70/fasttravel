@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchDealById, fetchDeals, userMessageForApiError } from './api-client';
+import {
+  fetchDealById,
+  fetchDeals,
+  searchHotels,
+  triggerHotelRefresh,
+  userMessageForApiError,
+} from './api-client';
 
 const deal = {
   id: 42,
@@ -71,5 +77,111 @@ describe('userMessageForApiError', () => {
 
     expect(message).toBe('Сервіс тимчасово недоступний. Спробуйте ще раз за хвилину.');
     expect(message).not.toContain('/api/search');
+  });
+});
+
+describe('triggerHotelRefresh', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns the parsed body on 200', async () => {
+    const body = { queued: true, eta_seconds: 12 };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(body)),
+    );
+
+    await expect(triggerHotelRefresh(7)).resolves.toEqual(body);
+  });
+
+  it('returns null on 404 and 500 (best-effort, never throws)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('not found', { status: 404 })),
+    );
+    await expect(triggerHotelRefresh(7)).resolves.toBeNull();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('boom', { status: 500 })),
+    );
+    await expect(triggerHotelRefresh(7)).resolves.toBeNull();
+  });
+
+  it('returns null (does not throw) when fetch rejects', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('network down');
+      }),
+    );
+
+    await expect(triggerHotelRefresh(7)).resolves.toBeNull();
+  });
+
+  it('appends ?nights= only when provided and POSTs', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ queued: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await triggerHotelRefresh(7, { nights: 7 });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('http://localhost:8000/api/hotels/7/refresh?nights=7');
+    expect(init?.method).toBe('POST');
+  });
+
+  it('omits the query string when nights is not supplied', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ queued: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await triggerHotelRefresh(7);
+
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('http://localhost:8000/api/hotels/7/refresh');
+  });
+});
+
+describe('searchHotels array + empty serialization', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function stubSearchFetch() {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({ items: [], total: 0, limit: 20, offset: 0 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('serializes an array param as comma-joined values', async () => {
+    const fetchMock = stubSearchFetch();
+
+    await searchHotels({ kids: [5, 7, 9] });
+
+    const [url] = fetchMock.mock.calls[0]!;
+    // URLSearchParams percent-encodes the comma → %2C.
+    expect(url).toContain('kids=5%2C7%2C9');
+  });
+
+  it('omits an empty array param', async () => {
+    const fetchMock = stubSearchFetch();
+
+    await searchHotels({ kids: [] });
+
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).not.toContain('kids');
+  });
+
+  it('drops undefined / empty-string fields', async () => {
+    const fetchMock = stubSearchFetch();
+
+    await searchHotels({ country: undefined, meal_plan: '', stars_min: 4 });
+
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).not.toContain('country');
+    expect(url).not.toContain('meal_plan');
+    expect(url).toContain('stars_min=4');
   });
 });

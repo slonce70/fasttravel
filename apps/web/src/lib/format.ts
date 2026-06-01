@@ -25,8 +25,8 @@ export function formatPrice(uah: number | null | undefined): string {
 }
 
 /**
- * Compact representation for tight UI like calendar cells: 22400 -> "22.4к",
- * 9800 -> "9.8к", 105000 -> "105к". Always 3-4 chars.
+ * Compact representation for tight UI like calendar cells: 22400 -> "22к",
+ * 9800 -> "9,8к" (uk-UA decimal comma), 105000 -> "105к". Always 3-4 chars.
  */
 export function formatPriceCompact(uah: number | null | undefined): string {
   if (uah == null) return '—';

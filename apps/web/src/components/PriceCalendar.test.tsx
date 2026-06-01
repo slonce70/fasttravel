@@ -100,6 +100,34 @@ describe('PriceCalendar deal hints', () => {
     expect(interestingDate).not.toHaveAttribute('title', expect.stringContaining('звичайної'));
   });
 
+  it('appends the honest dip wording to the deal day button aria-label (a11y)', async () => {
+    renderCalendar([
+      {
+        ...day('2026-06-01', 100_000),
+        date_dip_baseline_uah: 105_000,
+        date_dip_discount_pct: 5,
+        date_dip_sample_n: 7,
+      },
+      day('2026-06-02', 105_000),
+      day('2026-06-03', 105_000),
+      day('2026-06-04', 105_000),
+      day('2026-06-05', 105_000),
+      day('2026-06-06', 105_000),
+      day('2026-06-07', 105_000),
+      day('2026-06-08', 105_000),
+    ]);
+
+    // The deal day's own button label carries both the date/price and the
+    // existing dip phrasing (no new copy) so screen readers get the signal the
+    // 🔥 span's discarded aria-label used to convey.
+    const dealButton = await screen.findByRole('button', {
+      name: /1 червня 2026.*нижче за орієнтир/i,
+    });
+    expect(dealButton).toBeInTheDocument();
+    // The inner decorative marker still exposes its own label, unchanged.
+    expect(screen.getByLabelText('цікава дата')).toBeInTheDocument();
+  });
+
   it('does not show a cross-nights fallback as an exact selected-night price', async () => {
     renderCalendar([
       {
