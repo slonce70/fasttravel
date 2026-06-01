@@ -5,10 +5,14 @@ Callback data uses a short `step:value` shape so handlers can route
 without parsing free text.
 
   nights:  n:7..n:14, n:any, n:back
-  when:    w:soon, w:month, w:season, w:back
+  when:    w:soon, w:month, w:season, w:any, w:back
   budget:  b:30000, b:50000, b:80000, b:120000, b:any, b:back
   meal:    m:AI, m:HB, m:BB, m:RO, m:any, m:back
   stars:   s:3, s:4, s:5, s:any, s:back
+
+The budget buttons set a price CEILING (``price_max``); the API has no
+price floor, so a dedicated «Преміум 120+» button could only repeat the
+unfiltered «Без обмежень» query. It is intentionally absent.
 """
 
 from __future__ import annotations
@@ -60,13 +64,12 @@ def budget_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="до 30 000 ₴", callback_data="b:30000"),
-                InlineKeyboardButton(text="30-50 тис", callback_data="b:50000"),
+                InlineKeyboardButton(text="до 50 000 ₴", callback_data="b:50000"),
             ],
             [
-                InlineKeyboardButton(text="50-80 тис", callback_data="b:80000"),
-                InlineKeyboardButton(text="80-120 тис", callback_data="b:120000"),
+                InlineKeyboardButton(text="до 80 000 ₴", callback_data="b:80000"),
+                InlineKeyboardButton(text="до 120 000 ₴", callback_data="b:120000"),
             ],
-            [InlineKeyboardButton(text="Преміум 120+", callback_data="b:premium")],
             [InlineKeyboardButton(text="Без обмежень", callback_data="b:any")],
             _back_row("b"),
         ]

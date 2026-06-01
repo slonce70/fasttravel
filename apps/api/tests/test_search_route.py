@@ -73,7 +73,33 @@ async def test_search_route_accepts_legacy_check_in_min(client, monkeypatch) -> 
     resp = await client.get("/api/search?country=TR&check_in_min=2026-06-15&nights=7")
 
     assert resp.status_code == 200
+    # A lone check_in_min (no max) preserves the legacy exact-day collapse.
     assert captured["check_in"] == date(2026, 6, 15)
+    assert captured["check_in_min"] is None
+    assert captured["check_in_max"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_route_forwards_check_in_range_when_both_bounds_present(
+    client, monkeypatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_search_hotels(session, **kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return PaginatedSearchResults(items=[], total=0, limit=20, offset=0)
+
+    monkeypatch.setattr("src.routers.search.search_hotels", fake_search_hotels)
+
+    resp = await client.get(
+        "/api/search?country=TR&check_in_min=2026-06-01&check_in_max=2026-06-22"
+    )
+
+    assert resp.status_code == 200
+    # Both bounds present → a real range, exact check_in left unset.
+    assert captured["check_in"] is None
+    assert captured["check_in_min"] == date(2026, 6, 1)
+    assert captured["check_in_max"] == date(2026, 6, 22)
 
 
 @pytest.mark.asyncio

@@ -59,9 +59,33 @@ class ThrottleMiddleware(BaseMiddleware):
 
     WINDOW_S = 10.0
     MAX_EVENTS = 20
+    # How often to reclaim idle per-user deques. The dict otherwise grows one
+    # entry per all-time unique user (the per-deque popleft never removes the
+    # key itself), a slow monotonic leak. A periodic sweep bounds the working
+    # set to ACTIVE users without touching throttle behaviour.
+    SWEEP_INTERVAL_S = 60.0
 
     def __init__(self) -> None:
         self._events: dict[int, deque[float]] = defaultdict(deque)
+        self._last_sweep = time.monotonic()
+
+    def _sweep(self, now: float) -> None:
+        """Drop keys whose window is empty after trimming to ``now - WINDOW_S``.
+
+        We snapshot the keys first so we never mutate the dict while iterating
+        it, and we re-trim each deque here (rather than relying on ``__call__``
+        having trimmed it) because most idle users never re-enter ``__call__``
+        to get pruned. An inline ``del`` in ``__call__`` would be useless: the
+        deque always holds the just-appended timestamp at that point, so a
+        ``defaultdict`` would only recreate it on the next access.
+        """
+        cutoff = now - self.WINDOW_S
+        for user_id in list(self._events.keys()):
+            window = self._events[user_id]
+            while window and window[0] < cutoff:
+                window.popleft()
+            if not window:
+                del self._events[user_id]
 
     async def __call__(
         self,
@@ -76,6 +100,9 @@ class ThrottleMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         now = time.monotonic()
+        if now - self._last_sweep >= self.SWEEP_INTERVAL_S:
+            self._sweep(now)
+            self._last_sweep = now
         window = self._events[user_id]
         cutoff = now - self.WINDOW_S
         while window and window[0] < cutoff:

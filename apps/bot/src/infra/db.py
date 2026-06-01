@@ -89,6 +89,53 @@ async def ensure_subscriber(chat_id: int, username: str | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def find_subscription(
+    chat_id: int,
+    *,
+    country_iso2: str,
+    max_price_uah: int | None,
+    min_stars: int | None,
+    meal_plan: str | None,
+) -> int | None:
+    """Return the id of an existing subscription with the same natural key,
+    or ``None`` if there isn't one.
+
+    The natural key is (chat_id, country_iso2, max_price_uah, min_stars,
+    meal_plan). The last three are NULL for every "no limit" subscription —
+    the common case — so we compare them with ``IS NOT DISTINCT FROM`` rather
+    than ``=`` (which never matches NULL). Country is upper-cased to match how
+    `add_subscription` stores it.
+
+    Conservative dedup: read-only, no schema change, no UNIQUE constraint.
+    """
+    async with get_session_factory()() as db:
+        row = (
+            await db.execute(
+                text(
+                    """
+                    SELECT id
+                    FROM telegram_subscriber_filters
+                    WHERE chat_id = :chat_id
+                      AND country_iso2 = :country
+                      AND max_price_uah IS NOT DISTINCT FROM :max_price
+                      AND min_stars     IS NOT DISTINCT FROM :stars
+                      AND meal_plan     IS NOT DISTINCT FROM :meal
+                    ORDER BY id
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "chat_id": chat_id,
+                    "country": country_iso2.upper(),
+                    "max_price": max_price_uah,
+                    "stars": min_stars,
+                    "meal": meal_plan,
+                },
+            )
+        ).first()
+    return int(row[0]) if row is not None else None
+
+
 async def add_subscription(
     chat_id: int,
     *,

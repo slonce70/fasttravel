@@ -66,7 +66,10 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
 @router.message(Command("help"))
 @router.message(F.text == HELP)
-async def cmd_help(message: Message) -> None:
+async def cmd_help(message: Message, state: FSMContext) -> None:
+    # A main-menu tap mid-wizard must discard any in-flight FSM state so the
+    # user isn't left with a stale, still-tappable inline keyboard.
+    await state.clear()
     body = (
         "*Як працює FastTravel*\n\n"
         "Ми двічі на день перевіряємо ціни на ~3000 готелів у Туреччині, "
@@ -110,40 +113,51 @@ async def cmd_channel(message: Message) -> None:
 # ---------------------------------------------------------------------------
 
 
+# Each bridge clears FSM state first: these handlers carry no state filter
+# and the commands router is registered before the wizard router, so a
+# menu tap mid-wizard is intercepted here. Without the clear the user would
+# stay in their wizard state with a stale, still-tappable inline keyboard.
+
+
 @router.message(F.text == BEST)
-async def text_best(message: Message) -> None:
+async def text_best(message: Message, state: FSMContext) -> None:
     from src.handlers.deals import cmd_best
 
+    await state.clear()
     await cmd_best(message)
 
 
 @router.message(F.text == DEALS)
-async def text_deals(message: Message) -> None:
+async def text_deals(message: Message, state: FSMContext) -> None:
     # Late import — avoids the circular dependency that would happen if
     # handlers/__init__ imported every router at module-load time.
     from src.handlers.deals import show_deals
 
+    await state.clear()
     await show_deals(message)
 
 
 @router.message(F.text == DESTINATIONS)
-async def text_destinations(message: Message) -> None:
+async def text_destinations(message: Message, state: FSMContext) -> None:
     from src.handlers.destinations import show_destinations
 
+    await state.clear()
     await show_destinations(message)
 
 
 @router.message(F.text == SUBSCRIBE)
-async def text_subscribe(message: Message) -> None:
+async def text_subscribe(message: Message, state: FSMContext) -> None:
     from src.handlers.subscribe import show_subscriptions
 
+    await state.clear()
     await show_subscriptions(message)
 
 
 @router.message(F.text == PROFILE)
-async def text_profile(message: Message) -> None:
+async def text_profile(message: Message, state: FSMContext) -> None:
     from src.handlers.profile import show_profile
 
+    await state.clear()
     await show_profile(message)
 
 

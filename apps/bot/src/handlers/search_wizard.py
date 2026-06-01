@@ -25,10 +25,10 @@ from aiogram.types import (
 
 from shared.publishers.broadcast import escape_markdown_v2
 from src.config import get_settings
-from src.handlers.wizard_render import format_results_header, results_markup
+from src.handlers.wizard_render import format_results_header, results_markup, step_prefix
 from src.infra.api_client import ApiError, get_destinations, search_hotels
 from src.infra.callbacks import callback_int_tail, callback_message, callback_tail
-from src.infra.db import add_subscription, ensure_subscriber
+from src.infra.db import add_subscription, ensure_subscriber, find_subscription
 from src.infra.logging import get_logger
 from src.keyboards.countries import countries_kb, country_emoji, country_name_uk
 from src.keyboards.filters import (
@@ -71,7 +71,7 @@ async def start_wizard(message: Message, state: FSMContext) -> None:
 
     await state.set_state(SearchState.choosing_country)
     await message.answer(
-        "*Куди летимо\\?* ✈️\n\nВиберіть країну\\:",
+        f"{step_prefix('country')}*Куди летимо\\?* ✈️\n\nВиберіть країну\\:",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=countries_kb(destinations),
     )
@@ -99,7 +99,8 @@ async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(country=iso, country_emoji=country_emoji(iso), country_name=name)
     await state.set_state(SearchState.choosing_nights)
     await message.edit_text(
-        f"{country_emoji(iso)} *{escape_markdown_v2(name)}* · скільки ночей\\? 🌙",
+        f"{step_prefix('nights')}{country_emoji(iso)} "
+        f"*{escape_markdown_v2(name)}* · скільки ночей\\? 🌙",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=nights_kb(),
     )
@@ -123,19 +124,41 @@ async def cb_nights(query: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(nights=nights)
     await state.set_state(SearchState.choosing_when)
     await message.edit_text(
-        "*Коли заїзд\\?* 📅",
+        f"{step_prefix('when')}*Коли заїзд\\?* 📅",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=when_kb(),
     )
     await query.answer()
 
 
-_WHEN_OFFSETS_DAYS: dict[str, int | None] = {
-    "soon": 7,
-    "month": 30,
-    "season": 60,
+# Each "when" bucket is a *range* of check-in days from today, not a single
+# pinned day. The labels promise a window («Найближчі тижні», «Через місяць»,
+# «Через 2-3 місяці»), so we send check_in_min/check_in_max and let the API
+# match any departure inside it. Pinning one exact day (the old behaviour)
+# matched almost nothing because a hotel rarely has a snapshot on that precise
+# date. Bounds are inclusive, expressed as (floor_days, ceiling_days) offsets
+# from today; ``None`` means «Без різниці» — no date filter at all.
+_WHEN_RANGES_DAYS: dict[str, tuple[int, int] | None] = {
+    "soon": (0, 21),
+    "month": (22, 45),
+    "season": (46, 90),
     "any": None,
 }
+
+
+def when_bucket_range(value: str, *, today: date | None = None) -> tuple[str, str] | None:
+    """Map a "when" bucket to an inclusive (check_in_min, check_in_max) ISO
+    date pair, or ``None`` for the no-filter «Без різниці» bucket / unknown
+    values. Pure + testable (``today`` injectable)."""
+    span = _WHEN_RANGES_DAYS.get(value)
+    if span is None:
+        return None
+    base = today or date.today()
+    floor_days, ceiling_days = span
+    return (
+        (base + timedelta(days=floor_days)).isoformat(),
+        (base + timedelta(days=ceiling_days)).isoformat(),
+    )
 
 
 @router.callback_query(F.data.startswith("w:"), SearchState.choosing_when)
@@ -148,19 +171,24 @@ async def cb_when(query: CallbackQuery, state: FSMContext) -> None:
     if value == "back":
         await state.set_state(SearchState.choosing_nights)
         await message.edit_text(
-            "*Скільки ночей\\?* 🌙",
+            f"{step_prefix('nights')}*Скільки ночей\\?* 🌙",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=nights_kb(),
         )
         await query.answer()
         return
 
-    offset = _WHEN_OFFSETS_DAYS.get(value)
-    check_in = (date.today() + timedelta(days=offset)).isoformat() if offset else None
-    await state.update_data(check_in=check_in, when_bucket=value)
+    date_range = when_bucket_range(value)
+    check_in_min = date_range[0] if date_range else None
+    check_in_max = date_range[1] if date_range else None
+    await state.update_data(
+        check_in_min=check_in_min,
+        check_in_max=check_in_max,
+        when_bucket=value,
+    )
     await state.set_state(SearchState.choosing_budget)
     await message.edit_text(
-        "*Який бюджет на людину\\?* 💰",
+        f"{step_prefix('budget')}*Який бюджет на людину\\?* 💰",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=budget_kb(),
     )
@@ -177,17 +205,19 @@ async def cb_budget(query: CallbackQuery, state: FSMContext) -> None:
     if value == "back":
         await state.set_state(SearchState.choosing_when)
         await message.edit_text(
-            "*Коли заїзд\\?* 📅",
+            f"{step_prefix('when')}*Коли заїзд\\?* 📅",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=when_kb(),
         )
         await query.answer()
         return
 
+    # Budget buttons set a price CEILING (``price_max``). «Без обмежень»
+    # (``any``) sends no ceiling; every other button caps at its value.
+    # There is no «Преміум»/floor option because the API cannot express a
+    # price minimum — it would just repeat the unfiltered «any» query.
     if value == "any":
         price_max: int | None = None
-    elif value == "premium":
-        price_max = None
     else:
         price_max = callback_int_tail(query.data, "b:")
         if price_max is None:
@@ -196,7 +226,7 @@ async def cb_budget(query: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(price_max=price_max, budget_bucket=value)
     await state.set_state(SearchState.choosing_meal)
     await message.edit_text(
-        "*Тип харчування\\?* 🍽",
+        f"{step_prefix('meal')}*Тип харчування\\?* 🍽",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=meal_kb(),
     )
@@ -213,7 +243,7 @@ async def cb_meal(query: CallbackQuery, state: FSMContext) -> None:
     if value == "back":
         await state.set_state(SearchState.choosing_budget)
         await message.edit_text(
-            "*Який бюджет на людину\\?* 💰",
+            f"{step_prefix('budget')}*Який бюджет на людину\\?* 💰",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=budget_kb(),
         )
@@ -224,7 +254,7 @@ async def cb_meal(query: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(meal_plan=meal_plan)
     await state.set_state(SearchState.choosing_stars)
     await message.edit_text(
-        "*Категорія готелю\\?* ⭐",
+        f"{step_prefix('stars')}*Категорія готелю\\?* ⭐",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=stars_kb(),
     )
@@ -241,7 +271,7 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
     if value == "back":
         await state.set_state(SearchState.choosing_meal)
         await message.edit_text(
-            "*Тип харчування\\?* 🍽",
+            f"{step_prefix('meal')}*Тип харчування\\?* 🍽",
             parse_mode=ParseMode.MARKDOWN_V2,
             reply_markup=meal_kb(),
         )
@@ -263,7 +293,11 @@ async def _fetch_results(data: dict[str, Any]) -> dict[str, Any]:
     params: dict[str, Any] = {
         "country": data.get("country"),
         "nights": data.get("nights"),
-        "check_in": data.get("check_in"),
+        # Range semantics: the "when" bucket stores a floor + ceiling so the
+        # API matches any departure inside the advertised window. None values
+        # are stripped by the api_client (no date filter for «Без різниці»).
+        "check_in_min": data.get("check_in_min"),
+        "check_in_max": data.get("check_in_max"),
         "price_max": data.get("price_max"),
         "meal_plan": data.get("meal_plan"),
         "stars_min": data.get("stars_min"),
@@ -325,7 +359,12 @@ async def _show_results(
     start = (page - 1) * _PAGE_SIZE
     chunk = items[start : start + _PAGE_SIZE]
 
-    header = format_results_header(total=int(total), page=int(page), total_pages=int(total_pages))
+    header = format_results_header(
+        total=int(total),
+        page=int(page),
+        total_pages=int(total_pages),
+        shown=len(items),
+    )
     body = "\n\n— · — · —\n\n".join(render_search_hit(h) for h in chunk)
     text = f"{header}\n\n{body}"
 
@@ -396,14 +435,31 @@ async def cb_subscribe(query: CallbackQuery, state: FSMContext) -> None:
         return
 
     chat_id = query.from_user.id
+    max_price = data.get("price_max")
+    min_stars = data.get("stars_min")
+    meal_plan = data.get("meal_plan")
     await ensure_subscriber(chat_id, query.from_user.username)
-    sub_id = await add_subscription(
+    # Conservative dedup: if the user already has a subscription with this
+    # exact natural key, reuse it instead of piling up an identical row that
+    # would double the alert DMs for the same deal.
+    existing_id = await find_subscription(
         chat_id,
         country_iso2=country,
-        max_price_uah=data.get("price_max"),
-        min_stars=data.get("stars_min"),
-        meal_plan=data.get("meal_plan"),
+        max_price_uah=max_price,
+        min_stars=min_stars,
+        meal_plan=meal_plan,
     )
+    is_duplicate = existing_id is not None
+    if existing_id is not None:
+        sub_id = existing_id
+    else:
+        sub_id = await add_subscription(
+            chat_id,
+            country_iso2=country,
+            max_price_uah=max_price,
+            min_stars=min_stars,
+            meal_plan=meal_plan,
+        )
     await state.update_data(subscribed=True)
 
     cached = data.get(_RESULTS_KEY) or {}
@@ -425,10 +481,16 @@ async def cb_subscribe(query: CallbackQuery, state: FSMContext) -> None:
                 site_base_url=get_settings().public_site_url,
             )
         )
-    await query.answer(
-        f"Підписка #{sub_id} створена: країна, бюджет, зірковість і харчування",
-        show_alert=True,
-    )
+    if is_duplicate:
+        await query.answer(
+            "Ви вже маєте таку підписку — нову не створювали",
+            show_alert=True,
+        )
+    else:
+        await query.answer(
+            f"Підписка #{sub_id} створена: країна, бюджет, зірковість і харчування",
+            show_alert=True,
+        )
 
 
 async def _go_back_to_country(query: CallbackQuery, state: FSMContext) -> None:
@@ -444,7 +506,7 @@ async def _go_back_to_country(query: CallbackQuery, state: FSMContext) -> None:
         return
     await state.set_state(SearchState.choosing_country)
     await message.edit_text(
-        "*Куди летимо\\?* ✈️\n\nВиберіть країну\\:",
+        f"{step_prefix('country')}*Куди летимо\\?* ✈️\n\nВиберіть країну\\:",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=countries_kb(destinations),
     )
@@ -457,20 +519,22 @@ async def _go_back_to_country(query: CallbackQuery, state: FSMContext) -> None:
 @router.message(SearchState.choosing_budget)
 @router.message(SearchState.choosing_meal)
 @router.message(SearchState.choosing_stars)
-async def text_during_wizard(message: Message, state: FSMContext) -> None:
-    from src.keyboards.main_menu import (
-        DEALS,
-        DESTINATIONS,
-        HELP,
-        PROFILE,
-        SEARCH,
-        SUBSCRIBE,
-    )
-
-    if message.text in {SEARCH, DEALS, DESTINATIONS, SUBSCRIBE, PROFILE, HELP}:
-        await state.clear()
-        return
-
+async def text_during_wizard(message: Message) -> None:
+    # Main-menu taps are intercepted by the commands router (registered
+    # first) which now clears FSM state itself, so no menu-text branch is
+    # needed here — any text that reaches this handler is genuine free text
+    # typed mid-step. (State filtering lives in the decorators above.)
     await message.answer(
         "Будь ласка, скористайтесь кнопками вище 👆 або введіть /start щоб почати спочатку\\.",
+    )
+
+
+@router.message(SearchState.viewing_results)
+async def text_during_results(message: Message) -> None:
+    # On the results page the only controls are inline buttons (pagination +
+    # «Новий пошук»). Free text here previously matched no handler and the
+    # bot stayed silent, which reads as broken; point the user at the buttons.
+    await message.answer(
+        "Гортайте результати кнопками ◀ ▶ нижче або натисніть «🔄 Новий пошук»\\. "
+        "Для нового запиту введіть /search\\.",
     )

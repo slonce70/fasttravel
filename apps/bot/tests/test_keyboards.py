@@ -123,10 +123,34 @@ def test_budget_kb_callbacks():
         "b:50000",
         "b:80000",
         "b:120000",
-        "b:premium",
         "b:any",
         "b:back",
     } <= set(cbs)
+
+
+def test_budget_kb_has_no_premium_button():
+    """The «Преміум 120+» button was a silent no-op: the API has no price
+    floor, so it sent the exact same unfiltered query as «Без обмежень».
+    Dropping it removes the duplicate path entirely."""
+    cbs = _all_callbacks(budget_kb())
+    assert "b:premium" not in cbs
+    labels = [b.text for row in budget_kb().inline_keyboard for b in row]
+    assert "Преміум 120+" not in labels
+
+
+def test_budget_kb_labels_are_ceilings_not_ranges():
+    """Budget callbacks set a single price ceiling, so the labels must read
+    «до N ₴» — matching the subscribe wizard — not misleading «30-50 тис»
+    ranges (which would imply a floor the API can't express)."""
+    labels = [b.text for row in budget_kb().inline_keyboard for b in row]
+    assert "до 30 000 ₴" in labels
+    assert "до 50 000 ₴" in labels
+    assert "до 80 000 ₴" in labels
+    assert "до 120 000 ₴" in labels
+    assert "Без обмежень" in labels
+    # No range-style label survives.
+    assert all("-" not in label for label in labels if "₴" in label or "тис" in label)
+    assert not any("тис" in label for label in labels)
 
 
 def test_meal_kb_callbacks():
