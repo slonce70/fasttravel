@@ -74,11 +74,13 @@ def render_deal_price_semantics(
     signal = get_deal_signal_copy(detection_method)
 
     if signal.date_anomaly:
-        # Show the neighbour-dates average struck-through so the card answers
-        # "cheaper than what?" — not just a bare percentage. Honest framing:
-        # it's the average across nearby dates, not a fake former price. Only
-        # when there's a real gap (the discount cap keeps this plausible).
-        average = f" · у середньому ~{baseline_fmt}~" if savings > 0 else ""
+        # Show the local-regime typical price struck-through so the card answers
+        # "cheaper than what?" — not just a bare percentage. The baseline is the
+        # matched-side average of the surrounding dates within this date's own
+        # price regime (see shared.deal_detection), so "звичайна ціна" ("the
+        # usual price for these dates") is literally true — not a fake former
+        # price. Only shown when there's a real gap.
+        average = f" · звичайна ціна ~{baseline_fmt}~" if savings > 0 else ""
         return DealPriceSemantics(
             headline=f"📉 *На {discount}% дешевше за сусідні дати в цьому готелі*",
             price_line=f"💰 *{price_fmt}*{average}",
@@ -97,7 +99,9 @@ def render_deal_price_semantics(
             why_line=signal.why_line,
         )
 
-    strikethrough = f" ~{baseline_fmt}~" if signal.strike_baseline and savings > 0 else ""
+    strikethrough = (
+        f" ~{baseline_fmt}~" if signal.strike_baseline and savings > 0 else ""
+    )
     return DealPriceSemantics(
         headline=f"🔥 *\\-{discount}% · економія {savings_fmt}*",
         price_line=f"💰 *{price_fmt}*{strikethrough}",

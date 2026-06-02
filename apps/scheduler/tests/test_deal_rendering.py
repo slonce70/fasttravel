@@ -3,7 +3,7 @@ from __future__ import annotations
 from shared.deal_rendering import render_deal_hotel_context, render_deal_price_semantics
 
 
-def test_calendar_anomaly_semantics_show_average_baseline() -> None:
+def test_calendar_anomaly_semantics_show_local_typical_baseline() -> None:
     rendered = render_deal_price_semantics(
         detection_method="calendar_anomaly",
         discount_pct=19,
@@ -12,9 +12,11 @@ def test_calendar_anomaly_semantics_show_average_baseline() -> None:
     )
 
     assert rendered.headline == "📉 *На 19% дешевше за сусідні дати в цьому готелі*"
-    # Show the neighbour-dates average struck-through next to the deal price so
-    # users see what it's discounted *from* — not just a bare percentage.
-    assert rendered.price_line == "💰 *104 678 ₴* · у середньому ~128 602 ₴~"
+    # Show the local typical price struck-through next to the deal price so
+    # users see what it's discounted *from* — not just a bare percentage. The
+    # label is the honest "звичайна ціна" (the usual price for these dates),
+    # not a fake former price.
+    assert rendered.price_line == "💰 *104 678 ₴* · звичайна ціна ~128 602 ₴~"
     assert rendered.why_line == ""
     assert "економія" not in rendered.headline
 

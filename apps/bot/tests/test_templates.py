@@ -153,7 +153,8 @@ def test_render_deal_calendar_anomaly_shows_neighbour_average_strikethrough():
 
     assert "📉" in out
     assert "дешевше за сусідні дати в цьому готелі" in out
-    assert "у середньому ~128 602 ₴~" in out
+    assert "звичайна ціна ~128 602 ₴~" in out
+    assert "у середньому" not in out
     assert "економія" not in out
 
 

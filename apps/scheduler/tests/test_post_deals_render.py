@@ -82,10 +82,10 @@ def test_render_deal_expands_cyrillic_bb_meal_code() -> None:
     assert "BB" not in out
 
 
-def test_render_deal_calendar_anomaly_shows_neighbour_average_strikethrough() -> None:
-    # date_dip baseline is the average across nearby dates for the same
-    # nights/meal at this hotel. Show it struck-through ("у середньому ~X~")
-    # so the card answers "cheaper than what?" — but never as a fake
+def test_render_deal_calendar_anomaly_shows_local_typical_strikethrough() -> None:
+    # date_dip baseline is the local typical price for the same nights/meal at
+    # this hotel across nearby dates. Show it struck-through ("звичайна ціна
+    # ~X~") so the card answers "cheaper than what?" — but never as a fake
     # "🔥 економія Y ₴ / save by buying now" claim (the baseline can't honor that).
     out = _render(
         _row(
@@ -98,7 +98,8 @@ def test_render_deal_calendar_anomaly_shows_neighbour_average_strikethrough() ->
 
     assert "📉" in out
     assert "дешевше за сусідні дати в цьому готелі" in out
-    assert "у середньому ~128 602 ₴~" in out
+    assert "звичайна ціна ~128 602 ₴~" in out
+    assert "у середньому" not in out
     assert "економія" not in out
     assert "🔥" not in out
 
