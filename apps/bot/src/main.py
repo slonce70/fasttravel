@@ -40,6 +40,7 @@ PUBLIC_COMMANDS: list[BotCommand] = [
     BotCommand(command="best", description="🏆 ТОП варіанти зараз"),
     BotCommand(command="search", description="🔍 Знайти тур"),
     BotCommand(command="deals", description="🔥 Усі варіанти"),
+    BotCommand(command="cheap", description="🔥 Найдешевші тури"),
     BotCommand(command="destinations", description="🌍 Напрямки"),
     BotCommand(command="subscribe", description="🔔 Підписки на варіанти"),
     BotCommand(command="profile", description="👤 Профіль"),
@@ -126,6 +127,7 @@ async def main() -> None:
     # filters fall through to the catch-all only when no state is active.
     # Late imports keep the entrypoint side-effect-free for test imports.
     from src.handlers.admin_discovery import router as discovery_router
+    from src.handlers.cheap import router as cheap_router
     from src.handlers.commands import router as commands_router
     from src.handlers.deals import router as deals_router
     from src.handlers.destinations import router as destinations_router
@@ -136,6 +138,7 @@ async def main() -> None:
     dp.include_router(commands_router)
     dp.include_router(wizard_router)
     dp.include_router(deals_router)
+    dp.include_router(cheap_router)
     dp.include_router(destinations_router)
     dp.include_router(subscribe_router)
     dp.include_router(profile_router)

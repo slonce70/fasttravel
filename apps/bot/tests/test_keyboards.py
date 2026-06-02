@@ -19,6 +19,7 @@ from src.keyboards.filters import (
 )
 from src.keyboards.main_menu import (
     BEST,
+    CHEAP,
     DEALS,
     DESTINATIONS,
     HELP,
@@ -38,11 +39,12 @@ def test_main_menu_layout():
     matches the channel post style and the /best command. Other labels
     keep their broad position (browse, account)."""
     kb = main_menu_kb()
-    assert len(kb.keyboard) == 3
+    assert len(kb.keyboard) == 4
     assert [b.text for row in kb.keyboard for b in row] == [
         BEST,
         SEARCH,
         DEALS,
+        CHEAP,
         DESTINATIONS,
         SUBSCRIBE,
         PROFILE,
