@@ -45,6 +45,7 @@ class DateDipPolicy:
     dip_threshold_pct: int
     max_depth_pct: int
     min_absolute_saving_uah: int
+    max_candidate_age_hours: int
 
     def __post_init__(self) -> None:
         if self.lookahead_start_days < 0:
@@ -63,6 +64,8 @@ class DateDipPolicy:
             raise ValueError("max_depth_pct must be in (0, 100]")
         if self.min_absolute_saving_uah <= 0:
             raise ValueError("min_absolute_saving_uah must be positive")
+        if self.max_candidate_age_hours <= 0:
+            raise ValueError("max_candidate_age_hours must be positive")
 
     @property
     def side_match_ratio_sql(self) -> str:
@@ -91,6 +94,10 @@ DATE_DIP_POLICY = DateDipPolicy(
     dip_threshold_pct=8,
     max_depth_pct=35,
     min_absolute_saving_uah=1500,
+    # Never publish a dip resting on a price we haven't re-confirmed within this
+    # many hours. The MV retains observations up to 14 days, so without this gate
+    # ~71% of deals rode on >48h-old prices that had already moved on Farvater.
+    max_candidate_age_hours=36,
 )
 
 
@@ -171,7 +178,7 @@ def date_dip_local_v_cte_sql(*, extra_series_filter: str = "") -> str:
             -- room_category + deep_link of the row matching the collapsed family
             -- minimum (>= guards against pointing at a sub-min phantom that the
             -- MAX-collapse already discarded from the dip math).
-            SELECT cp.room_category, cp.deep_link
+            SELECT cp.room_category, cp.deep_link, cp.observed_at
             FROM current_prices cp
             WHERE cp.hotel_id = f.hotel_id AND cp.operator_id = f.operator_id
               AND cp.nights = f.nights AND cp.meal_plan = f.meal_plan
@@ -187,4 +194,8 @@ def date_dip_local_v_cte_sql(*, extra_series_filter: str = "") -> str:
           AND f.price_uah < f.prec_min
           AND f.price_uah < f.foll_min
           AND GREATEST(f.prec_avg, f.foll_avg) <= LEAST(f.prec_avg, f.foll_avg) * {p.side_match_ratio_sql}
+          -- Freshness gate: never advertise a price we haven't re-confirmed
+          -- recently. The MV keeps observations up to 14d, but a dip we publish
+          -- must rest on a price observed within max_candidate_age_hours.
+          AND cheapest.observed_at >= NOW() - INTERVAL '{p.max_candidate_age_hours} hours'
     )"""
