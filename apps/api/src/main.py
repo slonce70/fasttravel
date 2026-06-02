@@ -35,6 +35,7 @@ from src.infra.limiter import limiter
 from src.infra.logging import configure_logging, get_logger
 from src.infra.middleware import AmpQueryParamMiddleware
 from src.infra.sentry import configure_sentry
+from src.routers import cheapest_tours as cheapest_tours_router
 from src.routers import deals as deals_router
 from src.routers import destinations as destinations_router
 from src.routers import health as health_router
@@ -138,6 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(hotels_router.router)
     app.include_router(search_router.router)
     app.include_router(deals_router.router)
+    app.include_router(cheapest_tours_router.router)
     app.include_router(promotions_router.router)
     app.include_router(destinations_router.router)
     app.include_router(seo_router.router)
