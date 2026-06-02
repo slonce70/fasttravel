@@ -33,9 +33,9 @@ def test_render_peer_anomaly_uses_neighboring_hotels_copy_without_savings_claim(
     assert "~45 500 ₴~" not in out
 
 
-def test_render_calendar_anomaly_shows_neighbour_average_strikethrough() -> None:
-    # The date-dip baseline is the average across nearby dates. Show it
-    # struck-through ("у середньому ~X~") so the card answers "cheaper than
+def test_render_calendar_anomaly_shows_local_typical_strikethrough() -> None:
+    # The date-dip baseline is the local typical price for these dates. Show it
+    # struck-through ("звичайна ціна ~X~") so the card answers "cheaper than
     # what?" — but never as a fake "економія"/"save by buying now" claim.
     row = SimpleNamespace(
         discount_pct=19,
@@ -56,7 +56,8 @@ def test_render_calendar_anomaly_shows_neighbour_average_strikethrough() -> None
 
     assert "Цікава дата за вашою підпискою" in out
     assert "дешевше за сусідні дати" in out
-    assert "у середньому ~128 602 ₴~" in out
+    assert "звичайна ціна ~128 602 ₴~" in out
+    assert "у середньому" not in out
     assert "економія" not in out
 
 
