@@ -228,6 +228,30 @@ export interface SearchParams {
   offset?: number;
 }
 
+/** apps/api/src/schemas/cheapest_tour.py :: CheapestTourOut
+ *  Absolute-cheapest upcoming tour per hotel, ranked within each country.
+ *  Distinct from Deal/Promotion: this is "ціна від", NOT a discount — there is
+ *  no baseline / discount_pct / strike-through field by design.
+ *  The API returns a FLAT list ordered by country_name → rank → hotel_id;
+ *  clients group by country_iso2 (see groupByCountry in lib/cheapest-tours).
+ */
+export interface CheapestTour {
+  country_iso2: string;
+  country_name: string | null;
+  hotel_id: number;
+  hotel_slug: string;
+  hotel_name: string;
+  stars: number; // always >= 3 (server filters NULL/<3 out)
+  review_score: number | null;
+  review_count: number;
+  check_in: string; // ISO date (YYYY-MM-DD)
+  nights: number;
+  meal_plan: string;
+  price_uah: number; // the ONLY price claim — «ціна від»
+  deep_link: string | null;
+  rank: number; // 1..per_country, per-country ranking key
+}
+
 /** apps/api/src/schemas/destination.py :: RegionOut */
 export interface RegionOut {
   id: number;

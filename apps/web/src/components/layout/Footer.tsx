@@ -51,6 +51,11 @@ export async function Footer() {
           <nav aria-label="Допоміжна навігація">
             <ul className="flex flex-wrap gap-4">
               <li>
+                <Link href="/cheap" className="hover:text-slate-700">
+                  Найдешевші тури
+                </Link>
+              </li>
+              <li>
                 <Link href="/about" className="hover:text-slate-700">
                   Про нас
                 </Link>
