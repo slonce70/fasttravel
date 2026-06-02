@@ -28,6 +28,7 @@ def test_date_dip_policy_exposes_owner_governed_fields() -> None:
     assert DATE_DIP_POLICY.dip_threshold_pct == 8
     assert DATE_DIP_POLICY.max_depth_pct == 35
     assert DATE_DIP_POLICY.min_absolute_saving_uah == 1500
+    assert DATE_DIP_POLICY.max_candidate_age_hours == 36
 
 
 def _policy(**overrides: object) -> DateDipPolicy:
@@ -40,6 +41,7 @@ def _policy(**overrides: object) -> DateDipPolicy:
         "dip_threshold_pct": 8,
         "max_depth_pct": 35,
         "min_absolute_saving_uah": 1500,
+        "max_candidate_age_hours": 36,
     }
     kwargs.update(overrides)
     return DateDipPolicy(**kwargs)  # type: ignore[arg-type]
@@ -89,6 +91,11 @@ def test_date_dip_policy_rejects_out_of_range_depth_cap() -> None:
 def test_date_dip_policy_rejects_non_positive_absolute_saving() -> None:
     with pytest.raises(ValueError, match="min_absolute_saving_uah"):
         _policy(min_absolute_saving_uah=0)
+
+
+def test_date_dip_policy_rejects_non_positive_candidate_age() -> None:
+    with pytest.raises(ValueError, match="max_candidate_age_hours"):
+        _policy(max_candidate_age_hours=0)
 
 
 def test_date_dip_policy_rejects_inverted_lookahead_bounds() -> None:
@@ -145,6 +152,15 @@ def test_date_dip_cte_exposes_honest_baseline_and_discount() -> None:
     # The displayed baseline is the matched-side average (honest typical price).
     assert "baseline_p50" in sql
     assert "discount_pct" in sql
+
+
+def test_date_dip_cte_gates_candidate_freshness() -> None:
+    sql = date_dip_local_v_cte_sql()
+
+    # The advertised price must rest on a recently-observed row — the MV keeps
+    # observations up to 14d, so without this gate stale prices get published.
+    assert "cp.observed_at" in sql
+    assert "cheapest.observed_at >= NOW() - INTERVAL '36 hours'" in sql
 
 
 def test_date_dip_cte_collapses_same_room_casing_before_min() -> None:

@@ -406,6 +406,66 @@ async def test_detect_deals_inserts_calendar_anomaly_for_local_v_dip(
 
 
 @pytest.mark.asyncio
+async def test_detect_deals_skips_dip_on_stale_candidate_price(
+    session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await session.execute(text("UPDATE deals SET posted_at = NOW() WHERE posted_at IS NULL"))
+    hotel_id, operator_id, _ = await _seed_market(session, country_iso2="SL")
+    db_today = await session.scalar(text("SELECT CURRENT_DATE"))
+    assert isinstance(db_today, date)
+    # Fresh flat shoulders at 100000; the +27 V-bottom (85000) is a 2-day-old
+    # observation. The freshness gate must refuse to advertise a stale price
+    # even though the shape is a textbook dip.
+    await _seed_price_rows(
+        session,
+        hotel_id=hotel_id,
+        operator_id=operator_id,
+        rows=[(o, "Standard Room", 100000) for o in range(20, 35) if o != 27],
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO price_observations (
+                observed_at, hotel_id, operator_id, check_in, nights, meal_plan,
+                room_category, price_uah, currency, deep_link
+            ) VALUES (
+                NOW() - INTERVAL '2 days', :hotel_id, :operator_id,
+                :check_in, 7, 'AI', 'Standard Room', 85000, 'UAH',
+                'https://example.test/stale-dip'
+            )
+            """
+        ),
+        {
+            "hotel_id": hotel_id,
+            "operator_id": operator_id,
+            "check_in": db_today + timedelta(days=27),
+        },
+    )
+    await session.execute(text("REFRESH MATERIALIZED VIEW current_prices"))
+    monkeypatch.setattr(
+        detect_deals_module,
+        "async_session_factory",
+        lambda: _SessionContext(session),
+    )
+
+    await detect_deals_module.detect_deals(cooldown_hours=0, max_per_run=200)
+
+    deals = (
+        await session.execute(
+            text(
+                """
+                SELECT id FROM deals
+                WHERE hotel_id = :hotel_id AND detection_method = 'calendar_anomaly'
+                """
+            ),
+            {"hotel_id": hotel_id},
+        )
+    ).all()
+    assert deals == []
+
+
+@pytest.mark.asyncio
 async def test_detect_deals_does_not_compare_standard_target_to_premium_neighbors(
     session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
