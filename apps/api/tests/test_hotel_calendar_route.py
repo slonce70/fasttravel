@@ -130,41 +130,39 @@ async def test_calendar_service_exact_nights_annotations_use_detector_scope() ->
         session, 54034, date(2026, 6, 1), date(2026, 6, 30), meal_plan="AI", nights=7
     )
 
-    assert "ROW_NUMBER() OVER" in session.statement
-    assert "PARTITION BY cp.check_in" in session.statement
+    # The calendar shares the channel detector's regime-local V CTE, scoped to
+    # this hotel — so the marked dates are exactly the dates that would publish.
+    assert "series AS" in session.statement
+    assert "framed AS" in session.statement
+    assert "local_stats AS" in session.statement
     assert "best_date_dip AS" in session.statement
-    assert "neighbor.operator_id = cp.operator_id" in session.statement
-    assert "neighbor.nights = cp.nights" in session.statement
-    assert "neighbor.meal_plan = cp.meal_plan" in session.statement
-    assert "neighbor.room_family = cp.room_family" in session.statement
-    assert "GROUP BY neighbor.check_in" in session.statement
+    assert "AND cp.hotel_id = :hotel_id" in session.statement
+    assert "RANGE BETWEEN INTERVAL '7 days' PRECEDING" in session.statement
+    assert "INTERVAL '7 days' FOLLOWING" in session.statement
+    # Two-sided V-bottom + return-to-baseline guards.
+    assert "f.price_uah < f.prec_min" in session.statement
+    assert "f.price_uah < f.foll_min" in session.statement
     assert (
-        "neighbor.check_in BETWEEN "
-        f"cp.check_in - INTERVAL '{DATE_DIP_POLICY.neighbor_window_days} days'" in session.statement
+        "GREATEST(f.prec_avg, f.foll_avg) <= LEAST(f.prec_avg, f.foll_avg) * "
+        f"{DATE_DIP_POLICY.side_match_ratio_sql}" in session.statement
     )
+    # Same-room casing collapse + magnitude gates applied per nights.
+    assert "lower(btrim(cp.room_category))" in session.statement
+    assert "ls.nights = :nights" in session.statement
+    assert f"ls.discount_pct >= {DATE_DIP_POLICY.dip_threshold_pct_sql}" in session.statement
+    assert f"ls.discount_pct <= {DATE_DIP_POLICY.max_depth_pct_sql}" in session.statement
     assert (
-        f"AND cp.check_in + INTERVAL '{DATE_DIP_POLICY.neighbor_window_days} days'"
-        in session.statement
-    )
-    assert f"hs.sample_n >= {DATE_DIP_POLICY.min_sample_size}" in session.statement
-    assert f"hs.p_max <= hs.p_min * {DATE_DIP_POLICY.max_spread_ratio_sql}" in session.statement
-    assert (
-        "cp.check_in BETWEEN "
-        f"CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'"
-        in session.statement
-    )
-    assert (
-        f"AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'"
+        f"(ls.baseline_p50 - ls.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}"
         in session.statement
     )
     assert (
-        f"cp.price_uah < hs.trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}"
-        in session.statement
+        "CURRENT_DATE + INTERVAL "
+        f"'{DATE_DIP_POLICY.lookahead_start_days} days'" in session.statement
     )
-    assert (
-        f"hs.trimmed_mean - cp.price_uah >= {DATE_DIP_POLICY.min_absolute_saving_uah}"
-        in session.statement
-    )
+    # The old trimmed-mean / percentile-rank machinery is gone.
+    assert "trimmed_mean" not in session.statement
+    assert "PERCENT_RANK" not in session.statement
+    assert "neighbor.operator_id" not in session.statement
     assert rows[0].date_dip_discount_pct is None
 
 
@@ -206,7 +204,6 @@ async def test_calendar_service_exact_nights_date_dip_annotations_require_compar
     assert isinstance(hotel_id, int)
     assert isinstance(db_today, date)
     assert db_now is not None
-    old_observed_at = db_now - timedelta(days=1)
 
     def price_row(
         day_offset: int,
@@ -241,90 +238,15 @@ async def test_calendar_service_exact_nights_date_dip_annotations_require_compar
             """
         ),
         [
-            # Valid dip, but inside the scheduler's 0..4 day exclusion window.
-            price_row(1, "Villa", 50000, "early-target"),
-            price_row(2, "Villa", 60000, "early-neighbor-1"),
-            price_row(3, "Villa", 62000, "early-neighbor-2"),
-            price_row(4, "Villa", 64000, "early-neighbor-3"),
-            price_row(5, "Villa", 66000, "early-neighbor-4"),
-            # Normal positive marker; a newer, pricier row on the same day
-            # proves observed_at reports day freshness, not the min row age.
-            price_row(10, "Standard Room", 100000, "target", observed_at=old_observed_at),
-            price_row(10, "Suite", 130000, "newer-pricier-same-day"),
-            price_row(11, "Double Standard", 103000, "neighbor-1"),
-            price_row(12, "Standard DBL", 105000, "neighbor-2"),
-            price_row(13, "Standard Room", 106000, "neighbor-3"),
-            price_row(14, "Double Standard", 108000, "neighbor-4"),
-            # Same hotel/date/nights/meal, but only a different operator has
-            # the cheap target; the main operator's expensive neighbors must
-            # not create a false marker for that other operator.
-            price_row(
-                35,
-                "Standard Room",
-                100000,
-                "other-target",
-                operator=other_operator_id,
-            ),
-            price_row(36, "Standard Room", 160000, "mismatch-1"),
-            price_row(37, "Double Standard", 165000, "mismatch-2"),
-            price_row(38, "Standard DBL", 166000, "mismatch-3"),
-            price_row(39, "Standard Room", 168000, "mismatch-4"),
-            # Exact 4.00% is not enough: scheduler uses strict < 0.96.
-            price_row(50, "Family Room", 96000, "boundary-target"),
-            price_row(51, "Family Room", 99000, "boundary-neighbor-1"),
-            price_row(52, "Family Room", 100000, "boundary-neighbor-2"),
-            price_row(53, "Family Room", 100000, "boundary-neighbor-3"),
-            price_row(54, "Family Room", 101000, "boundary-neighbor-4"),
-            # The cheapest row is not anomalous, but the suite row is a real
-            # production date-dip. Calendar should still mark the day.
-            price_row(70, "Standard Room", 100000, "flat-min-row"),
-            price_row(70, "Suite", 120000, "suite-target"),
-            price_row(71, "Standard Room", 100000, "flat-neighbor-1"),
-            price_row(72, "Standard Room", 101000, "flat-neighbor-2"),
-            price_row(73, "Standard Room", 102000, "flat-neighbor-3"),
-            price_row(74, "Standard Room", 103000, "flat-neighbor-4"),
-            price_row(71, "Junior Suite", 150000, "suite-neighbor-1"),
-            price_row(72, "Junior Suite", 151000, "suite-neighbor-2"),
-            price_row(73, "Junior Suite", 152000, "suite-neighbor-3"),
-            price_row(74, "Junior Suite", 153000, "suite-neighbor-4"),
-            # One neighboring date with four aliases is still one calendar
-            # comparison point. It must not satisfy the min-sample gate by
-            # counting raw room labels as independent nearby dates.
-            price_row(
-                80,
-                "Standard Room",
-                100000,
-                "alias-inflation-target",
-                operator=other_operator_id,
-            ),
-            price_row(
-                81,
-                "Standard Room",
-                120000,
-                "alias-inflation-neighbor-1",
-                operator=other_operator_id,
-            ),
-            price_row(
-                81,
-                "Standard DBL",
-                121000,
-                "alias-inflation-neighbor-2",
-                operator=other_operator_id,
-            ),
-            price_row(
-                81,
-                "Double Standard",
-                122000,
-                "alias-inflation-neighbor-3",
-                operator=other_operator_id,
-            ),
-            price_row(
-                81,
-                "STD",
-                123000,
-                "alias-inflation-neighbor-4",
-                operator=other_operator_id,
-            ),
+            # A genuine regime-local V-bottom at +27 (85000) inside a flat
+            # 100000 Standard run: matching shoulders on both sides -> marked.
+            *[price_row(o, "Standard Room", 100000, f"flat-{o}") for o in range(20, 35) if o != 27],
+            price_row(27, "Standard Room", 85000, "v-dip-target"),
+            # Operator scoping: only the OTHER operator has the cheap +53 target;
+            # the main operator's pricey same-window dates must not mark it,
+            # and the other operator has no same-operator shoulders of its own.
+            price_row(53, "Standard Room", 80000, "other-op-target", operator=other_operator_id),
+            *[price_row(o, "Standard Room", 150000, f"main-expensive-{o}") for o in range(49, 59)],
         ],
     )
     await db_session.execute(text("REFRESH MATERIALIZED VIEW current_prices"))
@@ -339,42 +261,25 @@ async def test_calendar_service_exact_nights_date_dip_annotations_require_compar
     )
     by_date = {row.check_in: row for row in rows}
 
-    early = by_date[db_today + timedelta(days=1)]
-    assert early.date_dip_price_uah is None
-    assert early.date_dip_baseline_uah is None
-    assert early.date_dip_discount_pct is None
+    # The genuine V-bottom is annotated with the local-typical (matched-side
+    # average) baseline — the same definition the channel detector publishes.
+    dip = by_date[db_today + timedelta(days=27)]
+    assert dip.date_dip_price_uah == 85000
+    assert dip.date_dip_baseline_uah == 100000
+    assert dip.date_dip_discount_pct == 15.0
+    assert dip.date_dip_sample_n is not None and dip.date_dip_sample_n >= 6
 
-    positive = by_date[db_today + timedelta(days=10)]
-    assert positive.min_price_uah == 100000
-    assert positive.observed_at == db_now
-    assert positive.date_dip_price_uah == 100000
-    assert positive.date_dip_baseline_uah == 105500
-    assert positive.date_dip_discount_pct == 5.21
-    assert positive.date_dip_sample_n == 4
+    # A flat neighbouring date is not a dip (it isn't below its own shoulders).
+    flat = by_date[db_today + timedelta(days=25)]
+    assert flat.date_dip_price_uah is None
+    assert flat.date_dip_baseline_uah is None
+    assert flat.date_dip_discount_pct is None
 
-    mismatched_operator = by_date[db_today + timedelta(days=35)]
-    assert mismatched_operator.date_dip_price_uah is None
-    assert mismatched_operator.date_dip_baseline_uah is None
-    assert mismatched_operator.date_dip_discount_pct is None
-    assert mismatched_operator.date_dip_sample_n is None
-
-    exact_boundary = by_date[db_today + timedelta(days=50)]
-    assert exact_boundary.date_dip_price_uah is None
-    assert exact_boundary.date_dip_baseline_uah is None
-    assert exact_boundary.date_dip_discount_pct is None
-
-    suite_candidate = by_date[db_today + timedelta(days=70)]
-    assert suite_candidate.min_price_uah == 100000
-    assert suite_candidate.date_dip_price_uah == 120000
-    assert suite_candidate.date_dip_baseline_uah == 151500
-    assert suite_candidate.date_dip_discount_pct == 20.79
-    assert suite_candidate.date_dip_sample_n == 4
-
-    alias_inflation = by_date[db_today + timedelta(days=80)]
-    assert alias_inflation.date_dip_price_uah is None
-    assert alias_inflation.date_dip_baseline_uah is None
-    assert alias_inflation.date_dip_discount_pct is None
-    assert alias_inflation.date_dip_sample_n is None
+    # Operator scoping: the other operator's cheap +53 has no same-operator
+    # shoulders, so the main operator's pricey dates can't mark it.
+    other_operator_day = by_date[db_today + timedelta(days=53)]
+    assert other_operator_day.date_dip_discount_pct is None
+    assert other_operator_day.date_dip_sample_n is None
 
 
 @pytest.mark.asyncio

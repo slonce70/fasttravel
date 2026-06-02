@@ -24,7 +24,7 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.deal_detection import DATE_DIP_POLICY, date_dip_neighbor_stats_lateral_sql
+from shared.deal_detection import DATE_DIP_POLICY, date_dip_local_v_cte_sql
 from shared.deal_signals import metric_detection_method_for_reason
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
@@ -42,57 +42,23 @@ top across the whole pool while still surfacing 2-3 different countries
 instead of "all Egypt"."""
 
 
-# Same-hotel calendar anomaly detector. It reads `current_prices` directly,
-# requires a stable local neighbourhood, and inserts `calendar_anomaly`.
+# Same-hotel calendar-anomaly detector — regime-local two-sided V dip.
+# Reads `current_prices` directly via the shared CTE chain (so the channel and
+# the web calendar share one definition of "cheap date"), requires a true local
+# valley with matching shoulders, and inserts `calendar_anomaly`.
 _DATE_DIP_SQL = text(
     f"""
-    WITH priced_raw AS (
-        SELECT
-            cp.hotel_id,
-            cp.operator_id,
-            cp.check_in,
-            cp.nights,
-            cp.meal_plan,
-            cp.room_category,
-            cp.room_family,
-            cp.price_uah,
-            cp.deep_link
-        FROM current_prices cp
-        WHERE cp.check_in BETWEEN CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'
-                              AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'
-    ),
-    priced AS (SELECT * FROM priced_raw),
-    local_stats AS (
-        -- Trimmed local baseline across nearby check-in dates for the same hotel,
-        -- nights and meal. This keeps the public "neighboring dates"
-        -- promise honest: early-June offers are not compared to late-July
-        -- high-season prices.
-        SELECT
-            cp.hotel_id,
-            cp.operator_id,
-            cp.check_in,
-            cp.nights,
-            cp.meal_plan,
-            cp.room_category,
-            cp.room_family,
-            cp.price_uah,
-            cp.deep_link,
-            hs.trimmed_mean,
-            hs.sample_n
-        FROM priced cp
-        {date_dip_neighbor_stats_lateral_sql(candidate_alias="cp")}
-    )
+    WITH {date_dip_local_v_cte_sql()}
     INSERT INTO deals (
         hotel_id, operator_id, check_in, nights, meal_plan,
         price_uah, baseline_p50, discount_pct, deep_link,
         source, detection_method
     )
     -- Per-country cap: without it the global ORDER BY discount_pct DESC
-    -- favors whichever country has the steepest % drops (currently EG by
-    -- a wide margin), so the public channel reads as "Egypt + Egypt +
-    -- Egypt". ROW_NUMBER OVER(PARTITION BY country_iso2) limits each
-    -- country to :country_cap entries per tick, then the outer LIMIT
-    -- picks the overall top-N across that diverse pool.
+    -- favors whichever country has the steepest % drops, so the public
+    -- channel reads as "Egypt + Egypt + Egypt". ROW_NUMBER OVER(PARTITION BY
+    -- country_iso2) limits each country to :country_cap entries per tick, then
+    -- the outer LIMIT picks the overall top-N across that diverse pool.
     SELECT
         hotel_id, operator_id, check_in, nights, meal_plan,
         price_uah, baseline_p50, discount_pct, deep_link,
@@ -128,19 +94,18 @@ _DATE_DIP_SQL = text(
                     cp.meal_plan,
                     cp.room_category,
                     cp.price_uah,
-                    cp.trimmed_mean AS baseline_p50,
-                    ROUND(100 * (1 - cp.price_uah::numeric / cp.trimmed_mean), 2) AS discount_pct,
+                    cp.baseline_p50,
+                    cp.discount_pct,
                     cp.deep_link,
                     dest.country_iso2 AS country_iso2
                 FROM local_stats cp
                 JOIN hotels h ON h.id = cp.hotel_id
                 LEFT JOIN destinations dest ON dest.id = h.destination_id
-                WHERE cp.price_uah < cp.trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}
-                  AND (cp.trimmed_mean - cp.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}
+                WHERE cp.discount_pct >= {DATE_DIP_POLICY.dip_threshold_pct_sql}
+                  AND cp.discount_pct <= {DATE_DIP_POLICY.max_depth_pct_sql}
+                  AND (cp.baseline_p50 - cp.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}
             ) cand
-            WHERE cand.discount_pct > 0
-              AND cand.discount_pct <= {DATE_DIP_POLICY.max_discount_pct_sql}
-              AND cand.country_iso2 IS NOT NULL
+            WHERE cand.country_iso2 IS NOT NULL
               AND NOT EXISTS (
                   SELECT 1
                   FROM deals d
