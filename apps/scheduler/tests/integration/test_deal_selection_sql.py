@@ -356,24 +356,17 @@ async def test_notify_subscribers_uses_same_freshness_window_as_public_channel(
 
 
 @pytest.mark.asyncio
-async def test_detect_deals_inserts_calendar_anomaly_for_valid_neighbor_dates(
+async def test_detect_deals_inserts_calendar_anomaly_for_local_v_dip(
     session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     await session.execute(text("UPDATE deals SET posted_at = NOW() WHERE posted_at IS NULL"))
     hotel_id, operator_id, _ = await _seed_market(session, country_iso2="VZ")
-    await _seed_price_rows(
-        session,
-        hotel_id=hotel_id,
-        operator_id=operator_id,
-        rows=[
-            (30, "Standard Room", 100000),
-            (31, "Standard Room", 103000),
-            (32, "Standard DBL", 105000),
-            (33, "Double Standard", 106000),
-            (34, "STD", 108000),
-        ],
-    )
+    # A flat 100000 run with a single V-bottom at +27 (85000): >=3 matching
+    # neighbours on each side within +-7d, so it is a genuine regime-local dip.
+    rows = [(o, "Standard Room", 100000) for o in range(20, 35) if o != 27]
+    rows.append((27, "Standard Room", 85000))
+    await _seed_price_rows(session, hotel_id=hotel_id, operator_id=operator_id, rows=rows)
     monkeypatch.setattr(
         detect_deals_module,
         "async_session_factory",
@@ -404,9 +397,10 @@ async def test_detect_deals_inserts_calendar_anomaly_for_valid_neighbor_dates(
         .mappings()
         .one()
     )
-    assert row["price_uah"] == 100000
-    assert row["baseline_p50"] == 105500
-    assert float(row["discount_pct"]) == 5.21
+    assert row["price_uah"] == 85000
+    # baseline = matched-side average of the surrounding flat run.
+    assert row["baseline_p50"] == 100000
+    assert float(row["discount_pct"]) == 15.0
     assert row["source"] == "farvater_scrape"
     assert row["detection_method"] == "calendar_anomaly"
 
@@ -418,18 +412,13 @@ async def test_detect_deals_does_not_compare_standard_target_to_premium_neighbor
 ) -> None:
     await session.execute(text("UPDATE deals SET posted_at = NOW() WHERE posted_at IS NULL"))
     hotel_id, operator_id, _ = await _seed_market(session, country_iso2="TZ")
-    await _seed_price_rows(
-        session,
-        hotel_id=hotel_id,
-        operator_id=operator_id,
-        rows=[
-            (30, "Standard Room", 1000),
-            (31, "Deluxe", 120000),
-            (32, "Superior", 121000),
-            (33, "Premium", 122000),
-            (34, "Comfort", 123000),
-        ],
-    )
+    # Standard family is flat (no dip); a parallel deluxe family sits far higher.
+    # The detector partitions by room_family, so the flat standard target is
+    # never turned into a "dip" by the pricier deluxe rows — a naive cross-room
+    # baseline (~150k) would otherwise read 100k as a 33% drop.
+    rows = [(o, "Standard Room", 100000) for o in range(24, 31)]
+    rows += [(o, "Deluxe Room", 200000) for o in range(24, 31)]
+    await _seed_price_rows(session, hotel_id=hotel_id, operator_id=operator_id, rows=rows)
     monkeypatch.setattr(
         detect_deals_module,
         "async_session_factory",
@@ -455,33 +444,22 @@ async def test_detect_deals_does_not_compare_standard_target_to_premium_neighbor
 
 
 @pytest.mark.asyncio
-async def test_detect_deals_rejects_implausible_discount_above_cap(
+async def test_detect_deals_rejects_dip_deeper_than_depth_cap(
     session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A discount larger than the policy cap must NOT become a deal.
+    """A clean V-bottom deeper than max_depth_pct must NOT become a deal.
 
-    Real tour date-dips are modest. Huge "discounts" are almost always a
-    baseline artifact — a synthetic placeholder price (Sura "-78%"), or a
-    ±14-day window straddling a seasonal price step so a normal cheap-season
-    price reads as a deal against peak-season neighbours (Garni "-55%":
-    37 352 ₴ on 01-Jul vs ~82k July neighbours). Cap them out.
+    Real same-hotel date-dips are modest; a drop deeper than ~35% is almost
+    always a glitch cliff or a synthetic placeholder price, so the depth cap
+    rejects it even though the V-shape and matching shoulders are otherwise valid.
     """
     await session.execute(text("UPDATE deals SET posted_at = NOW() WHERE posted_at IS NULL"))
     hotel_id, operator_id, _ = await _seed_market(session, country_iso2="SY")
-    await _seed_price_rows(
-        session,
-        hotel_id=hotel_id,
-        operator_id=operator_id,
-        rows=[
-            (30, "STD", 38000),  # cheap-season neighbours
-            (33, "STD", 38000),
-            (40, "Standard", 36000),  # would-be target — normal cheap-season price
-            (47, "STD", 78000),  # peak-season neighbours (within 2.5x spread)
-            (49, "STD", 80000),
-            (52, "STD", 82000),
-        ],
-    )
+    # Flat 100000 run with a 40%-deep bottom at +27 (60000) — above the 35% cap.
+    rows = [(o, "Standard Room", 100000) for o in range(20, 35) if o != 27]
+    rows.append((27, "Standard Room", 60000))
+    await _seed_price_rows(session, hotel_id=hotel_id, operator_id=operator_id, rows=rows)
     monkeypatch.setattr(
         detect_deals_module,
         "async_session_factory",
@@ -503,40 +481,31 @@ async def test_detect_deals_rejects_implausible_discount_above_cap(
             {"hotel_id": hotel_id},
         )
     ).all()
-    # The only candidate here discounts ~54% — above the cap — so nothing posts.
+    # The only V-bottom here is 40% deep — above the 35% cap — so nothing posts.
     assert deals == []
 
 
 @pytest.mark.asyncio
-async def test_detect_deals_rejects_bimodal_window_below_discount_cap(
+async def test_detect_deals_rejects_seasonal_step_via_side_ratio(
     session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A bimodal (two-cluster) neighbourhood must not produce a deal even when
-    the discount is under the cap.
+    """A candidate that is a two-sided V-bottom but whose shoulders are DIFFERENT
+    price regimes (a seasonal step) must not produce a deal.
 
-    The real failure mode behind the channel's "deals": the ±window straddles a
-    seasonal price step, so the target sits in the cheap cluster while the
-    baseline is pulled toward the expensive cluster (Adrovic "-49.76%":
-    42 825 ₴ tied with nearby June dates, baseline from ~85k July dates). The
-    discount stays under the cap, so only the price-spread guard can catch it —
-    real dips are unimodal (low spread), artifacts are bimodal (high spread).
+    This is the Ugur class: the candidate sits at its own cheap-season floor with
+    a cheap preceding shoulder and a peak-season following shoulder. The discount
+    vs the blended baseline is under the depth cap, so only the return-to-baseline
+    side-ratio guard catches it — genuine dips return to ONE level on both sides.
     """
     await session.execute(text("UPDATE deals SET posted_at = NOW() WHERE posted_at IS NULL"))
     hotel_id, operator_id, _ = await _seed_market(session, country_iso2="MZ")
-    await _seed_price_rows(
-        session,
-        hotel_id=hotel_id,
-        operator_id=operator_id,
-        rows=[
-            (40, "Standard", 50000),  # target — tied with the cheap cluster
-            (30, "STD", 52000),  # cheap cluster
-            (33, "STD", 52000),
-            (47, "STD", 90000),  # expensive cluster (spread ~1.83 > 1.8)
-            (49, "STD", 92000),
-            (52, "STD", 95000),
-        ],
-    )
+    # Cheap regime before (+20..+26 = 50000), a V-bottom at +27 (49000), then a
+    # peak-season step after (+28..+34 = 90000). side_ratio 90000/50000 = 1.8 > 1.15.
+    rows = [(o, "Standard Room", 50000) for o in range(20, 27)]
+    rows.append((27, "Standard Room", 49000))
+    rows += [(o, "Standard Room", 90000) for o in range(28, 35)]
+    await _seed_price_rows(session, hotel_id=hotel_id, operator_id=operator_id, rows=rows)
     monkeypatch.setattr(
         detect_deals_module,
         "async_session_factory",
@@ -558,29 +527,25 @@ async def test_detect_deals_rejects_bimodal_window_below_discount_cap(
             {"hotel_id": hotel_id},
         )
     ).all()
-    # ~45% discount (under the cap) but spread ~1.83 — the spread guard rejects it.
+    # Discount vs blended baseline is ~30% (under the cap) but the two shoulders
+    # are a step (side_ratio 1.8 > 1.15) — the return-to-baseline guard rejects it.
     assert deals == []
 
 
 @pytest.mark.asyncio
-async def test_detect_deals_counts_unique_neighbor_dates_not_room_aliases(
+async def test_detect_deals_ignores_same_room_casing_phantom(
     session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     await session.execute(text("UPDATE deals SET posted_at = NOW() WHERE posted_at IS NULL"))
     hotel_id, operator_id, _ = await _seed_market(session, country_iso2="QZ")
-    await _seed_price_rows(
-        session,
-        hotel_id=hotel_id,
-        operator_id=operator_id,
-        rows=[
-            (30, "Standard Room", 1000),
-            (31, "Standard Room", 120000),
-            (31, "Standard DBL", 121000),
-            (31, "Double Standard", 122000),
-            (31, "STD", 123000),
-        ],
-    )
+    # A flat 100000 run, but +27 also carries a phantom cheap re-listing of the
+    # SAME room under a different casing ('Deluxe Room' 70000 vs 'DELUXE ROOM'
+    # 100000). The same-room MAX-collapse neutralises it, so +27 stays at 100000
+    # (no dip). Without the collapse this would be a false 30% dip.
+    rows = [(o, "DELUXE ROOM", 100000) for o in range(20, 35)]
+    rows.append((27, "Deluxe Room", 70000))
+    await _seed_price_rows(session, hotel_id=hotel_id, operator_id=operator_id, rows=rows)
     monkeypatch.setattr(
         detect_deals_module,
         "async_session_factory",

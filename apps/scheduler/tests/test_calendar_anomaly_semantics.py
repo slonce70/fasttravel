@@ -1,11 +1,14 @@
 """Behavioural tests for production deal detection.
 
-The primary strategy is date_dip (calendar_anomaly). It compares a check-in
-date's price against nearby dates for the same hotel + operator + nights +
-meal + room-family neighborhood. A date that is 4%+ below the trimmed local
-baseline (and at least 1500 UAH cheaper in absolute terms) is flagged as a
-deal. A narrow promo_discount branch also promotes real operator strike-through
-promos where red_price_uah > price_uah.
+The primary strategy is date_dip (calendar_anomaly). It is regime-local and
+two-sided: for the same hotel + operator + nights + meal + room-family it
+flags a check-in date that is a genuine V-bottom — strictly below the cheapest
+neighbouring date on BOTH preceding and following shoulder frames, with the two
+sides' average levels matching within side_match_ratio (return-to-baseline).
+The dip must be at least dip_threshold_pct below the matched-side average, no
+deeper than max_depth_pct (glitch-cliff guard), and save at least
+min_absolute_saving_uah. A narrow promo_discount branch also promotes real
+operator strike-through promos where red_price_uah > price_uah.
 """
 
 from __future__ import annotations
@@ -80,61 +83,64 @@ async def test_only_active_production_strategies_run(patched_orchestrator) -> No
 
 
 @pytest.mark.asyncio
-async def test_date_dip_uses_4pct_threshold(patched_orchestrator) -> None:
-    """The SQL should use 0.96 multiplier (4% discount threshold)."""
-    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
-
-    executed_sql = patched_orchestrator["executed"]
-    assert any(
-        f"trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}" in sql for sql in executed_sql
-    ), "date_dip should use the shared date-dip discount multiplier"
-
-
-@pytest.mark.asyncio
-async def test_date_dip_uses_nearby_dates_not_whole_season(patched_orchestrator) -> None:
-    """The public copy says neighboring dates, so the SQL must not compare
-    an early-June price to late-July high-season prices for the same hotel."""
+async def test_date_dip_uses_owner_governed_magnitude_gates(patched_orchestrator) -> None:
+    """The SQL should apply the shared dip threshold, glitch-cliff depth cap,
+    and absolute-saving floor on top of the local_stats CTE."""
     await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
 
     sql = patched_orchestrator["executed"][0]
 
+    assert f"cp.discount_pct >= {DATE_DIP_POLICY.dip_threshold_pct_sql}" in sql
+    assert f"cp.discount_pct <= {DATE_DIP_POLICY.max_depth_pct_sql}" in sql
+    assert f"(cp.baseline_p50 - cp.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}" in sql
+
+
+@pytest.mark.asyncio
+async def test_date_dip_uses_nearby_dates_not_whole_season(patched_orchestrator) -> None:
+    """The public copy says neighboring dates, so the detector must compare a
+    date only against its two ±shoulder_frame_days shoulders — never against
+    late-season prices for the same hotel."""
+    await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
+
+    sql = patched_orchestrator["executed"][0]
+
+    # Lookahead bounds on the candidate (V-bottom) date.
     assert f"CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'" in sql
     assert f"AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'" in sql
+    # Two-sided shoulder frames, each excluding the candidate date itself.
+    assert f"RANGE BETWEEN INTERVAL '{DATE_DIP_POLICY.shoulder_frame_days} days' PRECEDING" in sql
+    assert f"INTERVAL '{DATE_DIP_POLICY.shoulder_frame_days} days' FOLLOWING" in sql
+    assert "INTERVAL '1 day' PRECEDING" in sql
+    assert "RANGE BETWEEN INTERVAL '1 day' FOLLOWING" in sql
+    # Genuine V-bottom: strictly below both side minima, both sides populated.
+    assert "f.price_uah < f.prec_min" in sql
+    assert "f.price_uah < f.foll_min" in sql
+    assert f"f.prec_n >= {DATE_DIP_POLICY.min_neighbors_per_side}" in sql
+    assert f"f.foll_n >= {DATE_DIP_POLICY.min_neighbors_per_side}" in sql
+    # Return-to-baseline guard rejects seasonal steps (two different regimes).
     assert (
-        "neighbor.check_in BETWEEN "
-        f"cp.check_in - INTERVAL '{DATE_DIP_POLICY.neighbor_window_days} days'" in sql
+        f"GREATEST(f.prec_avg, f.foll_avg) <= LEAST(f.prec_avg, f.foll_avg) "
+        f"* {DATE_DIP_POLICY.side_match_ratio_sql}" in sql
     )
-    assert f"cp.check_in + INTERVAL '{DATE_DIP_POLICY.neighbor_window_days} days'" in sql
-    assert "neighbor.check_in <> cp.check_in" in sql
-    assert "room_family" in sql
-    assert "neighbor.room_family = cp.room_family" in sql
-    assert "GROUP BY neighbor.check_in" in sql
-    assert "neighbor.room_category = cp.room_category" not in sql
-    assert "JOIN LATERAL" in sql
-    assert f"hs.sample_n >= {DATE_DIP_POLICY.min_sample_size}" in sql
-    # Trimmed local baseline + consistency gate. Farvater's synthetic "sold out"
-    # placeholder prices were inflating the plain local comparison by 3-5x and
-    # triggering false 70-80% "deals". Two defences:
-    #   1. interquartile mean (PERCENT_RANK middle 50%) — robust to a few
-    #      outliers in an otherwise clean sample.
-    #   2. p_max <= p_min * 2.5 — rejects the baseline entirely when the
-    #      neighbour spread is too wide to be trusted (bimodal data with
-    #      ≥half synthetic rows can't be saved by trimming alone).
-    assert "PERCENT_RANK()" in sql
-    assert "rnk BETWEEN 0.25 AND 0.75" in sql
-    assert f"hs.p_max <= hs.p_min * {DATE_DIP_POLICY.max_spread_ratio_sql}" in sql
+    # The old whole-season lateral-neighbour design is gone.
+    assert "PERCENT_RANK()" not in sql
+    assert "rnk BETWEEN 0.25 AND 0.75" not in sql
+    assert "neighbor" not in sql
+    assert "trimmed_mean" not in sql
 
 
 @pytest.mark.asyncio
 async def test_date_dip_uses_materialized_room_family(patched_orchestrator) -> None:
     """Equivalent Farvater room labels are normalized in current_prices, keeping
-    detector lookups indexed instead of recomputing family per neighbor row."""
+    detector lookups indexed; same-room casing duplicates are MAX-collapsed
+    before the per-date family minimum instead of recomputing family per row."""
     await detect_deals.detect_deals(cooldown_hours=0, max_per_run=20)
 
     sql = patched_orchestrator["executed"][0]
 
     assert "cp.room_family" in sql
-    assert "neighbor.room_family = cp.room_family" in sql
+    assert "MAX(cp.price_uah)" in sql
+    assert "lower(btrim(cp.room_category))" in sql
     assert "regexp_replace" not in sql
 
 

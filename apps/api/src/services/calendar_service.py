@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from shared.deal_detection import DATE_DIP_POLICY, date_dip_neighbor_stats_lateral_sql
+from shared.deal_detection import DATE_DIP_POLICY, date_dip_local_v_cte_sql
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,6 +57,7 @@ async def get_calendar(
             "CAST(:requested_meal_plan AS VARCHAR)" if meal_plan is not None else "NULL::VARCHAR"
         )
         meal_filter = "AND cp.meal_plan IN :meal_codes" if meal_plan is not None else ""
+        dip_meal_filter = "AND ls.meal_plan IN :meal_codes" if meal_plan is not None else ""
         sql = text(
             f"""
             WITH candidate_prices AS (
@@ -84,30 +85,25 @@ async def get_calendar(
                 FROM ranked_day_prices
                 WHERE price_rank = 1
             ),
-            date_dip_candidates AS (
-                SELECT
-                    cp.check_in,
-                    cp.price_uah,
-                    hs.trimmed_mean AS baseline_p50,
-                    ROUND((1 - cp.price_uah::numeric / hs.trimmed_mean) * 100, 2) AS discount_pct,
-                    hs.sample_n
-                FROM candidate_prices cp
-                {date_dip_neighbor_stats_lateral_sql(candidate_alias="cp")}
-                WHERE cp.check_in BETWEEN CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'
-                                      AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'
-                  AND cp.price_uah < hs.trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}
-                  AND cp.price_uah >= hs.trimmed_mean * {DATE_DIP_POLICY.min_price_ratio_sql}
-                  AND hs.trimmed_mean - cp.price_uah >= {DATE_DIP_POLICY.min_absolute_saving_uah}
-            ),
+            {date_dip_local_v_cte_sql(extra_series_filter='AND cp.hotel_id = :hotel_id')},
             best_date_dip AS (
-                SELECT DISTINCT ON (check_in)
-                    check_in,
-                    price_uah,
-                    baseline_p50,
-                    discount_pct,
-                    sample_n
-                FROM date_dip_candidates
-                ORDER BY check_in, discount_pct DESC, price_uah ASC
+                -- Best regime-local V dip per check-in for the requested nights
+                -- (and meal, when given). Identical definition + thresholds to
+                -- the channel detector, so the calendar marks exactly the dates
+                -- that would publish as deals.
+                SELECT DISTINCT ON (ls.check_in)
+                    ls.check_in,
+                    ls.price_uah,
+                    ls.baseline_p50,
+                    ls.discount_pct,
+                    ls.sample_n
+                FROM local_stats ls
+                WHERE ls.nights = :nights
+                  {dip_meal_filter}
+                  AND ls.discount_pct >= {DATE_DIP_POLICY.dip_threshold_pct_sql}
+                  AND ls.discount_pct <= {DATE_DIP_POLICY.max_depth_pct_sql}
+                  AND (ls.baseline_p50 - ls.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}
+                ORDER BY ls.check_in, ls.discount_pct DESC, ls.price_uah ASC
             )
             SELECT
                 dm.check_in,

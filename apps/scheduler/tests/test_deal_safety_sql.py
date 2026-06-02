@@ -126,29 +126,30 @@ def test_promo_discount_branch_requires_real_operator_strike_through() -> None:
 
 
 def test_date_dip_branch_detects_same_hotel_date_mispricing() -> None:
-    """date_dip = one calendar date sharply cheaper than nearby dates for
-    the same hotel + nights + meal combo."""
+    """date_dip = one calendar date that is a genuine local V-bottom: cheaper
+    than the surrounding dates of the same hotel/operator/nights/meal/room
+    family, with both shoulders at one matching price level."""
     sql = detect_deals._DATE_DIP_SQL.text
 
     assert "'calendar_anomaly'" in sql
-    # Trimmed local baseline (interquartile mean) replaces the plain
-    # local comparison that Farvater's synthetic "sold out" placeholder prices
-    # were inflating. Both PERCENT_RANK and the 0.25..0.75 filter must
-    # be present or the false-positive 70-80% deals come back.
-    assert "PERCENT_RANK()" in sql
-    assert "rnk BETWEEN 0.25 AND 0.75" in sql
+    # Regime-local two-sided detector: the shared CTE chain plus the magnitude
+    # gates the caller applies on top of `local_stats`.
     assert "local_stats" in sql
-    assert (
-        "neighbor.check_in BETWEEN "
-        f"cp.check_in - INTERVAL '{DATE_DIP_POLICY.neighbor_window_days} days'" in sql
-    )
-    assert "neighbor.check_in <> cp.check_in" in sql
-    assert "room_family" in sql
-    assert "neighbor.room_family = cp.room_family" in sql
-    assert "GROUP BY neighbor.check_in" in sql
-    assert "neighbor.room_category = cp.room_category" not in sql
-    assert f"trimmed_mean * {DATE_DIP_POLICY.discount_multiplier_sql}" in sql
-    assert f"(cp.trimmed_mean - cp.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}" in sql
+    assert "f.price_uah < f.prec_min" in sql
+    assert "f.price_uah < f.foll_min" in sql
+    assert "f.prec_n >= 3" in sql
+    assert "f.foll_n >= 3" in sql
+    # Return-to-baseline guard rejects seasonal steps (two different regimes).
+    assert "GREATEST(f.prec_avg, f.foll_avg) <= LEAST(f.prec_avg, f.foll_avg) * 1.15" in sql
+    # Magnitude gates: dip threshold, glitch-cliff depth cap, absolute saving.
+    assert f"cp.discount_pct >= {DATE_DIP_POLICY.dip_threshold_pct_sql}" in sql
+    assert f"cp.discount_pct <= {DATE_DIP_POLICY.max_depth_pct_sql}" in sql
+    assert f"(cp.baseline_p50 - cp.price_uah) >= {DATE_DIP_POLICY.min_absolute_saving_uah}" in sql
+    # The old whole-season / trimmed-mean / lateral-neighbor design is gone.
+    assert "PERCENT_RANK()" not in sql
+    assert "rnk BETWEEN 0.25 AND 0.75" not in sql
+    assert "trimmed_mean" not in sql
+    assert "neighbor" not in sql
     assert "long_cp.nights > short_cp.nights" not in sql
     # Per-country diversity guard (without it the top-N by % is dominated
     # by whichever single country has the steepest drops).
@@ -156,13 +157,18 @@ def test_date_dip_branch_detects_same_hotel_date_mispricing() -> None:
     assert "country_rank <= :country_cap" in sql
 
 
-def test_date_dip_lateral_neighbor_search_keeps_current_prices_indexable() -> None:
+def test_date_dip_reads_current_prices_via_shared_cte_chain() -> None:
     sql = detect_deals._DATE_DIP_SQL.text
 
-    assert "FROM current_prices neighbor" in sql
-    assert "FROM priced neighbor" not in sql
-    assert "neighbor.room_family = cp.room_family" in sql
-    assert "GROUP BY neighbor.check_in" in sql
+    # Builds on the shared CTE chain that scans current_prices directly and
+    # collapses same-room casing duplicates before the per-date family MIN.
+    assert "FROM current_prices cp" in sql
+    assert "series AS" in sql
+    assert "framed AS" in sql
+    assert "MAX(cp.price_uah)" in sql
+    assert "lower(btrim(cp.room_category))" in sql
+    # No per-neighbour recomputation / regex normalization on the hot path.
+    assert "neighbor" not in sql
     assert "regexp_replace" not in sql
 
 
