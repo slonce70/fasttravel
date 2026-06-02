@@ -87,3 +87,4 @@ apps/*/uv.lock
 # Misc temp files some editors / agents leave in the tree.
 _tmp_*
 apps/*/_tmp_*
+.superpowers/
