@@ -4,11 +4,13 @@ Persistent under the text input; tapping a button sends its label as
 plain text, which we route to the matching command via text-filter
 handlers in `handlers/commands.py`.
 
-Layout choice (3 rows × 2 cols):
+Layout choice:
   Row 1: BEST + SEARCH       — the two "buy intent" actions; strongest
                                current variants and the full search wizard.
-  Row 2: DEALS + DESTINATIONS — broader browsing.
-  Row 3: SUBSCRIBE + PROFILE + HELP — long-tail / account.
+  Row 2: DEALS + CHEAP        — browse the discount feed vs. the absolute
+                               cheapest tours by country.
+  Row 3: DESTINATIONS         — country catalogue.
+  Row 4: SUBSCRIBE + PROFILE + HELP — long-tail / account.
 
 `BEST` leads because the product's main job is "show me the best options" —
 matches the channel post style and the /best command.
@@ -23,6 +25,7 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 BEST = "🏆 ТОП варіанти"
 SEARCH = "🔍 Знайти тур"
 DEALS = "🔥 Усі варіанти"
+CHEAP = "🔥 Найдешевші тури"
 DESTINATIONS = "🌍 Напрямки"
 SUBSCRIBE = "🔔 Підписки на варіанти"
 PROFILE = "👤 Профіль"
@@ -33,7 +36,8 @@ def main_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text=BEST), KeyboardButton(text=SEARCH)],
-            [KeyboardButton(text=DEALS), KeyboardButton(text=DESTINATIONS)],
+            [KeyboardButton(text=DEALS), KeyboardButton(text=CHEAP)],
+            [KeyboardButton(text=DESTINATIONS)],
             [
                 KeyboardButton(text=SUBSCRIBE),
                 KeyboardButton(text=PROFILE),

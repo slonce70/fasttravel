@@ -21,6 +21,7 @@ from shared.publishers.broadcast import escape_markdown_v2
 from src.config import get_settings
 from src.keyboards.main_menu import (
     BEST,
+    CHEAP,
     DEALS,
     DESTINATIONS,
     HELP,
@@ -135,6 +136,14 @@ async def text_deals(message: Message, state: FSMContext) -> None:
 
     await state.clear()
     await show_deals(message)
+
+
+@router.message(F.text == CHEAP)
+async def text_cheap(message: Message, state: FSMContext) -> None:
+    from src.handlers.cheap import show_cheap
+
+    await state.clear()
+    await show_cheap(message)
 
 
 @router.message(F.text == DESTINATIONS)

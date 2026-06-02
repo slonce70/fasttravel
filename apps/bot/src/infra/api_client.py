@@ -132,6 +132,30 @@ async def get_deals(
         raise ApiError("deals fetch failed") from exc
 
 
+async def get_cheapest_tours(
+    per_country: int = 3,
+    min_stars: int = 3,
+) -> list[dict[str, Any]]:
+    """`/api/cheapest-tours` — absolute-cheap upcoming tours (NOT discounts).
+
+    Returns a FLAT ranked list of `CheapestTourOut` dicts, ordered by
+    country_name then rank then hotel_id, spanning all countries
+    back-to-back; the caller groups by `country_iso2`.
+
+    Args:
+        per_country: tours kept per country (1..10, default 3).
+        min_stars: minimum hotel stars (1..5, default 3).
+    """
+    params: dict[str, Any] = {"per_country": per_country, "min_stars": min_stars}
+    try:
+        r = await get_client().get("/api/cheapest-tours", params=params)
+        r.raise_for_status()
+        return cast(list[dict[str, Any]], r.json())
+    except httpx.HTTPError as exc:
+        log.warning("api.cheapest_tours.failed", error=str(exc))
+        raise ApiError("cheapest tours fetch failed") from exc
+
+
 async def get_hotel(slug: str) -> dict[str, Any] | None:
     """`/api/hotels/{slug}` — returns None on 404, raises on transport / 5xx."""
     try:
