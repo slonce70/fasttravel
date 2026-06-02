@@ -40,6 +40,7 @@ from src.infra.metrics import (
     track_job_metrics,
 )
 from src.infra.sentry import configure_sentry
+from src.jobs.post_cheapest_digest import post_cheapest_digest as _post_cheapest_digest
 
 # Decorate every job at registration so the metric labels stay consistent
 # and the underlying job modules don't have to import `metrics` themselves.
@@ -73,6 +74,10 @@ snapshot_hot = track_job_metrics("snapshot_hot")(scheduler_jobs.snapshot_hot)
 # Sprint 1C — promo-bucket sweep. Behind FT_STATIC_TOURS_SWEEP_ENABLED
 # env flag (default off); the job no-ops when disabled.
 static_tours_sweep = track_job_metrics("static_tours_sweep")(scheduler_jobs.static_tours_sweep)
+# "Найдешевші тури" daily channel digest. Behind FT_CHEAPEST_DIGEST_ENABLED
+# (default off); the job no-ops when disabled. Imported directly because its
+# job module is out of scope for the jobs package re-export.
+post_cheapest_digest = track_job_metrics("post_cheapest_digest")(_post_cheapest_digest)
 
 log = get_logger(__name__)
 
@@ -192,6 +197,17 @@ def _build_scheduler() -> AsyncIOScheduler:
         CronTrigger(hour="*/2", minute=20, timezone=TIMEZONE),
         id="static_tours_sweep",
         name="static_tours_sweep (every 2h :20 Kyiv)",
+    )
+
+    # "Найдешевші тури" daily channel digest at 08:00 Kyiv — first business
+    # hour, well clear of the off-peak ingest ladder (04:00-05:00) and the
+    # hourly detect/post cadence. No-ops unless FT_CHEAPEST_DIGEST_ENABLED is
+    # set, so registering it is safe and won't spam the channel.
+    scheduler.add_job(
+        post_cheapest_digest,
+        CronTrigger(hour=8, minute=0, timezone=TIMEZONE),
+        id="post_cheapest_digest",
+        name="post_cheapest_digest (daily 08:00 Kyiv)",
     )
 
     # Sprint 1F off-peak ladder. Each runs once a day, 15 min apart, so
