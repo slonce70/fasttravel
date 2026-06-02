@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  fetchCheapestTours,
   fetchDealById,
   fetchDeals,
   searchHotels,
@@ -68,6 +69,32 @@ describe('fetchDeals', () => {
 
     const [url] = fetchMock.mock.calls[0]!;
     expect(url).toBe('http://localhost:8000/api/deals?limit=50&offset=0&country=TR');
+  });
+});
+
+describe('fetchCheapestTours', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('passes per_country and min_stars through to the backend', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchCheapestTours({ per_country: 3, min_stars: 3 });
+
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('http://localhost:8000/api/cheapest-tours?per_country=3&min_stars=3');
+  });
+
+  it('omits the query string when no params are supplied', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchCheapestTours();
+
+    const [url] = fetchMock.mock.calls[0]!;
+    expect(url).toBe('http://localhost:8000/api/cheapest-tours');
   });
 });
 

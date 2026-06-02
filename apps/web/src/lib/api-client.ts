@@ -10,6 +10,7 @@
 
 import type {
   CalendarDay,
+  CheapestTour,
   CountryOut,
   Deal,
   Hotel,
@@ -248,6 +249,31 @@ export async function fetchPromotions(
     qs.set('min_discount_pct', String(params.min_discount_pct));
   const path = qs.toString() ? `/api/promotions?${qs.toString()}` : '/api/promotions';
   return apiFetch<PaginatedPromotions>(path, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Cheapest tours («Найдешевші тури») — absolute-cheap upcoming tours, NOT
+// discounts. Separate channel from Deals/Promotions; honest «ціна від» copy.
+// The endpoint returns a FLAT ranked list (country_name → rank → hotel_id);
+// clients group by country_iso2.
+// ---------------------------------------------------------------------------
+
+export interface CheapestToursParams {
+  /** TOP-N distinct hotels per country (default 3, 1..10). */
+  per_country?: number;
+  /** Minimum hotel stars (default 3, 1..5). */
+  min_stars?: number;
+}
+
+export async function fetchCheapestTours(
+  params: CheapestToursParams = {},
+  opts: FetchOptions = {},
+): Promise<CheapestTour[]> {
+  const qs = new URLSearchParams();
+  if (params.per_country !== undefined) qs.set('per_country', String(params.per_country));
+  if (params.min_stars !== undefined) qs.set('min_stars', String(params.min_stars));
+  const path = qs.toString() ? `/api/cheapest-tours?${qs.toString()}` : '/api/cheapest-tours';
+  return apiFetch<CheapestTour[]>(path, opts);
 }
 
 // ---------------------------------------------------------------------------

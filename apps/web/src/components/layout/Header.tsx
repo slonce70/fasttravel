@@ -8,6 +8,7 @@ import type { CountryOut } from '@/lib/types';
 const STATIC_NAV = [
   { href: '/search', label: 'Пошук турів' },
   { href: '/deals', label: 'Гарячі знижки' },
+  { href: '/cheap', label: 'Найдешевші' },
 ];
 
 const TAIL_NAV = [
