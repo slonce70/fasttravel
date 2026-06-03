@@ -169,6 +169,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
+      # Daily «Найдешевші тури» channel digest — owner-enabled 2026-06-03.
+      # Override with FT_CHEAPEST_DIGEST_ENABLED=false to turn the digest off.
+      FT_CHEAPEST_DIGEST_ENABLED: ${FT_CHEAPEST_DIGEST_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy
