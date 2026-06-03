@@ -3,6 +3,7 @@
 Contract (May 2026 — Phase 2 P0-1):
 
     GET /api/search
+      ?q=rixos              optional hotel name/slug fragment
       ?country=tr             optional ISO2
       &check_in=2026-06-15    optional, ISO date — narrows to that day
       &nights=7               optional, picks min_<n>n column when 7/10/14
@@ -77,6 +78,7 @@ def _parse_kids(raw: str | None) -> list[int]:
 
 @router.get("", response_model=PaginatedSearchResults)
 async def search(
+    q: str | None = Query(default=None, min_length=2, max_length=80),
     country: str | None = Query(default=None, min_length=2, max_length=2),
     check_in: date | None = Query(default=None),
     check_in_min: date | None = Query(default=None),
@@ -102,6 +104,7 @@ async def search(
     exact_check_in = check_in if has_range else (check_in or check_in_min)
     return await search_hotels(
         session,
+        q=q,
         country=country,
         check_in=exact_check_in,
         check_in_min=check_in_min if has_range else None,

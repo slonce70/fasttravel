@@ -71,6 +71,7 @@ _SORT_ORDER_BY = {
 async def search_hotels(
     session: AsyncSession,
     *,
+    q: str | None = None,
     country: str | None = None,
     check_in: date | None = None,
     check_in_min: date | None = None,
@@ -87,6 +88,7 @@ async def search_hotels(
 ) -> PaginatedSearchResults:
     """Hotel facet search with real prices from `current_prices`."""
     order_by = _SORT_ORDER_BY.get(sort, _SORT_ORDER_BY["price_asc"])
+    hotel_query = _normalize_hotel_query(q)
 
     # Meal plan: expand canonical key ('all_inclusive') → raw codes
     # ['AI', 'UAI']. Raw codes pass through as singletons (back-compat).
@@ -126,6 +128,8 @@ async def search_hotels(
         "limit": limit,
         "offset": offset,
     }
+    if hotel_query:
+        params["hotel_query_pattern"] = f"%{_escape_like_pattern(hotel_query)}%"
     if meal_codes:
         params["meal_codes"] = meal_codes
 
@@ -177,7 +181,17 @@ async def search_hotels(
     # experience (cards with no min_price_uah, dead-ends on click). The
     # catalog snapshot job keeps `last_seen_at` fresh; the price snapshot
     # job flips `has_active_prices` true/false. Search trusts that flag.
-    base_where = """
+    hotel_query_filter = (
+        """
+        AND (h.name_uk ILIKE :hotel_query_pattern ESCAPE '\\'
+             OR h.name_en ILIKE :hotel_query_pattern ESCAPE '\\'
+             OR h.canonical_slug ILIKE :hotel_query_pattern ESCAPE '\\')
+        """
+        if hotel_query
+        else ""
+    )
+
+    base_where = f"""
         h.is_active = true
         AND h.has_active_prices = true
         AND (CAST(:country AS CHAR(2)) IS NULL
@@ -186,6 +200,7 @@ async def search_hotels(
              OR h.stars >= CAST(:stars_min AS INTEGER))
         AND (CAST(:price_max AS INTEGER) IS NULL
              OR px.effective_price <= CAST(:price_max AS INTEGER))
+        {hotel_query_filter}
     """
 
     # Count + page in two queries. We deliberately don't wrap them in a
@@ -294,3 +309,16 @@ async def search_hotels(
         pax_supported=pax_supported,
         pax_note=pax_note,
     )
+
+
+def _normalize_hotel_query(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = " ".join(value.strip().split())
+    if len(normalized) < 2:
+        return None
+    return normalized[:80]
+
+
+def _escape_like_pattern(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

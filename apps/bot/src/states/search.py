@@ -16,6 +16,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class SearchState(StatesGroup):
+    choosing_hotel_query = State()
     choosing_country = State()
     choosing_nights = State()
     choosing_when = State()

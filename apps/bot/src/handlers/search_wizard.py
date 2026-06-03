@@ -1,12 +1,12 @@
-"""Search wizard: country → nights → when → budget → meal → stars → results.
+"""Search wizard: hotel name → country → nights → when → budget → meal → stars → results.
 
 State machine lives in `src.states.search.SearchState`. Each step renders
 its keyboard, accepts a callback, persists the choice via `state.update_data`,
 and advances to the next state. Results page calls `/api/search` once and
 paginates through the cached list.
 
-Cancellation: `cc:cancel` or any free-text on a state clears FSM + sends
-the user back to the main menu.
+Cancellation: `hq:cancel`, `cc:cancel`, or `/start` clears FSM + sends the
+user back to the main menu.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from src.infra.logging import get_logger
 from src.keyboards.countries import countries_kb, country_emoji, country_name_uk
 from src.keyboards.filters import (
     budget_kb,
+    hotel_query_kb,
     meal_kb,
     nights_kb,
     results_actions_kb,
@@ -49,10 +50,22 @@ log = get_logger(__name__)
 _RESULTS_KEY = "results"
 _PAGE_KEY = "page"
 _PAGE_SIZE = 5
+_MIN_HOTEL_QUERY_LEN = 2
 
 
 async def start_wizard(message: Message, state: FSMContext) -> None:
     await state.clear()
+    await state.set_state(SearchState.choosing_hotel_query)
+    await message.answer(
+        f"{step_prefix('hotel')}*Шукаєте конкретний готель\\?* 🔎\n\n"
+        "Введіть частину назви \\(наприклад, `Rixos` або `Dana Beach`\\) "
+        "або пропустіть цей крок\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=hotel_query_kb(),
+    )
+
+
+async def _show_country_choice(message: Message, state: FSMContext, *, edit: bool) -> None:
     try:
         destinations = await get_destinations()
     except ApiError:
@@ -70,8 +83,16 @@ async def start_wizard(message: Message, state: FSMContext) -> None:
         return
 
     await state.set_state(SearchState.choosing_country)
+    text = f"{step_prefix('country')}*Куди летимо\\?* ✈️\n\nВиберіть країну\\:"
+    if edit:
+        await message.edit_text(
+            text,
+            parse_mode=ParseMode.MARKDOWN_V2,
+            reply_markup=countries_kb(destinations),
+        )
+        return
     await message.answer(
-        f"{step_prefix('country')}*Куди летимо\\?* ✈️\n\nВиберіть країну\\:",
+        text,
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=countries_kb(destinations),
     )
@@ -80,6 +101,45 @@ async def start_wizard(message: Message, state: FSMContext) -> None:
 @router.message(Command("search"))
 async def cmd_search(message: Message, state: FSMContext) -> None:
     await start_wizard(message, state)
+
+
+@router.callback_query(F.data.startswith("hq:"), SearchState.choosing_hotel_query)
+async def cb_hotel_query_choice(query: CallbackQuery, state: FSMContext) -> None:
+    value = callback_tail(query.data, "hq:") or ""
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
+    if value == "cancel":
+        await state.clear()
+        await message.edit_text("Пошук скасовано\\.")
+        await query.answer()
+        return
+    if value != "skip":
+        await query.answer()
+        return
+    await state.update_data(q=None)
+    await _show_country_choice(message, state, edit=True)
+    await query.answer()
+
+
+@router.message(SearchState.choosing_hotel_query)
+async def text_hotel_query(message: Message, state: FSMContext) -> None:
+    query = " ".join((message.text or "").strip().split())
+    if len(query) < _MIN_HOTEL_QUERY_LEN:
+        await message.answer(
+            "Введіть хоча б 2 символи назви готелю або натисніть «Пропустити назву»\\.",
+            reply_markup=hotel_query_kb(),
+        )
+        return
+    await state.update_data(q=query[:80], country=None, country_name=None, country_emoji=None)
+    await state.set_state(SearchState.choosing_nights)
+    await message.answer(
+        f"{step_prefix('nights')}*Готель:* {escape_markdown_v2(query[:80])}\n\n"
+        "*Скільки ночей\\?* 🌙",
+        parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=nights_kb(),
+    )
 
 
 @router.callback_query(F.data.startswith("cc:"), SearchState.choosing_country)
@@ -111,7 +171,11 @@ async def cb_country(query: CallbackQuery, state: FSMContext) -> None:
 async def cb_nights(query: CallbackQuery, state: FSMContext) -> None:
     value = callback_tail(query.data, "n:") or ""
     if value == "back":
-        await _go_back_to_country(query, state)
+        data = await state.get_data()
+        if data.get("q"):
+            await _go_back_to_hotel_query(query, state)
+        else:
+            await _go_back_to_country(query, state)
         return
     message = callback_message(query)
     if message is None:
@@ -291,6 +355,7 @@ async def _fetch_results(data: dict[str, Any]) -> dict[str, Any]:
     """Call /api/search with the FSM-stored filters. Limit pulled = 60
     (12 pages × 5 cards) so most users never trigger a refetch."""
     params: dict[str, Any] = {
+        "q": data.get("q"),
         "country": data.get("country"),
         "nights": data.get("nights"),
         # Range semantics: the "when" bucket stores a floor + ceiling so the
@@ -509,6 +574,21 @@ async def _go_back_to_country(query: CallbackQuery, state: FSMContext) -> None:
         f"{step_prefix('country')}*Куди летимо\\?* ✈️\n\nВиберіть країну\\:",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=countries_kb(destinations),
+    )
+    await query.answer()
+
+
+async def _go_back_to_hotel_query(query: CallbackQuery, state: FSMContext) -> None:
+    message = callback_message(query)
+    if message is None:
+        await query.answer("Повідомлення недоступне", show_alert=False)
+        return
+    await state.set_state(SearchState.choosing_hotel_query)
+    await message.edit_text(
+        f"{step_prefix('hotel')}*Шукаєте конкретний готель\\?* 🔎\n\n"
+        "Введіть частину назви або пропустіть цей крок\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
+        reply_markup=hotel_query_kb(),
     )
     await query.answer()
 

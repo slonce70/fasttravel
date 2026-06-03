@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class SearchQuery(BaseModel):
+    q: str | None = Field(default=None, min_length=2, max_length=80)
     country: str | None = Field(default=None, min_length=2, max_length=2)
     check_in: date | None = None
     nights: int | None = Field(default=None, ge=1, le=30)

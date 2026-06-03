@@ -3,28 +3,43 @@ import type { SearchResultItem } from '@/lib/types';
 import { Card } from './ui/Card';
 import { Stars } from './ui/Stars';
 import { formatPrice } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 export interface HotelCardProps {
   hotel: SearchResultItem;
+  variant?: 'card' | 'row';
 }
 
-export function HotelCard({ hotel }: HotelCardProps) {
+export function HotelCard({ hotel, variant = 'card' }: HotelCardProps) {
   // Backend returns photos as `photos: [{url, alt?, ...}]`. We display the
   // first one (typically the farvater og:image). Empty array = render a
   // neutral placeholder so the grid keeps its rhythm.
   const photo = hotel.photos?.[0];
   return (
-    <Card className="group flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
+    <Card
+      data-card-variant={variant}
+      className={cn(
+        'group overflow-hidden rounded-xl shadow-[0_18px_45px_-28px_rgba(15,23,42,0.5)] transition-all hover:-translate-y-0.5 hover:shadow-[0_24px_60px_-32px_rgba(15,23,42,0.6)]',
+        variant === 'row' ? 'flex' : 'flex h-full flex-col',
+      )}
+    >
       <Link
         href={`/hotels/${hotel.canonical_slug}`}
-        className="flex flex-1 flex-col"
+        className={cn('flex flex-1', variant === 'row' ? 'flex-col sm:flex-row' : 'flex-col')}
         aria-label={
           hotel.min_price_uah
             ? `${hotel.name_uk}, ціна від ${formatPrice(hotel.min_price_uah)}`
             : hotel.name_uk
         }
       >
-        <div className="relative h-44 w-full overflow-hidden bg-slate-100">
+        <div
+          className={cn(
+            'relative overflow-hidden bg-slate-100',
+            variant === 'row'
+              ? 'h-40 w-full shrink-0 sm:h-auto sm:min-h-36 sm:w-48'
+              : 'h-44 w-full',
+          )}
+        >
           {photo?.url ? (
             // Cloudflare Workers deploy does not run image optimization yet; plain <img>
             // is intentional. Lazy-loaded so off-screen cards don't fetch.
@@ -37,16 +52,16 @@ export function HotelCard({ hotel }: HotelCardProps) {
               className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
             />
           ) : (
-            <div className="flex h-full w-full items-center justify-center bg-slate-100 text-slate-300">
+            <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-teal-50 via-cyan-50 to-indigo-50 text-teal-800/75">
               <svg
                 aria-hidden="true"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth={1.5}
+                strokeWidth={1.8}
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                className="h-10 w-10"
+                className="h-16 w-16"
               >
                 <path d="M3 21h18" />
                 <path d="M5 21V5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v16" />
@@ -56,22 +71,26 @@ export function HotelCard({ hotel }: HotelCardProps) {
             </div>
           )}
         </div>
-        <div className="flex flex-1 flex-col p-5">
-          <div className="mb-2 flex items-start justify-between gap-2">
-            <h3 className="text-base font-semibold leading-tight text-slate-900">
-              {hotel.name_uk}
-            </h3>
-            <Stars count={hotel.stars} className="shrink-0 text-xs" />
+        <div
+          className={cn('flex flex-1 flex-col p-5', variant === 'row' && 'sm:flex-row sm:gap-5')}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="mb-2 flex items-start justify-between gap-2">
+              <h3 className="text-base font-semibold leading-tight text-slate-900">
+                {hotel.name_uk}
+              </h3>
+              <Stars count={hotel.stars} className="shrink-0 text-xs" />
+            </div>
+            {hotel.review_score != null && (
+              <p className="mb-3 text-xs text-slate-500">
+                <span className="font-semibold text-success-600">
+                  {hotel.review_score.toFixed(1)}
+                </span>{' '}
+                / 10 за відгуками
+              </p>
+            )}
           </div>
-          {hotel.review_score != null && (
-            <p className="mb-3 text-xs text-slate-500">
-              <span className="font-semibold text-success-600">
-                {hotel.review_score.toFixed(1)}
-              </span>{' '}
-              / 10 за відгуками
-            </p>
-          )}
-          <div className="mt-auto flex items-end justify-between">
+          <div className="mt-auto flex items-end justify-between gap-4 sm:min-w-44 sm:flex-col sm:items-end sm:justify-end">
             <div>
               <p className="text-xs text-slate-500">від</p>
               <p className="text-lg font-bold text-brand-800">{formatPrice(hotel.min_price_uah)}</p>
@@ -90,7 +109,7 @@ export function HotelCard({ hotel }: HotelCardProps) {
                 </p>
               )}
             </div>
-            <span className="text-sm font-medium text-brand-700">Дивитись →</span>
+            <span className="text-sm font-semibold text-teal-700">Переглянути дати →</span>
           </div>
         </div>
       </Link>

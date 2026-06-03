@@ -16,7 +16,7 @@ export function DealCard({ deal }: DealCardProps) {
   const starsStr = deal.hotel_stars ? '★'.repeat(deal.hotel_stars) : '';
   const signal = getDealSignalCopy(deal.detection_method);
   return (
-    <Card className="flex h-full flex-col overflow-hidden transition-shadow hover:shadow-md">
+    <Card className="group flex h-full flex-col overflow-hidden rounded-xl shadow-[0_18px_45px_-28px_rgba(15,23,42,0.55)] transition-all hover:-translate-y-0.5 hover:shadow-[0_24px_60px_-32px_rgba(15,23,42,0.65)]">
       <Link
         href={href}
         aria-label={heading}
@@ -27,18 +27,32 @@ export function DealCard({ deal }: DealCardProps) {
           <img
             src={deal.hotel_photo_url}
             alt={heading}
-            className="h-full w-full object-cover"
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
             loading="lazy"
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-3xl text-slate-300">
-            🏨
+          <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-100 to-teal-50 text-slate-300">
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 32 32"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-12 w-12"
+            >
+              <path d="M5 27h22" />
+              <path d="M8 27V8.5A1.5 1.5 0 0 1 9.5 7h8A1.5 1.5 0 0 1 19 8.5V27" />
+              <path d="M19 14h4.5A1.5 1.5 0 0 1 25 15.5V27" />
+              <path d="M11.5 12h3M11.5 17h3M11.5 22h3" />
+            </svg>
           </div>
         )}
       </Link>
       <CardBody className="flex flex-1 flex-col gap-3">
         <div className="flex items-start justify-between gap-2">
-          <Badge variant={signal.badgeVariant} size="md">
+          <Badge variant={signal.badgeVariant} size="md" className="rounded-md">
             {signal.badgeIcon} -{Math.round(deal.discount_pct)}%
           </Badge>
           <span className="text-xs text-slate-500">{formatDateMedium(deal.detected_at)}</span>
@@ -57,9 +71,13 @@ export function DealCard({ deal }: DealCardProps) {
         </div>
         <ul className="space-y-1 text-sm text-slate-600">
           <li>
-            📅 заїзд {formatDateMedium(deal.check_in)} · {formatNights(deal.nights)}
+            <span className="font-medium text-slate-800">Заїзд</span>{' '}
+            {formatDateMedium(deal.check_in)} · {formatNights(deal.nights)}
           </li>
-          <li>🍽 {formatMealPlan(deal.meal_plan)}</li>
+          <li>
+            <span className="font-medium text-slate-800">Харчування</span>{' '}
+            {formatMealPlan(deal.meal_plan)}
+          </li>
         </ul>
         <p className="rounded-md bg-slate-50 px-2.5 py-2 text-xs leading-snug text-slate-600">
           {signal.reason}

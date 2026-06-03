@@ -24,15 +24,19 @@ class _FakeResult:
 class _FakeSession:
     def __init__(self) -> None:
         self.scalar_sql = ""
+        self.scalar_params: dict = {}
         self.execute_sql = ""
+        self.execute_params: dict = {}
         self.rows: list[dict] = []
 
     async def scalar(self, sql, params):  # type: ignore[no-untyped-def]
         self.scalar_sql = str(sql)
+        self.scalar_params = params
         return 0
 
     async def execute(self, sql, params):  # type: ignore[no-untyped-def]
         self.execute_sql = str(sql)
+        self.execute_params = params
         return _FakeResult(self.rows)
 
 
@@ -79,6 +83,27 @@ async def test_search_hotels_uses_whitelisted_name_sort_order() -> None:
     assert "ORDER BY\n            px.nights_exact    DESC NULLS LAST" in session.execute_sql
     assert "h.name_uk          ASC NULLS LAST" in session.execute_sql
     assert "px.effective_price ASC NULLS LAST" in session.execute_sql
+
+
+@pytest.mark.asyncio
+async def test_search_hotels_filters_by_hotel_name_or_slug_query() -> None:
+    session = _FakeSession()
+
+    await search_hotels(session, q="Rixos Premium")
+
+    assert "h.name_uk ILIKE :hotel_query_pattern" in session.execute_sql
+    assert "h.name_en ILIKE :hotel_query_pattern" in session.execute_sql
+    assert "h.canonical_slug ILIKE :hotel_query_pattern" in session.execute_sql
+    assert session.execute_params["hotel_query_pattern"] == "%Rixos Premium%"
+
+
+@pytest.mark.asyncio
+async def test_search_hotels_escapes_wildcards_in_hotel_query() -> None:
+    session = _FakeSession()
+
+    await search_hotels(session, q="100%_Resort\\")
+
+    assert session.execute_params["hotel_query_pattern"] == "%100\\%\\_Resort\\\\%"
 
 
 @pytest.mark.asyncio

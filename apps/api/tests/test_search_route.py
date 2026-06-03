@@ -151,3 +151,19 @@ async def test_search_route_passes_sort_from_plain_and_html_escaped_params(
     assert escaped_resp.status_code == 200
     assert captured[0]["sort"] == "rating_desc"
     assert captured[1]["sort"] == "name_asc"
+
+
+@pytest.mark.asyncio
+async def test_search_route_forwards_hotel_name_query(client, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_search_hotels(session, **kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return PaginatedSearchResults(items=[], total=0, limit=20, offset=0)
+
+    monkeypatch.setattr("src.routers.search.search_hotels", fake_search_hotels)
+
+    resp = await client.get("/api/search?q=Rixos%20Premium")
+
+    assert resp.status_code == 200
+    assert captured["q"] == "Rixos Premium"

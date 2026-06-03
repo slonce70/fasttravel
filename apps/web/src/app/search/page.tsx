@@ -75,99 +75,107 @@ export default async function SearchPage({
   const selectedCountry = params.country
     ? countries.find((c) => c.country_iso2.toUpperCase() === params.country)
     : undefined;
-  const heading = selectedCountry
-    ? `Тури в ${accusativeCountry(selectedCountry.name_uk)}`
-    : 'Усі тури';
+  const heading = params.q
+    ? `Готелі за назвою “${params.q}”`
+    : selectedCountry
+      ? `Тури в ${accusativeCountry(selectedCountry.name_uk)}`
+      : 'Усі тури';
 
   return (
-    <Container className="space-y-6 py-8">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">{heading}</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          {error
-            ? 'Не вдалося завантажити результати.'
-            : `${results.total} ${plural(results.total)} знайдено${
-                results.items.length > 0 ? ` · показуємо ${from}-${to}` : ''
-              }`}
-        </p>
-      </div>
+    <Container className="py-8">
+      <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
+        <aside className="lg:sticky lg:top-24 lg:self-start">
+          <Suspense
+            fallback={
+              <div
+                className="h-[520px] animate-pulse rounded-xl bg-slate-100 ring-1 ring-slate-200"
+                aria-hidden
+              />
+            }
+          >
+            <SearchForm countries={countries} defaultCountry={params.country} variant="panel" />
+          </Suspense>
+        </aside>
 
-      <Suspense
-        fallback={
-          <div
-            className="h-44 animate-pulse rounded-2xl bg-slate-100 ring-1 ring-slate-200"
-            aria-hidden
-          />
-        }
-      >
-        <SearchForm countries={countries} defaultCountry={params.country} />
-      </Suspense>
+        <div className="space-y-6">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-950">{heading}</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              {error
+                ? 'Не вдалося завантажити результати.'
+                : `${results.total} ${plural(results.total)} знайдено${
+                    results.items.length > 0 ? ` · показуємо ${from}-${to}` : ''
+                  }`}
+            </p>
+          </div>
 
-      {hasPaxNotice && (
-        <div
-          role="status"
-          className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900 ring-1 ring-amber-200"
-        >
-          Ціни у видачі зараз рахуються для {results.price_basis_adults} дорослих
-          {results.price_basis_kids.length > 0
-            ? ` і дітей ${results.price_basis_kids.join(', ')}`
-            : ' без дітей'}
-          . Обраний склад туристів збережено в пошуку, але live-ціна для нього буде уточнюватися на
-          стороні оператора.
-        </div>
-      )}
-
-      {!params.check_in && !readParam(sp, 'check_in') && !readParam(sp, 'check_in_min') && (
-        <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-200">
-          Без дати заїзду показуємо найнижчу актуальну ціну, яку вже знайшов парсер. Для точнішого
-          підбору оберіть дату, тривалість і харчування.
-        </div>
-      )}
-
-      {error ? (
-        <div className="rounded-xl bg-white p-10 text-center text-sm text-danger-600 ring-1 ring-slate-200">
-          {error}
-        </div>
-      ) : results.items.length === 0 ? (
-        <div className="rounded-xl bg-white p-10 text-center text-sm text-slate-500 ring-1 ring-slate-200">
-          <p>
-            Нічого не знайдено серед готелів з актуальними цінами. Спробуйте змінити дату,
-            харчування, зірковість або країну.
-          </p>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-            <Link
-              href="/search"
-              className="rounded-lg px-3 py-2 font-medium text-brand-700 ring-1 ring-slate-300 hover:bg-slate-50"
+          {hasPaxNotice && (
+            <div
+              role="status"
+              className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900 ring-1 ring-amber-200"
             >
-              Скинути фільтри
-            </Link>
-            {params.country && (
-              <Link
-                href={searchHref({ ...params, country: undefined }, 0)}
-                className="rounded-lg px-3 py-2 font-medium text-brand-700 ring-1 ring-slate-300 hover:bg-slate-50"
-              >
-                Шукати по всіх країнах
-              </Link>
-            )}
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="flex flex-col gap-3 rounded-xl bg-white p-3 ring-1 ring-slate-200 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-sm font-medium text-slate-700">Варіанти</span>
-            <SearchSortControl value={params.sort ?? 'price_asc'} />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {results.items.map((h) => (
-              <HotelCard key={h.hotel_id} hotel={h} />
-            ))}
-          </div>
-          <SearchPagination params={params} results={results} />
-          {/* Only show on non-empty results so a "0 готелів" search page
+              Ціни у видачі зараз рахуються для {results.price_basis_adults} дорослих
+              {results.price_basis_kids.length > 0
+                ? ` і дітей ${results.price_basis_kids.join(', ')}`
+                : ' без дітей'}
+              . Обраний склад туристів збережено в пошуку, але live-ціна для нього буде уточнюватися
+              на стороні оператора.
+            </div>
+          )}
+
+          {!params.check_in && !readParam(sp, 'check_in') && !readParam(sp, 'check_in_min') && (
+            <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600 ring-1 ring-slate-200">
+              Без дати заїзду показуємо найнижчу актуальну ціну, яку вже знайшов парсер. Для
+              точнішого підбору оберіть дату, тривалість і харчування.
+            </div>
+          )}
+
+          {error ? (
+            <div className="rounded-xl bg-white p-10 text-center text-sm text-danger-600 ring-1 ring-slate-200">
+              {error}
+            </div>
+          ) : results.items.length === 0 ? (
+            <div className="rounded-xl bg-white p-10 text-center text-sm text-slate-500 ring-1 ring-slate-200">
+              <p>
+                Нічого не знайдено серед готелів з актуальними цінами. Спробуйте змінити дату,
+                харчування, зірковість або країну.
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+                <Link
+                  href="/search"
+                  className="rounded-lg px-3 py-2 font-medium text-brand-700 ring-1 ring-slate-300 hover:bg-slate-50"
+                >
+                  Скинути фільтри
+                </Link>
+                {params.country && (
+                  <Link
+                    href={searchHref({ ...params, country: undefined }, 0)}
+                    className="rounded-lg px-3 py-2 font-medium text-brand-700 ring-1 ring-slate-300 hover:bg-slate-50"
+                  >
+                    Шукати по всіх країнах
+                  </Link>
+                )}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-col gap-3 rounded-xl bg-white p-3 ring-1 ring-slate-200 sm:flex-row sm:items-center sm:justify-between">
+                <span className="text-sm font-medium text-slate-700">Варіанти</span>
+                <SearchSortControl value={params.sort ?? 'price_asc'} />
+              </div>
+              <div className="grid gap-4">
+                {results.items.map((h) => (
+                  <HotelCard key={h.hotel_id} hotel={h} variant="row" />
+                ))}
+              </div>
+              <SearchPagination params={params} results={results} />
+              {/* Only show on non-empty results so a "0 готелів" search page
               doesn't get a CTA before the user has anything to act on. */}
-          <TelegramCta />
-        </>
-      )}
+              <TelegramCta />
+            </>
+          )}
+        </div>
+      </div>
     </Container>
   );
 }

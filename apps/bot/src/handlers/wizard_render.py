@@ -23,6 +23,7 @@ from src.keyboards.filters import results_actions_kb
 # («Крок k/6 · …») to match that promise. Kept here, pure and testable,
 # rather than scattering literal indices across the handler.
 WIZARD_STEPS: tuple[str, ...] = (
+    "hotel",
     "country",
     "nights",
     "when",

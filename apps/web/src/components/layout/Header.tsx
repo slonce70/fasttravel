@@ -31,14 +31,26 @@ export async function Header() {
   const topCountries = await getTopCountries();
 
   return (
-    <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70">
-      <Container className="flex h-14 items-center justify-between gap-6">
-        <Link href="/" className="flex items-center gap-2 font-semibold text-brand-800">
-          <span aria-hidden className="text-xl">
-            ✈️
+    <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/75">
+      <Container className="flex h-16 items-center justify-between gap-6">
+        <Link href="/" className="flex items-center gap-2.5 font-semibold text-slate-950">
+          <span
+            aria-hidden
+            className="grid h-8 w-8 place-items-center rounded-lg bg-teal-700 text-white shadow-sm"
+          >
+            <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4">
+              <path
+                d="M5 14.5 10.3 9l3.5 3.4L19 6.8"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path d="M5 18h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
           </span>
-          <span className="text-base sm:text-lg">FastTravel</span>
-          <span className="hidden text-xs font-normal text-slate-400 sm:inline">
+          <span className="text-base tracking-tight sm:text-lg">FastTravel</span>
+          <span className="hidden text-xs font-normal text-slate-500 sm:inline">
             календар цін на тури
           </span>
         </Link>
@@ -48,7 +60,7 @@ export async function Header() {
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className="rounded px-3 py-2 text-sm text-slate-700 transition-colors hover:bg-slate-100 hover:text-brand-800"
+                  className="rounded-md px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 hover:text-teal-800"
                 >
                   {item.label}
                 </Link>
@@ -59,7 +71,7 @@ export async function Header() {
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className="rounded px-3 py-2 text-sm text-slate-700 transition-colors hover:bg-slate-100 hover:text-brand-800"
+                  className="rounded-md px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 hover:text-teal-800"
                 >
                   {item.label}
                 </Link>
@@ -71,11 +83,11 @@ export async function Header() {
         <nav aria-label="Швидкі дії" className="flex items-center gap-1 md:hidden">
           <Link
             href="/search"
-            className="rounded px-3 py-2 text-sm font-medium text-slate-700 hover:text-brand-800"
+            className="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:text-teal-800"
           >
             Пошук
           </Link>
-          <Link href="/deals" className="rounded px-3 py-2 text-sm font-medium text-accent-600">
+          <Link href="/deals" className="rounded-md px-3 py-2 text-sm font-medium text-teal-700">
             Знижки
           </Link>
         </nav>
