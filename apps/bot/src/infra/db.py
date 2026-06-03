@@ -8,7 +8,8 @@ DB calls outside of subscribe / profile flows.
 
 from __future__ import annotations
 
-from datetime import datetime
+import json
+from datetime import datetime, timezone
 from typing import Any, cast
 
 from sqlalchemy import text
@@ -202,6 +203,172 @@ async def delete_subscription(chat_id: int, sub_id: int) -> bool:
         )
         await db.commit()
         return cast("CursorResult[Any]", result).rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Notification controls — per-sub mute + global pause.
+#
+# Enforcement is `telegram_subscriber_filters.is_active`: the notify
+# scheduler job already filters `WHERE f.is_active`, so flipping the flag
+# is the whole mute/pause mechanism — no scheduler change required.
+#
+# Global-pause bookkeeping lives in `telegram_subscribers.filters_jsonb`
+# (a JSONB free-preference store, default '{}', otherwise unused) under a
+# single "pause" key:
+#
+#     {"pause": {"until": "<ISO-8601 UTC>" | null, "filter_ids": [int, ...]}}
+#
+#   - `until`       : when the pause auto-expires (None = "until I resume").
+#   - `filter_ids`  : the subs WE auto-muted, so resume only reactivates
+#                     those and never un-mutes a sub the user paused on
+#                     purpose.
+#
+# Auto-resume is LAZY (checked on interaction, no cron), so a timed pause
+# lasts AT LEAST its window — it can linger until the next interaction.
+# ---------------------------------------------------------------------------
+
+
+def _decode_jsonb(value: Any) -> dict[str, Any]:
+    """JSONB columns come back as a dict via asyncpg, but decode a JSON
+    string defensively in case the codec ever changes."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+    return value if isinstance(value, dict) else {}
+
+
+async def set_subscription_active(chat_id: int, sub_id: int, active: bool) -> bool:
+    """Flip one subscription's is_active (mute / un-mute). chat_id-scoped so a
+    user can only toggle their own row. Returns True if a row was updated."""
+    async with get_session_factory()() as db:
+        result = await db.execute(
+            text(
+                """
+                UPDATE telegram_subscriber_filters
+                   SET is_active = :active
+                 WHERE chat_id = :chat_id AND id = :id
+                """
+            ),
+            {"active": active, "chat_id": chat_id, "id": sub_id},
+        )
+        await db.commit()
+        return cast("CursorResult[Any]", result).rowcount > 0
+
+
+async def pause_all_alerts(chat_id: int, until: datetime | None) -> list[int]:
+    """Mute every currently-active sub for this user (global pause) and record
+    which ones we paused + the expiry in filters_jsonb.
+
+    Returns the list of filter ids that were just paused (only the ones that
+    were active — never the ones the user had already muted). The pause block
+    is a read-modify-write that PRESERVES any other keys in filters_jsonb."""
+    until_iso = until.astimezone(timezone.utc).isoformat() if until is not None else None
+    async with get_session_factory()() as db:
+        result = await db.execute(
+            text(
+                """
+                UPDATE telegram_subscriber_filters
+                   SET is_active = false
+                 WHERE chat_id = :chat_id AND is_active = true
+             RETURNING id
+                """
+            ),
+            {"chat_id": chat_id},
+        )
+        paused_ids = [int(r[0]) for r in result.all()]
+        pause_block = {"pause": {"until": until_iso, "filter_ids": paused_ids}}
+        # `||` merges the "pause" key in, leaving any other JSONB keys intact.
+        await db.execute(
+            text(
+                """
+                UPDATE telegram_subscribers
+                   SET filters_jsonb = filters_jsonb || CAST(:pause AS jsonb)
+                 WHERE chat_id = :chat_id
+                """
+            ),
+            {"pause": json.dumps(pause_block), "chat_id": chat_id},
+        )
+        await db.commit()
+    return paused_ids
+
+
+async def get_pause_state(chat_id: int) -> dict[str, Any] | None:
+    """Return the {"until", "filter_ids"} pause block, or None if not paused."""
+    async with get_session_factory()() as db:
+        result = await db.execute(
+            text("SELECT filters_jsonb FROM telegram_subscribers WHERE chat_id = :chat_id"),
+            {"chat_id": chat_id},
+        )
+        row = result.first()
+    if row is None:
+        return None
+    prefs = _decode_jsonb(row[0])
+    pause = prefs.get("pause")
+    return pause if isinstance(pause, dict) else None
+
+
+async def resume_all_alerts(chat_id: int) -> int:
+    """Reactivate the subs WE paused (per the filters_jsonb pause block) and
+    clear the pause key. Never reactivates a sub the user muted on purpose.
+
+    Returns the number of subs reactivated."""
+    pause = await get_pause_state(chat_id)
+    filter_ids = (
+        [int(i) for i in pause.get("filter_ids", [])]
+        if pause and isinstance(pause.get("filter_ids"), list)
+        else []
+    )
+    async with get_session_factory()() as db:
+        reactivated = 0
+        if filter_ids:
+            result = await db.execute(
+                text(
+                    """
+                    UPDATE telegram_subscriber_filters
+                       SET is_active = true
+                     WHERE chat_id = :chat_id AND id = ANY(:ids)
+                    """
+                ),
+                {"chat_id": chat_id, "ids": filter_ids},
+            )
+            reactivated = cast("CursorResult[Any]", result).rowcount
+        # `- 'pause'` drops just the pause key, preserving other JSONB prefs.
+        await db.execute(
+            text(
+                """
+                UPDATE telegram_subscribers
+                   SET filters_jsonb = filters_jsonb - 'pause'
+                 WHERE chat_id = :chat_id
+                """
+            ),
+            {"chat_id": chat_id},
+        )
+        await db.commit()
+    return reactivated
+
+
+async def maybe_auto_resume(chat_id: int) -> bool:
+    """Lazy expiry: if a timed pause exists AND its `until` has passed, resume
+    now and return True. Called on user interaction (no cron), so a timed pause
+    lasts AT LEAST its window and may linger until the next interaction."""
+    pause = await get_pause_state(chat_id)
+    if not pause:
+        return False
+    until_iso = pause.get("until")
+    if not until_iso or not isinstance(until_iso, str):
+        return False
+    try:
+        until = datetime.fromisoformat(until_iso)
+    except ValueError:
+        return False
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) >= until:
+        await resume_all_alerts(chat_id)
+        return True
+    return False
 
 
 async def get_last_notification(chat_id: int) -> datetime | None:

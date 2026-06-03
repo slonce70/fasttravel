@@ -32,6 +32,7 @@ from src.infra.db import (
     ensure_subscriber,
     find_subscription,
     list_subscriptions,
+    set_subscription_active,
 )
 from src.infra.logging import get_logger
 from src.keyboards.countries import countries_kb, country_emoji, country_name_uk
@@ -87,7 +88,11 @@ def _render_subscriptions(subs: list[dict[str, Any]]) -> str:
         name = escape_markdown_v2(country_name_uk(iso))
         budget = escape_markdown_v2(_format_budget(sub.get("max_price_uah")))
         stars = escape_markdown_v2(_format_stars(sub.get("min_stars")))
-        lines.append(f"*{i}\\.* {flag} *{name}* · {budget} · {stars}")
+        # `is_active` defaults to True so a test/legacy dict without the key
+        # never paints an active sub as paused. The suffix's parens are
+        # MarkdownV2-reserved, hence escape_markdown_v2.
+        paused = "" if sub.get("is_active", True) else f" {escape_markdown_v2('(на паузі)')}"
+        lines.append(f"*{i}\\.* {flag} *{name}* · {budget} · {stars}{paused}")
     return "\n".join(lines)
 
 
@@ -95,12 +100,19 @@ def _subs_kb(subs: list[dict[str, Any]]) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for sub in subs:
         iso = sub["country_iso2"]
+        sub_id = sub["id"]
+        if sub.get("is_active", True):
+            toggle = InlineKeyboardButton(text="🔕 Призупинити", callback_data=f"sub:mute:{sub_id}")
+        else:
+            toggle = InlineKeyboardButton(text="🔔 Увімкнути", callback_data=f"sub:on:{sub_id}")
         rows.append(
             [
                 InlineKeyboardButton(
                     text=f"❌ {country_emoji(iso)} {country_name_uk(iso)}",
-                    callback_data=f"sub:del:{sub['id']}",
-                )
+                    callback_data=f"sub:del:{sub_id}",
+                ),
+                toggle,
+                InlineKeyboardButton(text="✏️ Змінити", callback_data=f"sub:edit:{sub_id}"),
             ]
         )
     rows.append([InlineKeyboardButton(text="➕ Додати підписку", callback_data="sub:add")])
@@ -303,8 +315,26 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Delete a single subscription
+# Edit a subscription
+#
+# Simplest correct approach (the spec's sanctioned fallback): delete the old
+# row, then re-enter the existing add wizard. Re-seeding the wizard with the
+# old values fights cb_add's state.clear() and the find_subscription dedup in
+# cb_stars (editing to the SAME combo would dedup-noop instead of replacing),
+# so we keep it as a clean "remove + add fresh" flow and reuse the wizard.
 # ---------------------------------------------------------------------------
+
+
+@router.callback_query(F.data.startswith("sub:edit:"))
+async def cb_edit(query: CallbackQuery, state: FSMContext) -> None:
+    sub_id = callback_int_tail(query.data, "sub:edit:")
+    if sub_id is None:
+        await query.answer()
+        return
+    chat_id = query.from_user.id
+    await delete_subscription(chat_id, sub_id)
+    # Re-enter the add wizard from the country step (reuses cb_add's flow).
+    await cb_add(query, state)
 
 
 @router.callback_query(F.data.startswith("sub:del:"))
@@ -327,3 +357,51 @@ async def cb_delete(query: CallbackQuery) -> None:
         await query.answer("Підписку видалено")
     else:
         await query.answer("Не знайдено")
+
+
+# ---------------------------------------------------------------------------
+# Per-subscription mute / un-mute (toggle is_active).
+#
+# `set_subscription_active` is the enforcement: the notify scheduler filters
+# `WHERE f.is_active`, so a muted sub simply stops being matched. NOT state-
+# bound (no SubscribeState filter), so `sub:mute:` also fires when tapped from
+# a scheduler alert message — in that case the message has no sub-list to
+# re-render, so we guard `message is not None` (like cb_delete) and fall back
+# to a toast.
+# ---------------------------------------------------------------------------
+
+
+async def _toggle_subscription(query: CallbackQuery, prefix: str, active: bool, toast: str) -> None:
+    sub_id = callback_int_tail(query.data, prefix)
+    if sub_id is None:
+        await query.answer()
+        return
+    chat_id = query.from_user.id
+    ok = await set_subscription_active(chat_id, sub_id, active)
+    if not ok:
+        await query.answer("Не знайдено")
+        return
+    message = callback_message(query)
+    if message is not None:
+        subs = await list_subscriptions(chat_id)
+        try:
+            await message.edit_text(
+                _render_subscriptions(subs),
+                parse_mode=ParseMode.MARKDOWN_V2,
+                reply_markup=_subs_kb(subs),
+            )
+        except Exception:  # noqa: BLE001
+            # The originating message may not be the subs list (e.g. a
+            # scheduler alert), so an edit can fail — the toast still confirms.
+            pass
+    await query.answer(toast)
+
+
+@router.callback_query(F.data.startswith("sub:mute:"))
+async def cb_mute(query: CallbackQuery) -> None:
+    await _toggle_subscription(query, "sub:mute:", active=False, toast="Підписку призупинено")
+
+
+@router.callback_query(F.data.startswith("sub:on:"))
+async def cb_unmute(query: CallbackQuery) -> None:
+    await _toggle_subscription(query, "sub:on:", active=True, toast="Підписку ввімкнено")

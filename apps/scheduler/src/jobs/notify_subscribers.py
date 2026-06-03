@@ -267,6 +267,17 @@ async def _notify_subscribers_locked(settings: Settings) -> int:
                     )
                 ]
             )
+            # Mute this one subscription (bot's `sub:mute:` handler flips
+            # is_active=false). Keyboard-only — does NOT touch _MATCH_SQL,
+            # selection, ordering, MAX_PER_RUN, or any rendered copy.
+            kb_rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="🔕 Призупинити цю підписку",
+                        callback_data=f"sub:mute:{row.filter_id}",
+                    )
+                ]
+            )
             kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
             try:

@@ -47,26 +47,31 @@ def _patch_db(monkeypatch, *, subs: list[dict[str, Any]], last_alert: datetime |
     async def _get_last_notification(chat_id: int) -> datetime | None:
         return last_alert
 
+    async def _maybe_auto_resume(chat_id: int) -> bool:
+        return False
+
     monkeypatch.setattr(profile_mod, "ensure_subscriber", _ensure_subscriber)
     monkeypatch.setattr(profile_mod, "list_subscriptions", _list_subscriptions)
     monkeypatch.setattr(profile_mod, "get_last_notification", _get_last_notification)
+    monkeypatch.setattr(profile_mod, "maybe_auto_resume", _maybe_auto_resume)
 
 
 def test_profile_kb_buttons_all_work() -> None:
-    """Every hub button is a working entrypoint — the two callbacks the
-    profile router already handles, plus a real channel URL (no dead ends).
-    No pause/notifications toggle yet (that's a later phase)."""
+    """Every hub button is a working entrypoint — the callbacks the profile
+    router handles (subs, notifications, delete), plus a real channel URL (no
+    dead ends). Phase 2 adds the «⏸ Сповіщення» (prof:notif) toggle."""
     kb = _profile_kb()
     callbacks = [b.callback_data for row in kb.inline_keyboard for b in row if b.callback_data]
     urls = [b.url for row in kb.inline_keyboard for b in row if b.url]
 
     assert "prof:subs" in callbacks
+    assert "prof:notif" in callbacks  # notifications submenu (global pause)
     assert "prof:delete" in callbacks
     # Channel button is a working URL (reuses settings.public_channel_link).
     assert any(u and u.startswith("http") for u in urls)
-    # No dead pause/notifications button this phase.
-    assert not any(cb and "pause" in cb for cb in callbacks)
-    assert not any(cb and "notif" in cb for cb in callbacks)
+    # «⏸ Сповіщення» sits between «Мої підписки» and «Видалити».
+    notif_idx = callbacks.index("prof:notif")
+    assert callbacks.index("prof:subs") < notif_idx < callbacks.index("prof:delete")
 
 
 @pytest.mark.asyncio

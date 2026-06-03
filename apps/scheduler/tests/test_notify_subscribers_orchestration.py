@@ -182,5 +182,31 @@ async def test_notify_subscribers_partial_failure_marks_only_successes(monkeypat
     assert bot.session.closed is True
 
 
+@pytest.mark.asyncio
+async def test_alert_keyboard_carries_mute_button_for_this_filter(monkeypatch) -> None:
+    """Phase-2 bot redesign appends a «🔕 Призупинити цю підписку» button
+    (callback sub:mute:{filter_id}) to the alert keyboard — keyboard-only, so
+    selection/marking are unchanged: still exactly one ledger mark per sent
+    row, and the delete button stays."""
+    module = notify_module
+    marked: list[dict] = []
+    rows = [_alert_row(1, filter_id=77)]
+    bot = _FakeBot()
+
+    monkeypatch.setattr(module, "get_settings", lambda: _settings())
+    monkeypatch.setattr(module, "async_session_factory", lambda: _FakeSession(rows, marked))
+    monkeypatch.setattr(module, "make_bot", lambda _token: bot)
+    monkeypatch.setattr(module.asyncio, "sleep", lambda _seconds: _noop_sleep())
+
+    assert await notify_subscribers() == 1
+    # Selection/marking untouched: one mark for the one matched/sent row.
+    assert marked == [{"deal_id": 1, "filter_id": 77}]
+
+    kb = bot.messages[0]["reply_markup"]
+    cbs = [b.callback_data for row in kb.inline_keyboard for b in row if b.callback_data]
+    assert "sub:mute:77" in cbs  # mute THIS subscription from the alert
+    assert "sub:del:77" in cbs  # existing delete button preserved
+
+
 async def _noop_sleep() -> None:
     return None
