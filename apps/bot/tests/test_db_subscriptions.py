@@ -11,6 +11,7 @@ the helper uses ``IS NOT DISTINCT FROM`` for the three nullable columns.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -24,6 +25,9 @@ class _FakeResult:
 
     def first(self) -> tuple[Any, ...] | None:
         return self._row
+
+    def scalar(self) -> Any:
+        return self._row[0] if self._row is not None else None
 
 
 class _FakeSession:
@@ -107,3 +111,34 @@ async def test_find_subscription_returns_none_when_no_row(monkeypatch) -> None:
     )
 
     assert found is None
+
+
+@pytest.mark.asyncio
+async def test_get_last_notification_joins_through_filters(monkeypatch) -> None:
+    """The ledger (migration 019) is keyed by filter_id, NOT chat_id, so the
+    query MUST join telegram_filter_notifications → telegram_subscriber_filters
+    and scope by f.chat_id. A naive WHERE chat_id on the ledger would error."""
+    session = _install_fake_factory(monkeypatch, row=None)
+
+    await db_mod.get_last_notification(123)
+
+    sql = session.executed_sql
+    assert "telegram_filter_notifications" in sql
+    assert "JOIN telegram_subscriber_filters f ON f.id = n.filter_id" in sql
+    assert "f.chat_id = :chat_id" in sql
+    assert session.executed_params["chat_id"] == 123
+
+
+@pytest.mark.asyncio
+async def test_get_last_notification_returns_timestamp(monkeypatch) -> None:
+    ts = datetime(2026, 6, 3, 8, 0, tzinfo=UTC)
+    _install_fake_factory(monkeypatch, row=(ts,))
+
+    assert await db_mod.get_last_notification(123) == ts
+
+
+@pytest.mark.asyncio
+async def test_get_last_notification_returns_none_when_never_alerted(monkeypatch) -> None:
+    _install_fake_factory(monkeypatch, row=None)
+
+    assert await db_mod.get_last_notification(123) is None

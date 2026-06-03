@@ -18,16 +18,31 @@ from aiogram.types import (
 )
 
 from shared.publishers.broadcast import escape_markdown_v2
+from shared.text_uk import format_date_short
+from src.config import get_settings
 from src.infra.callbacks import callback_message
-from src.infra.db import delete_all_user_data, ensure_subscriber, list_subscriptions
+from src.infra.db import (
+    delete_all_user_data,
+    ensure_subscriber,
+    get_last_notification,
+    list_subscriptions,
+)
 
 router = Router(name="profile")
 
 
 def _profile_kb() -> InlineKeyboardMarkup:
+    """Account hub — every button is a working entrypoint (no dead ends).
+
+    «Канал» reuses the public channel link from settings (same target as
+    the /channel command); we deliberately omit a pause/notifications
+    toggle here — that arrives in a later phase, so leaving it out now
+    avoids a dead button.
+    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="🔔 Мої підписки", callback_data="prof:subs")],
+            [InlineKeyboardButton(text="📡 Канал", url=get_settings().public_channel_link)],
             [InlineKeyboardButton(text="🗑 Видалити всі дані", callback_data="prof:delete")],
         ]
     )
@@ -50,15 +65,27 @@ async def show_profile(message: Message) -> None:
         return
     await ensure_subscriber(user.id, user.username)
     subs = await list_subscriptions(user.id)
+    last_alert = await get_last_notification(user.id)
+
     name = escape_markdown_v2(user.first_name or "")
-    body = (
-        f"👤 *Профіль* {name}\n\n"
-        f"🆔 ID: `{user.id}`\n"
-        f"🔔 Активних підписок: *{len(subs)}*\n\n"
-        "_Натисніть «Мої підписки» нижче, щоб переглянути / видалити_\\."
-    )
+    greeting = f"👤 *Профіль* {name}".rstrip()
+    lines = [
+        greeting,
+        "",
+        f"🆔 ID: `{user.id}`",
+        f"🔔 Активних підписок: *{len(subs)}*",
+    ]
+    # Read-only «last alert» line — shown only when the user has actually
+    # been alerted, so we never render an empty / "None" date.
+    if last_alert is not None:
+        last_alert_txt = escape_markdown_v2(format_date_short(last_alert))
+        lines.append(f"🕓 Останній алерт: {last_alert_txt}")
+    lines += [
+        "",
+        "_Натисніть «Мої підписки» нижче, щоб переглянути / видалити_\\.",
+    ]
     await message.answer(
-        body,
+        "\n".join(lines),
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=_profile_kb(),
     )

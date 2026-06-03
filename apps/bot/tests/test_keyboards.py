@@ -35,21 +35,25 @@ def _all_callbacks(kb) -> list[str]:
 
 
 def test_main_menu_layout():
-    """BEST first because the product's main job is 'show me steals' —
-    matches the channel post style and the /best command. Other labels
-    keep their broad position (browse, account)."""
+    """Task clusters: intent tools (search/destinations), then the three
+    browse feeds (best/deals/cheap), then account (subscribe/profile/help).
+    Constants are imported by name so label-string changes flow through
+    automatically; this locks the grouping + order."""
     kb = main_menu_kb()
-    assert len(kb.keyboard) == 4
-    assert [b.text for row in kb.keyboard for b in row] == [
-        BEST,
-        SEARCH,
-        DEALS,
-        CHEAP,
-        DESTINATIONS,
-        SUBSCRIBE,
-        PROFILE,
-        HELP,
-    ]
+    assert len(kb.keyboard) == 3
+    assert [b.text for b in kb.keyboard[0]] == [SEARCH, DESTINATIONS]
+    assert [b.text for b in kb.keyboard[1]] == [BEST, DEALS, CHEAP]
+    assert [b.text for b in kb.keyboard[2]] == [SUBSCRIBE, PROFILE, HELP]
+
+
+def test_main_menu_labels_are_unique_and_honest():
+    """🔥 must be unique to DEALS (hot tours); CHEAP uses 💰 to match its
+    «ціна від» framing and de-collide from the deal feed."""
+    labels = [BEST, SEARCH, DEALS, CHEAP, DESTINATIONS, SUBSCRIBE, PROFILE, HELP]
+    assert len(labels) == len(set(labels))  # no duplicate labels
+    assert CHEAP.startswith("💰")  # price-from framing, not a discount
+    assert DEALS.startswith("🔥")  # 🔥 is unique to the hot-tours feed
+    assert sum(1 for label in labels if label.startswith("🔥")) == 1
 
 
 def test_country_emoji_known_iso():

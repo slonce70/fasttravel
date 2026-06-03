@@ -75,7 +75,12 @@ def test_destinations_copy_uses_neutral_variant_language() -> None:
     assert "зниж" not in combined.casefold()
 
 
-def test_main_menu_and_public_commands_use_neutral_variant_copy() -> None:
+def test_main_menu_and_public_commands_carry_no_discount_language() -> None:
+    # Phase 1 moved menu chrome off the word "варіанти" (BEST/DEALS/SUBSCRIBE
+    # labels + their command descriptions). "варіанти" still lives in BODY copy
+    # by design (subscriptions render, deals/best headers) — see the sibling
+    # *_neutral_variant_copy tests. The lasting guard here is that no DISCOUNT
+    # language ("зниж") leaks into the menu or BotFather command list.
     menu_labels = [
         main_menu.BEST,
         main_menu.DEALS,
@@ -85,7 +90,6 @@ def test_main_menu_and_public_commands_use_neutral_variant_copy() -> None:
 
     combined = "\n".join([*menu_labels, *command_descriptions])
 
-    assert "варіант" in combined.casefold()
     assert "зниж" not in combined.casefold()
 
 

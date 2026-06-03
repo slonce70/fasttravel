@@ -8,6 +8,7 @@ DB calls outside of subscribe / profile flows.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, cast
 
 from sqlalchemy import text
@@ -201,6 +202,32 @@ async def delete_subscription(chat_id: int, sub_id: int) -> bool:
         )
         await db.commit()
         return cast("CursorResult[Any]", result).rowcount > 0
+
+
+async def get_last_notification(chat_id: int) -> datetime | None:
+    """Read-only: the timestamp of the most recent personal alert sent to
+    this user, or ``None`` if they've never been alerted.
+
+    The notification ledger (`telegram_filter_notifications`, migration 019)
+    is keyed by `filter_id`, not `chat_id`, so we join through
+    `telegram_subscriber_filters` to scope by user. Covered by the
+    `ix_tfn_filter_sent_at (filter_id, sent_at DESC)` index. No write, no
+    schema change — purely informational for the profile hub.
+    """
+    async with get_session_factory()() as db:
+        result = await db.execute(
+            text(
+                """
+                SELECT MAX(n.sent_at)
+                FROM telegram_filter_notifications n
+                JOIN telegram_subscriber_filters f ON f.id = n.filter_id
+                WHERE f.chat_id = :chat_id
+                """
+            ),
+            {"chat_id": chat_id},
+        )
+        value = result.scalar()
+    return value if isinstance(value, datetime) else None
 
 
 async def delete_all_user_data(chat_id: int) -> None:

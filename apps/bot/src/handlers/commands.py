@@ -81,6 +81,7 @@ async def cmd_help(message: Message, state: FSMContext) -> None:
         "  • /best — ТОП\\-20 варіантів зараз 🏆\n"
         "  • /search — знайти тур або готель за назвою \\(майстер з 7 кроків\\)\n"
         "  • /deals — стрічка усіх активних варіантів\n"
+        "  • /cheap — 💰 найдешевші тури по напрямках\n"
         "  • /destinations — каталог країн\n"
         "  • /subscribe — персональні Telegram\\-алерти за вашими фільтрами\n"
         "  • /profile — мій профіль і підписки\n"
@@ -94,6 +95,16 @@ async def cmd_help(message: Message, state: FSMContext) -> None:
         reply_markup=main_menu_kb(),
         disable_web_page_preview=True,
     )
+
+
+@router.message(Command("settings"))
+async def cmd_settings(message: Message, state: FSMContext) -> None:
+    # /settings is an alias for the /profile account hub. Clear any in-flight
+    # FSM state so the user lands cleanly on the hub.
+    from src.handlers.profile import show_profile
+
+    await state.clear()
+    await show_profile(message)
 
 
 @router.message(Command("channel"))
