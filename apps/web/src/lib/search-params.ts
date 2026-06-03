@@ -4,6 +4,7 @@ import type { SearchParams } from './types';
 export const PAGE_SIZE = 24;
 
 export type RouteSearchParams = {
+  q?: string;
   country?: string;
   check_in?: string;
   check_in_min?: string;
@@ -44,6 +45,13 @@ function parseCountry(raw: string | undefined): string | undefined {
   return /^[A-Z]{2}$/.test(country) ? country : undefined;
 }
 
+function parseHotelQuery(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  const query = raw.trim().replace(/\s+/g, ' ');
+  if (query.length < 2) return undefined;
+  return query.slice(0, 80);
+}
+
 function parseIsoDate(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   const value = raw.trim();
@@ -74,6 +82,7 @@ function parseKids(raw: string | undefined): number[] | undefined {
 
 export function toApiSearchParams(sp: RouteSearchParams): SearchParams {
   return {
+    q: parseHotelQuery(readParam(sp, 'q')),
     country: parseCountry(readParam(sp, 'country')),
     check_in: parseIsoDate(readParam(sp, 'check_in') || readParam(sp, 'check_in_min')),
     nights: parseBoundedInt(readParam(sp, 'nights'), { min: 1, max: 30 }),
@@ -96,6 +105,7 @@ export function searchHref(params: SearchParams, offset: number): string {
   if (params.meal_plan) qs.set('meal_plan', params.meal_plan);
   if (params.price_max !== undefined) qs.set('price_max', String(params.price_max));
   if (params.stars_min !== undefined) qs.set('stars_min', String(params.stars_min));
+  if (params.q) qs.set('q', params.q);
   if (params.adults !== undefined) qs.set('adults', String(params.adults));
   if (params.kids && params.kids.length > 0) qs.set('kids', params.kids.join(','));
   if (params.sort && params.sort !== 'price_asc') qs.set('sort', params.sort);

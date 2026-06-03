@@ -41,15 +41,16 @@ def test_results_header_no_qualifier_when_all_browsable() -> None:
 
 
 def test_step_prefix_maps_each_step_to_its_index() -> None:
-    # /help advertises a "майстер з 6 кроків"; the prefixes must match that
+    # /help advertises a "майстер з 7 кроків"; the prefixes must match that
     # count and order so advertised and actual stay in sync.
-    assert wizard_render.WIZARD_STEP_COUNT == 6
-    assert wizard_render.step_prefix("country") == "Крок 1/6 · "
-    assert wizard_render.step_prefix("nights") == "Крок 2/6 · "
-    assert wizard_render.step_prefix("when") == "Крок 3/6 · "
-    assert wizard_render.step_prefix("budget") == "Крок 4/6 · "
-    assert wizard_render.step_prefix("meal") == "Крок 5/6 · "
-    assert wizard_render.step_prefix("stars") == "Крок 6/6 · "
+    assert wizard_render.WIZARD_STEP_COUNT == 7
+    assert wizard_render.step_prefix("hotel") == "Крок 1/7 · "
+    assert wizard_render.step_prefix("country") == "Крок 2/7 · "
+    assert wizard_render.step_prefix("nights") == "Крок 3/7 · "
+    assert wizard_render.step_prefix("when") == "Крок 4/7 · "
+    assert wizard_render.step_prefix("budget") == "Крок 5/7 · "
+    assert wizard_render.step_prefix("meal") == "Крок 6/7 · "
+    assert wizard_render.step_prefix("stars") == "Крок 7/7 · "
 
 
 def test_step_prefix_unknown_step_is_empty() -> None:

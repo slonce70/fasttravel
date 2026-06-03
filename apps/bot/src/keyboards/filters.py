@@ -26,6 +26,15 @@ def _back_row(prefix: str) -> list[InlineKeyboardButton]:
     return [InlineKeyboardButton(text="◀ Назад", callback_data=f"{prefix}:back")]
 
 
+def hotel_query_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустити назву", callback_data="hq:skip")],
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="hq:cancel")],
+        ]
+    )
+
+
 def nights_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

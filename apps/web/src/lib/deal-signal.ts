@@ -12,7 +12,7 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
   switch ((method || '').trim().toLowerCase()) {
     case 'calendar_anomaly':
       return {
-        badgeIcon: '📉',
+        badgeIcon: 'Дата',
         badgeVariant: 'success',
         reason: 'Ця дата значно дешевша за сусідні у цьому готелі',
         baselineLabel: 'інші дати',
@@ -20,7 +20,7 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
       };
     case 'promo_discount':
       return {
-        badgeIcon: '🏷',
+        badgeIcon: 'Акція',
         badgeVariant: 'accent',
         reason: 'Спецціна від оператора — обмежена пропозиція',
         baselineLabel: 'ціна оператора до акції',
@@ -28,7 +28,7 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
       };
     case 'peer_anomaly':
       return {
-        badgeIcon: '📊',
+        badgeIcon: 'Регіон',
         badgeVariant: 'neutral',
         reason: 'Дешевше за схожі готелі в цьому регіоні',
         baselineLabel: 'орієнтир схожих',
@@ -36,7 +36,7 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
       };
     case 'percentile':
       return {
-        badgeIcon: '📊',
+        badgeIcon: 'Історія',
         badgeVariant: 'brand',
         reason: 'Ціна нижча за звичайну для цього готелю',
         baselineLabel: 'зазвичай',
@@ -46,7 +46,7 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
     default:
       if (method && method.trim()) {
         return {
-          badgeIcon: 'ℹ️',
+          badgeIcon: 'Орієнтир',
           badgeVariant: 'neutral',
           reason: 'Порівняльний орієнтир ціни',
           baselineLabel: 'орієнтир',
@@ -54,7 +54,7 @@ export function getDealSignalCopy(method: Deal['detection_method']): DealSignalC
         };
       }
       return {
-        badgeIcon: '📊',
+        badgeIcon: 'Історія',
         badgeVariant: 'brand',
         reason: 'Ціна нижча за звичайну для цього готелю',
         baselineLabel: 'зазвичай',

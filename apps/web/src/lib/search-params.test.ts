@@ -57,6 +57,11 @@ describe('toApiSearchParams', () => {
     expect(toApiSearchParams({ check_in: '2026-6-5' }).check_in).toBeUndefined();
     expect(toApiSearchParams({ check_in: '2026-06-05' }).check_in).toBe('2026-06-05');
   });
+
+  it('normalizes a hotel-name query and drops unusably short values', () => {
+    expect(toApiSearchParams({ q: '  Rixos   Premium  ' }).q).toBe('Rixos Premium');
+    expect(toApiSearchParams({ q: 'r' }).q).toBeUndefined();
+  });
 });
 
 describe('searchHref', () => {
@@ -80,6 +85,7 @@ describe('searchHref', () => {
       meal_plan: 'AI',
       price_max: '75000',
       stars_min: '4',
+      q: 'Rixos Premium',
       adults: '3',
       kids: '7,12',
       sort: 'rating_desc',
@@ -87,7 +93,7 @@ describe('searchHref', () => {
     });
 
     expect(searchHref(params, 96)).toBe(
-      '/search?country=TR&check_in=2026-06-15&nights=7&meal_plan=AI&price_max=75000&stars_min=4&adults=3&kids=7%2C12&sort=rating_desc&limit=48&offset=96',
+      '/search?country=TR&check_in=2026-06-15&nights=7&meal_plan=AI&price_max=75000&stars_min=4&q=Rixos+Premium&adults=3&kids=7%2C12&sort=rating_desc&limit=48&offset=96',
     );
   });
 });

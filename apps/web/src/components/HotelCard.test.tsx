@@ -49,6 +49,7 @@ describe('HotelCard', () => {
     expect(screen.getByText('від')).toBeInTheDocument();
     expect(ws(screen.getByText(/48.000 ₴/).textContent ?? '')).toContain('48 000 ₴');
     expect(screen.getByText('9.2')).toBeInTheDocument();
+    expect(screen.getByText(/Переглянути дати/i)).toBeInTheDocument();
   });
 
   it('labels the price-from link with the hotel name and price for a11y', () => {
@@ -56,6 +57,14 @@ describe('HotelCard', () => {
     const label = screen.getByRole('link').getAttribute('aria-label') ?? '';
     expect(label).toContain('Rixos Premium');
     expect(ws(label)).toContain('48 000 ₴');
+  });
+
+  it('can render as a scan-friendly result row', () => {
+    const { container } = render(<HotelCard hotel={baseHotel} variant="row" />);
+
+    expect(screen.getByText('Rixos Premium')).toBeInTheDocument();
+    expect(screen.getByText(/Переглянути дати/i)).toBeInTheDocument();
+    expect(container.querySelector('[data-card-variant="row"]')).not.toBeNull();
   });
 
   it('badges a duration-fallback price honestly', () => {

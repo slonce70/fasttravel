@@ -48,12 +48,30 @@ describe('SearchForm', () => {
     const user = userEvent.setup();
     render(<SearchForm countries={countries} />);
 
+    await user.type(screen.getByLabelText('Назва готелю'), 'Rixos Premium');
     await user.selectOptions(screen.getByLabelText('Країна призначення'), 'TR');
     await user.selectOptions(screen.getByLabelText('Кількість ночей'), '7');
     await user.selectOptions(screen.getByLabelText('Зірок, не менше'), '5');
     await user.click(screen.getByRole('button', { name: /знайти тури/i }));
 
-    expect(push).toHaveBeenCalledWith('/search?country=TR&nights=7&stars_min=5&adults=2');
+    expect(push).toHaveBeenCalledWith(
+      '/search?country=TR&nights=7&stars_min=5&q=Rixos+Premium&adults=2',
+    );
+  });
+
+  it('can render the Travel + Data hero variant with cheap-date CTA copy', () => {
+    render(<SearchForm countries={countries} variant="hero" />);
+
+    expect(screen.getByRole('button', { name: /знайти дешеві дати/i })).toBeInTheDocument();
+    expect(screen.getByText(/точний календар/i)).toBeInTheDocument();
+  });
+
+  it('can render a vertical panel variant for the data-console search page', () => {
+    render(<SearchForm countries={countries} variant="panel" />);
+
+    expect(screen.getByRole('button', { name: /знайти тури/i })).toBeInTheDocument();
+    expect(screen.getByText(/Параметри пошуку/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Назва готелю')).toBeInTheDocument();
   });
 
   it('constrains the check-in input to today and later', () => {

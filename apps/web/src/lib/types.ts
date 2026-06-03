@@ -207,6 +207,8 @@ export interface PaginatedSearchResults {
 }
 
 export interface SearchParams {
+  /** Hotel name or slug fragment, normalized before reaching the API. */
+  q?: string;
   country?: string;
   /** ISO date (YYYY-MM-DD) — narrows results to hotels with prices on this day. */
   check_in?: string;

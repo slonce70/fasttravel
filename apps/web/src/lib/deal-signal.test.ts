@@ -13,7 +13,7 @@ const nullSig = () => getDealSignalCopy(null as unknown as Deal['detection_metho
 describe('getDealSignalCopy', () => {
   it('calendar_anomaly → neighbouring-dates copy, no strike', () => {
     expect(sig('calendar_anomaly')).toEqual({
-      badgeIcon: '📉',
+      badgeIcon: 'Дата',
       badgeVariant: 'success',
       reason: 'Ця дата значно дешевша за сусідні у цьому готелі',
       baselineLabel: 'інші дати',
@@ -23,7 +23,7 @@ describe('getDealSignalCopy', () => {
 
   it('promo_discount → operator strike-through copy, struck baseline', () => {
     expect(sig('promo_discount')).toEqual({
-      badgeIcon: '🏷',
+      badgeIcon: 'Акція',
       badgeVariant: 'accent',
       reason: 'Спецціна від оператора — обмежена пропозиція',
       baselineLabel: 'ціна оператора до акції',
@@ -33,7 +33,7 @@ describe('getDealSignalCopy', () => {
 
   it('peer_anomaly → similar-hotels copy, no strike', () => {
     expect(sig('peer_anomaly')).toMatchObject({
-      badgeIcon: '📊',
+      badgeIcon: 'Регіон',
       badgeVariant: 'neutral',
       baselineLabel: 'орієнтир схожих',
       strikeBaseline: false,
@@ -42,6 +42,7 @@ describe('getDealSignalCopy', () => {
 
   it('percentile → same-hotel history copy, no strike', () => {
     expect(sig('percentile')).toMatchObject({
+      badgeIcon: 'Історія',
       badgeVariant: 'brand',
       baselineLabel: 'зазвичай',
       strikeBaseline: false,
@@ -55,7 +56,7 @@ describe('getDealSignalCopy', () => {
 
   it('unknown non-empty method → neutral price-reference, no strike', () => {
     expect(sig('legacy_experiment')).toMatchObject({
-      badgeIcon: 'ℹ️',
+      badgeIcon: 'Орієнтир',
       badgeVariant: 'neutral',
       baselineLabel: 'орієнтир',
       strikeBaseline: false,
@@ -69,7 +70,14 @@ describe('getDealSignalCopy', () => {
   });
 
   it('strikes the baseline for promo_discount ONLY (honesty invariant)', () => {
-    for (const m of ['calendar_anomaly', 'peer_anomaly', 'percentile', 'legacy_experiment', '', '   ']) {
+    for (const m of [
+      'calendar_anomaly',
+      'peer_anomaly',
+      'percentile',
+      'legacy_experiment',
+      '',
+      '   ',
+    ]) {
       expect(sig(m).strikeBaseline).toBe(false);
     }
     expect(nullSig().strikeBaseline).toBe(false);

@@ -4,7 +4,7 @@
 // tailwind classes already encode it. We assert the things the
 // frontend contract promises:
 //   * the hotel name renders and links to /hotels/{slug}
-//   * the discount badge shows the rounded % + fire emoji
+//   * the discount badge shows the rounded % without relying on platform emoji
 //   * the strike-through baseline price is rendered when baseline > price
 //   * the affiliate CTA appears only when deep_link exists and carries
 //     rel="sponsored" (Ukrainian advertising-law requirement, audit hint)
@@ -63,11 +63,11 @@ describe('DealCard', () => {
     expect(screen.getByLabelText(/Постійне посилання/i)).toHaveAttribute('href', '/deals/1');
   });
 
-  it('rounds the discount percent and includes the method badge icon', () => {
+  it('rounds the discount percent without a platform emoji badge', () => {
     render(<DealCard deal={fullDeal} />);
     // 37.4 → -37
     expect(screen.getByText(/-37%/)).toBeInTheDocument();
-    expect(screen.getByText(/📉/)).toBeInTheDocument();
+    expect(screen.queryByText(/📉/)).toBeNull();
   });
 
   it('renders method-specific baseline price when baseline > price', () => {

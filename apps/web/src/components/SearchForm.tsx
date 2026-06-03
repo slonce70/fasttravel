@@ -8,6 +8,7 @@ import { toApiSearchParams, type RouteSearchParams } from '@/lib/search-params';
 import { DEFAULT_SEARCH_SORT, normalizeSearchSort } from '@/lib/search-sort';
 import { accusativeCountry, uniqueCountriesByIso } from '@/lib/countries';
 import { PRECOMPUTED_NIGHTS, type CountryOut } from '@/lib/types';
+import { cn } from '@/lib/utils';
 
 /**
  * Search form rendered on home, /search, and /destinations/[country].
@@ -27,6 +28,7 @@ import { PRECOMPUTED_NIGHTS, type CountryOut } from '@/lib/types';
 export interface SearchFormProps {
   countries?: CountryOut[];
   defaultCountry?: string;
+  variant?: 'default' | 'hero' | 'panel';
 }
 
 const MEAL_OPTIONS: Array<{ value: string; label: string }> = [
@@ -41,7 +43,11 @@ const MEAL_OPTIONS: Array<{ value: string; label: string }> = [
 
 const NIGHT_OPTIONS = PRECOMPUTED_NIGHTS;
 
-export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) {
+export function SearchForm({
+  countries = [],
+  defaultCountry,
+  variant = 'default',
+}: SearchFormProps) {
   const router = useRouter();
   const params = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -52,6 +58,7 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
   const sanitizedInitial = useMemo(
     () =>
       toApiSearchParams({
+        q: readSearchParam(params, 'q') ?? undefined,
         country: readSearchParam(params, 'country') ?? undefined,
         check_in: readSearchParam(params, 'check_in') ?? undefined,
         check_in_min: readSearchParam(params, 'check_in_min') ?? undefined,
@@ -69,6 +76,7 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
   // URL ?country wins over the prop default — keeps state across refresh.
   const initialCountry = (sanitizedInitial.country ?? defaultCountry ?? '').toUpperCase();
 
+  const [hotelQuery, setHotelQuery] = useState(sanitizedInitial.q ?? '');
   const [country, setCountry] = useState(initialCountry);
   // Phase 2 P0-1 collapsed the old date range (check_in_min/max) into a
   // single check_in. The backend now narrows to that specific day via
@@ -111,6 +119,7 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
     const qs = new URLSearchParams();
     const currentSort = normalizeSearchSort(readSearchParam(params, 'sort'));
     const raw: RouteSearchParams = {
+      q: hotelQuery,
       country,
       check_in: checkIn,
       nights,
@@ -128,6 +137,7 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
     if (sanitized.meal_plan) qs.set('meal_plan', sanitized.meal_plan);
     if (sanitized.price_max !== undefined) qs.set('price_max', String(sanitized.price_max));
     if (sanitized.stars_min !== undefined) qs.set('stars_min', String(sanitized.stars_min));
+    if (sanitized.q) qs.set('q', sanitized.q);
     if (sanitized.sort && sanitized.sort !== DEFAULT_SEARCH_SORT) qs.set('sort', sanitized.sort);
     paxToSearchParams(qs, {
       adults: sanitized.adults ?? pax.adults,
@@ -143,19 +153,67 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
     });
   }
 
-  const submitLabel = selectedCountry
-    ? `Знайти тури в ${accusativeCountry(selectedCountry.name_uk)}`
-    : 'Знайти тури';
+  const submitLabel =
+    variant === 'hero'
+      ? selectedCountry
+        ? `Знайти дешеві дати в ${accusativeCountry(selectedCountry.name_uk)}`
+        : 'Знайти дешеві дати'
+      : selectedCountry
+        ? `Знайти тури в ${accusativeCountry(selectedCountry.name_uk)}`
+        : 'Знайти тури';
 
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-2xl bg-white p-4 shadow-lg ring-1 ring-slate-200 sm:p-6"
+      className={cn(
+        'bg-white',
+        variant === 'hero'
+          ? 'rounded-xl p-3 shadow-[0_22px_55px_-28px_rgba(15,23,42,0.45)] ring-1 ring-slate-200/80 sm:p-4'
+          : variant === 'panel'
+            ? 'rounded-xl p-4 shadow-sm ring-1 ring-slate-200/80'
+            : 'rounded-2xl p-4 shadow-lg ring-1 ring-slate-200 sm:p-6',
+      )}
     >
+      {variant === 'panel' && (
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <p className="text-base font-semibold text-slate-950">Параметри пошуку</p>
+          <span className="text-xs font-medium text-teal-700">ціни з календаря</span>
+        </div>
+      )}
+      {variant === 'hero' && (
+        <p className="mb-3 text-xs font-medium text-slate-500">
+          Точний календар цін за напрямком, датою, туристами й бюджетом.
+        </p>
+      )}
       {/* Grid: 2 cols mobile, 3 cols sm, 7 cols xl. On lg/xl all fields
           sit on a single row matching farvater's layout. */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
-        <Field label="Країна" className="col-span-2 sm:col-span-1">
+      <div
+        className={cn(
+          'grid grid-cols-2 gap-3',
+          variant === 'hero'
+            ? 'sm:grid-cols-2 xl:grid-cols-3'
+            : variant === 'panel'
+              ? 'grid-cols-1'
+              : 'sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7',
+        )}
+      >
+        <Field
+          label="Назва готелю"
+          className={variant === 'panel' ? undefined : 'col-span-2 sm:col-span-1'}
+        >
+          <input
+            type="search"
+            value={hotelQuery}
+            onChange={(e) => setHotelQuery(e.target.value)}
+            className="input"
+            placeholder="Rixos, Dana Beach..."
+            autoComplete="off"
+          />
+        </Field>
+        <Field
+          label="Країна"
+          className={variant === 'panel' ? undefined : 'col-span-2 sm:col-span-1'}
+        >
           <select
             value={country}
             onChange={(e) => setCountry(e.target.value)}
@@ -242,7 +300,11 @@ export function SearchForm({ countries = [], defaultCountry }: SearchFormProps) 
         <Button
           type="submit"
           size="lg"
-          className="w-full sm:w-auto"
+          className={cn(
+            'w-full sm:w-auto',
+            variant === 'hero' && 'bg-teal-700 hover:bg-teal-800 active:bg-teal-900',
+            variant === 'panel' && 'w-full bg-teal-700 hover:bg-teal-800 active:bg-teal-900',
+          )}
           disabled={isPending}
           aria-busy={isPending}
         >
