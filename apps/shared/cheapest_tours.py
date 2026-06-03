@@ -50,16 +50,35 @@ PER_COUNTRY = 3
 MIN_STARS = 3
 FRESHNESS_HOURS = DATE_DIP_POLICY.max_candidate_age_hours
 
+# All-inclusive meal codes (raw Farvater codes). The channel digest filters to
+# these so it shows «все включено» tours.
+ALL_INCLUSIVE_MEAL_CODES = ("AI", "UAI")
+
+# Channel-digest knobs: Turkey & Egypt (the all-inclusive hotspots) get more
+# variants in the daily digest; every other country keeps the default.
+DIGEST_PER_COUNTRY = 3
+DIGEST_PRIORITY_COUNTRIES = ("TR", "EG")
+DIGEST_PRIORITY_PER_COUNTRY = 5
+
 # Lookahead window: skip the next 3 days (too close to book / depart) and cap at
 # +90 days (the MV only retains check_in up to CURRENT_DATE + 90d anyway).
 LOOKAHEAD_START_DAYS = 3
 LOOKAHEAD_END_DAYS = 90
 
 
-def cheapest_tours_sql() -> str:
+def cheapest_tours_sql(
+    *, meal_filtered: bool = False, prioritized: bool = False
+) -> str:
     """Render the cheapest-tours selection SQL.
 
-    Expects bind parameters ``:min_stars`` (int) and ``:per_country`` (int).
+    Bind parameters: ``:min_stars`` (int), ``:per_country`` (int). With
+    ``meal_filtered=True`` it also expects ``:meal_codes`` (list[str]) and only
+    counts offers on those meal plans (the digest passes the all-inclusive
+    codes). With ``prioritized=True`` it also expects ``:priority_countries``
+    (list[str]) and ``:priority_per_country`` (int), giving those countries a
+    larger per-country cap (the digest gives Turkey & Egypt more variants).
+    Both default off, so the API/web/bot callers are unchanged.
+
     Returns a flat ranked list (one row per hotel); clients group by
     ``country_iso2``.
 
@@ -67,6 +86,20 @@ def cheapest_tours_sql() -> str:
     hotel_name, stars, review_score, review_count, check_in, nights,
     meal_plan, price_uah, deep_link, rank``.
     """
+    # Cast the array binds to text[] so asyncpg can infer the parameter type
+    # (a bare `= ANY(:list)` fails to infer inside a CASE/WHERE).
+    meal_clause = (
+        "AND cp.meal_plan = ANY(CAST(:meal_codes AS text[]))" if meal_filtered else ""
+    )
+    rank_limit = (
+        # CAST the int branches too: inside a CASE asyncpg can't infer the
+        # param type and defaults to text, which breaks `bigint <= text`.
+        "CASE WHEN r.country_iso2 = ANY(CAST(:priority_countries AS text[])) "
+        "THEN CAST(:priority_per_country AS integer) "
+        "ELSE CAST(:per_country AS integer) END"
+        if prioritized
+        else ":per_country"
+    )
     return f"""
     WITH fresh_offers AS (
         -- Base scan: apply min-stars, the +{LOOKAHEAD_START_DAYS}..+{LOOKAHEAD_END_DAYS}d
@@ -95,6 +128,7 @@ def cheapest_tours_sql() -> str:
           AND cp.check_in BETWEEN CURRENT_DATE + INTERVAL '{LOOKAHEAD_START_DAYS} days'
                               AND CURRENT_DATE + INTERVAL '{LOOKAHEAD_END_DAYS} days'
           AND cp.observed_at >= NOW() - INTERVAL '{FRESHNESS_HOURS} hours'
+          {meal_clause}
     ),
     per_hotel AS (
         -- Cheapest fresh offer per hotel. Deterministic tail
@@ -146,6 +180,6 @@ def cheapest_tours_sql() -> str:
         r.deep_link,
         r.rank
     FROM ranked r
-    WHERE r.rank <= :per_country
+    WHERE r.rank <= {rank_limit}
     ORDER BY country_name ASC, r.rank ASC, r.hotel_id ASC
     """

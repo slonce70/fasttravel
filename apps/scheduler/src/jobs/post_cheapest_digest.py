@@ -35,7 +35,14 @@ from typing import Protocol
 
 from sqlalchemy import text
 
-from shared.cheapest_tours import MIN_STARS, PER_COUNTRY, cheapest_tours_sql
+from shared.cheapest_tours import (
+    ALL_INCLUSIVE_MEAL_CODES,
+    DIGEST_PER_COUNTRY,
+    DIGEST_PRIORITY_COUNTRIES,
+    DIGEST_PRIORITY_PER_COUNTRY,
+    MIN_STARS,
+    cheapest_tours_sql,
+)
 from shared.publishers.broadcast import (
     broadcast_deal,
     escape_markdown_v2,
@@ -194,8 +201,16 @@ async def post_cheapest_digest() -> None:
     async with async_session_factory() as db:
         rows = (
             await db.execute(
-                text(cheapest_tours_sql()),
-                {"per_country": PER_COUNTRY, "min_stars": MIN_STARS},
+                # Digest shows ALL-INCLUSIVE tours («все включено»); Turkey &
+                # Egypt (the AI hotspots) get more variants than other countries.
+                text(cheapest_tours_sql(meal_filtered=True, prioritized=True)),
+                {
+                    "min_stars": MIN_STARS,
+                    "per_country": DIGEST_PER_COUNTRY,
+                    "priority_countries": list(DIGEST_PRIORITY_COUNTRIES),
+                    "priority_per_country": DIGEST_PRIORITY_PER_COUNTRY,
+                    "meal_codes": list(ALL_INCLUSIVE_MEAL_CODES),
+                },
             )
         ).all()
 
