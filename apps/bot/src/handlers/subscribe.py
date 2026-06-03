@@ -267,6 +267,7 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
     chat_id = query.from_user.id
     country_iso2 = data["country"]
     max_price_uah = data.get("max_price_uah")
+    edit_sub_id = data.get("edit_sub_id")
 
     await ensure_subscriber(chat_id, query.from_user.username)
     # Conservative dedup: reuse an identical existing subscription instead of
@@ -290,6 +291,12 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
             meal_plan=None,
         )
         is_duplicate = False
+    # EDIT: now that the new combo is confirmed, drop the original row — but
+    # only if it's a DIFFERENT row. find_subscription's dedup can return the
+    # same id (a no-op edit, or an edit onto an already-existing combo), and
+    # deleting that would nuke the row we just confirmed.
+    if edit_sub_id is not None and edit_sub_id != sub_id:
+        await delete_subscription(chat_id, edit_sub_id)
     await state.clear()
 
     subs = await list_subscriptions(chat_id)
@@ -299,6 +306,12 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
             "Нову не створювали — щоб не дублювати сповіщення\\.\n\n"
         )
         answer = "Ви вже маєте таку підписку"
+    elif edit_sub_id is not None:
+        header = (
+            "✏️ *Підписку оновлено\\!*\n\n"
+            "Сповіщення тепер за новими критеріями \\(і не настирливі\\)\\.\n\n"
+        )
+        answer = "Підписку оновлено"
     else:
         header = (
             "✅ *Підписку створено\\!*\n\n"
@@ -317,11 +330,11 @@ async def cb_stars(query: CallbackQuery, state: FSMContext) -> None:
 # ---------------------------------------------------------------------------
 # Edit a subscription
 #
-# Simplest correct approach (the spec's sanctioned fallback): delete the old
-# row, then re-enter the existing add wizard. Re-seeding the wizard with the
-# old values fights cb_add's state.clear() and the find_subscription dedup in
-# cb_stars (editing to the SAME combo would dedup-noop instead of replacing),
-# so we keep it as a clean "remove + add fresh" flow and reuse the wizard.
+# Re-enter the existing add wizard, carrying the id of the row being edited in
+# FSM state. The old row is deleted ONLY once cb_stars confirms the new combo —
+# so cancelling/abandoning the wizard (or an ApiError before it even opens)
+# leaves the original subscription intact. An "edit" must never silently
+# destroy the row the user only meant to modify.
 # ---------------------------------------------------------------------------
 
 
@@ -331,10 +344,10 @@ async def cb_edit(query: CallbackQuery, state: FSMContext) -> None:
     if sub_id is None:
         await query.answer()
         return
-    chat_id = query.from_user.id
-    await delete_subscription(chat_id, sub_id)
-    # Re-enter the add wizard from the country step (reuses cb_add's flow).
+    # Open the wizard FIRST (cb_add starts with state.clear()), THEN stash the
+    # id to replace so it survives into cb_stars. No up-front delete.
     await cb_add(query, state)
+    await state.update_data(edit_sub_id=sub_id)
 
 
 @router.callback_query(F.data.startswith("sub:del:"))

@@ -127,15 +127,16 @@ async def test_pause_all_alerts_pauses_active_and_writes_block(monkeypatch) -> N
     paused = await db_mod.pause_all_alerts(555, until)
 
     assert paused == [11, 22]
-    # First statement: only the currently-active subs are paused.
-    first_stmt, _ = session.calls[0]
-    assert "SET is_active = false" in first_stmt
-    assert "is_active = true" in first_stmt  # WHERE clause guard
-    assert "RETURNING id" in first_stmt
+    # The pause UPDATE flips only the currently-active subs. (Located by content,
+    # not index — pause_all_alerts first issues a get_pause_state SELECT.)
+    pause_stmt = next(c[0] for c in session.calls if "RETURNING id" in c[0])
+    assert "SET is_active = false" in pause_stmt
+    assert "is_active = true" in pause_stmt  # WHERE clause guard
 
-    # Second statement: merge the pause block into filters_jsonb (preserve
-    # other keys via `||`), with the paused ids + ISO until.
-    jsonb_stmt, jsonb_params = session.calls[1]
+    # The jsonb merge preserves other keys via `||`, recording paused ids + ISO until.
+    jsonb_stmt, jsonb_params = next(
+        c for c in session.calls if "CAST(:pause AS jsonb)" in c[0]
+    )
     assert "filters_jsonb = filters_jsonb || CAST(:pause AS jsonb)" in jsonb_stmt
     import json as _json
 
@@ -143,6 +144,33 @@ async def test_pause_all_alerts_pauses_active_and_writes_block(monkeypatch) -> N
     assert block["pause"]["filter_ids"] == [11, 22]
     assert block["pause"]["until"] == until.isoformat()
     assert session.committed
+
+
+@pytest.mark.asyncio
+async def test_pause_all_alerts_unions_prior_ids_on_repause(monkeypatch) -> None:
+    """A SECOND pause while already paused has nothing still active to flip, so
+    RETURNING is empty — the recorded ids must still UNION the first pause's set,
+    otherwise resume would reactivate nothing and mute every sub forever."""
+
+    def responder(stmt: str, params: dict[str, Any]) -> _Result:
+        if "SELECT filters_jsonb" in stmt:
+            # Already paused: the prior block recorded subs 1, 2, 3.
+            return _Result(rows=[({"pause": {"until": None, "filter_ids": [1, 2, 3]}},)])
+        if "RETURNING id" in stmt:
+            return _Result(rows=[], rowcount=0)  # nothing is still active to pause
+        return _Result()
+
+    session = _install(monkeypatch, responder)
+    paused = await db_mod.pause_all_alerts(555, datetime(2026, 6, 11, 12, 0, tzinfo=UTC))
+
+    # Nothing was freshly flipped this call…
+    assert paused == []
+    # …but the recorded block STILL carries the original ids so resume works.
+    import json as _json
+
+    jsonb_params = next(c[1] for c in session.calls if "CAST(:pause AS jsonb)" in c[0])
+    block = _json.loads(jsonb_params["pause"])
+    assert block["pause"]["filter_ids"] == [1, 2, 3]
 
 
 @pytest.mark.asyncio
@@ -158,7 +186,8 @@ async def test_pause_all_alerts_forever_stores_null_until(monkeypatch) -> None:
     assert paused == [11]
     import json as _json
 
-    block = _json.loads(session.calls[1][1]["pause"])
+    jsonb_params = next(c[1] for c in session.calls if "CAST(:pause AS jsonb)" in c[0])
+    block = _json.loads(jsonb_params["pause"])
     assert block["pause"]["until"] is None
 
 
@@ -319,6 +348,27 @@ class _FakeQuery:
         self.answers.append({"text": text, **kwargs})
 
 
+class _FakeState:
+    """Minimal FSMContext stand-in: records update_data / clear."""
+
+    def __init__(self, data: dict[str, Any] | None = None) -> None:
+        self._data = dict(data or {})
+        self.cleared = False
+
+    async def get_data(self) -> dict[str, Any]:
+        return dict(self._data)
+
+    async def update_data(self, **kwargs: Any) -> None:
+        self._data.update(kwargs)
+
+    async def set_state(self, *_a: Any, **_k: Any) -> None:
+        return None
+
+    async def clear(self) -> None:
+        self.cleared = True
+        self._data = {}
+
+
 @pytest.fixture(autouse=True)
 def _fake_callback_message(monkeypatch):
     """`callback_message` returns the message only if it's a real aiogram
@@ -410,6 +460,102 @@ async def test_cb_mute_unknown_sub_answers_not_found(monkeypatch) -> None:
     await sub_mod.cb_mute(query)  # type: ignore[arg-type]
 
     assert query.answers[0]["text"] == "Не знайдено"
+
+
+# ---- subscribe: edit (deferred delete) -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cb_edit_opens_wizard_without_deleting_upfront(monkeypatch) -> None:
+    """Edit must NOT hard-delete the row before the wizard confirms — cancelling
+    or an ApiError would otherwise destroy a sub the user only meant to modify."""
+    deleted: list[tuple[int, int]] = []
+    opened: list[Any] = []
+
+    async def _delete(chat_id: int, sub_id: int) -> bool:
+        deleted.append((chat_id, sub_id))
+        return True
+
+    async def _cb_add(query: Any, state: Any) -> None:
+        opened.append(query)
+
+    monkeypatch.setattr(sub_mod, "delete_subscription", _delete)
+    monkeypatch.setattr(sub_mod, "cb_add", _cb_add)
+
+    state = _FakeState()
+    await sub_mod.cb_edit(_FakeQuery("sub:edit:7", _FakeMessage()), state)  # type: ignore[arg-type]
+
+    assert deleted == [], "edit must not delete before the new combo is confirmed"
+    assert opened, "edit should open the add wizard"
+    assert (await state.get_data()).get("edit_sub_id") == 7
+
+
+@pytest.mark.asyncio
+async def test_cb_stars_edit_replaces_old_row_once_confirmed(monkeypatch) -> None:
+    deleted: list[int] = []
+
+    async def _ensure(chat_id: int, username: str | None = None) -> None:
+        return None
+
+    async def _find(chat_id: int, **kw: Any) -> int | None:
+        return None  # the new combo is genuinely new
+
+    async def _add(chat_id: int, **kw: Any) -> int:
+        return 99
+
+    async def _del(chat_id: int, sub_id: int) -> bool:
+        deleted.append(sub_id)
+        return True
+
+    async def _list(chat_id: int) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(sub_mod, "ensure_subscriber", _ensure)
+    monkeypatch.setattr(sub_mod, "find_subscription", _find)
+    monkeypatch.setattr(sub_mod, "add_subscription", _add)
+    monkeypatch.setattr(sub_mod, "delete_subscription", _del)
+    monkeypatch.setattr(sub_mod, "list_subscriptions", _list)
+
+    state = _FakeState(
+        {"country": "TR", "country_name": "Туреччина", "max_price_uah": None, "edit_sub_id": 7}
+    )
+    query = _FakeQuery("subs:4", _FakeMessage())
+    await sub_mod.cb_stars(query, state)  # type: ignore[arg-type]
+
+    assert deleted == [7], "the old row is replaced only once the new combo is confirmed"
+    assert any("оновлено" in e["text"] for e in query.message.edits)  # type: ignore[union-attr]
+    assert state.cleared
+
+
+@pytest.mark.asyncio
+async def test_cb_stars_noop_edit_keeps_the_row(monkeypatch) -> None:
+    """Editing to the SAME combo (dedup resolves to the same id) must NOT delete it."""
+    deleted: list[int] = []
+
+    async def _ensure(chat_id: int, username: str | None = None) -> None:
+        return None
+
+    async def _find(chat_id: int, **kw: Any) -> int | None:
+        return 7  # dedup resolves to the very row being edited
+
+    async def _del(chat_id: int, sub_id: int) -> bool:
+        deleted.append(sub_id)
+        return True
+
+    async def _list(chat_id: int) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(sub_mod, "ensure_subscriber", _ensure)
+    monkeypatch.setattr(sub_mod, "find_subscription", _find)
+    monkeypatch.setattr(sub_mod, "delete_subscription", _del)
+    monkeypatch.setattr(sub_mod, "list_subscriptions", _list)
+
+    state = _FakeState(
+        {"country": "TR", "country_name": "Туреччина", "max_price_uah": None, "edit_sub_id": 7}
+    )
+    await sub_mod.cb_stars(_FakeQuery("subs:4", _FakeMessage()), state)  # type: ignore[arg-type]
+
+    assert deleted == [], "a no-op edit must not delete the row it resolved to"
 
 
 # ---- subscribe: keyboard shape -------------------------------------------

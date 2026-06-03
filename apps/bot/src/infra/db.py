@@ -263,8 +263,20 @@ async def pause_all_alerts(chat_id: int, until: datetime | None) -> list[int]:
 
     Returns the list of filter ids that were just paused (only the ones that
     were active — never the ones the user had already muted). The pause block
-    is a read-modify-write that PRESERVES any other keys in filters_jsonb."""
+    is a read-modify-write that PRESERVES any other keys in filters_jsonb.
+
+    The recorded ``filter_ids`` UNION the freshly-paused ids with any already-
+    recorded pause set, so a SECOND pause (extending 24h→7d, or an impatient
+    double-tap) never drops the first pause's ids — otherwise the second call
+    would record ``[]`` (nothing is still active to flip) and resume would
+    reactivate nothing, leaving every sub silently muted."""
     until_iso = until.astimezone(timezone.utc).isoformat() if until is not None else None
+    prior = await get_pause_state(chat_id)
+    prior_ids = (
+        [int(i) for i in prior.get("filter_ids", [])]
+        if prior and isinstance(prior.get("filter_ids"), list)
+        else []
+    )
     async with get_session_factory()() as db:
         result = await db.execute(
             text(
@@ -278,7 +290,8 @@ async def pause_all_alerts(chat_id: int, until: datetime | None) -> list[int]:
             {"chat_id": chat_id},
         )
         paused_ids = [int(r[0]) for r in result.all()]
-        pause_block = {"pause": {"until": until_iso, "filter_ids": paused_ids}}
+        recorded_ids = sorted(set(prior_ids) | set(paused_ids))
+        pause_block = {"pause": {"until": until_iso, "filter_ids": recorded_ids}}
         # `||` merges the "pause" key in, leaving any other JSONB keys intact.
         await db.execute(
             text(
