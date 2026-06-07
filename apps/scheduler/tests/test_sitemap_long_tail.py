@@ -324,7 +324,9 @@ async def test_process_hotel_timeout_wrapper_preserves_concurrency_limit(
 
     semaphore = asyncio.Semaphore(2)
     tasks = [
-        asyncio.create_task(sl._process_hotel_with_timeout(object(), str(i), "TR", 18, 7, semaphore))
+        asyncio.create_task(
+            sl._process_hotel_with_timeout(object(), str(i), "TR", 18, 7, semaphore)
+        )
         for i in range(4)
     ]
 

@@ -99,9 +99,7 @@ def render_deal_price_semantics(
             why_line=signal.why_line,
         )
 
-    strikethrough = (
-        f" ~{baseline_fmt}~" if signal.strike_baseline and savings > 0 else ""
-    )
+    strikethrough = f" ~{baseline_fmt}~" if signal.strike_baseline and savings > 0 else ""
     return DealPriceSemantics(
         headline=f"🔥 *\\-{discount}% · економія {savings_fmt}*",
         price_line=f"💰 *{price_fmt}*{strikethrough}",
