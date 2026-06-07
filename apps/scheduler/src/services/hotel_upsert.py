@@ -16,6 +16,20 @@ from src.clients.farvater_catalog import make_slug
 
 OPERATOR_CODE = "farvater"
 
+COUNTRY_ROOTS: dict[str, tuple[str, str, str]] = {
+    "TR": ("turkey", "Туреччина", "Turkey"),
+    "EG": ("egypt", "Єгипет", "Egypt"),
+    "AE": ("uae", "ОАЕ", "United Arab Emirates"),
+    "GR": ("greece", "Греція", "Greece"),
+    "ES": ("spain", "Іспанія", "Spain"),
+    "BG": ("bulgaria", "Болгарія", "Bulgaria"),
+    "TH": ("thailand", "Таїланд", "Thailand"),
+    "CY": ("cyprus", "Кіпр", "Cyprus"),
+    "HR": ("croatia", "Хорватія", "Croatia"),
+    "ME": ("montenegro", "Чорногорія", "Montenegro"),
+    "MV": ("maldives", "Мальдіви", "Maldives"),
+}
+
 
 @dataclass
 class HotelMeta:
@@ -54,15 +68,36 @@ async def ensure_operator(db: AsyncSession) -> int:
 
 
 async def country_dest_id(db: AsyncSession, iso2: str) -> int | None:
+    iso = iso2.upper()
     row = (
         await db.execute(
             text("""SELECT id FROM destinations
                 WHERE country_iso2 = :iso AND parent_id IS NULL
                 LIMIT 1"""),
-            {"iso": iso2},
+            {"iso": iso},
         )
     ).first()
-    return row[0] if row else None
+    if row:
+        return int(row[0])
+    root = COUNTRY_ROOTS.get(iso)
+    if root is None:
+        return None
+    slug, name_uk, name_en = root
+    row = (
+        await db.execute(
+            text("""INSERT INTO destinations (
+                    country_iso2, region_slug, name_uk, name_en, parent_id
+                )
+                VALUES (:iso, :slug, :name_uk, :name_en, NULL)
+                ON CONFLICT (country_iso2, region_slug) DO UPDATE
+                SET name_uk = EXCLUDED.name_uk,
+                    name_en = EXCLUDED.name_en,
+                    parent_id = NULL
+                RETURNING id"""),
+            {"iso": iso, "slug": slug, "name_uk": name_uk, "name_en": name_en},
+        )
+    ).first()
+    return int(row[0]) if row else None
 
 
 async def upsert_hotel(
@@ -115,6 +150,7 @@ async def upsert_hotel(
                               THEN (SELECT v FROM new_p)
                             ELSE photos_jsonb
                         END,
+                        destination_id = COALESCE(destination_id, :dest),
                         description_uk = COALESCE(:d, description_uk),
                         stars          = COALESCE(:stars, stars),
                         review_score   = COALESCE(:rs, review_score),
@@ -125,6 +161,7 @@ async def upsert_hotel(
             {
                 "id": existing[0],
                 "n": new_name,
+                "dest": dest_id,
                 "p": new_photos,
                 "d": new_desc,
                 "stars": hotel.stars,

@@ -105,8 +105,9 @@ If `TELEGRAM_BOT_TOKEN` is empty (typical in dev), `post_deals` logs a
 skipped event and returns. The rest of the scheduler keeps running.
 
 In `ENVIRONMENT=prod`, `Settings.assert_prod_secrets()` refuses to boot
-when `DEALS_DAILY_CAP > 0` and either `TELEGRAM_BOT_TOKEN` or
-`TELEGRAM_CHANNEL_ID` is missing.
+when either `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHANNEL_ID` is missing. The
+public channel defaults to `DEALS_DAILY_CAP=30`; set `0` only for an
+explicit unlimited operator run.
 
 ## Observability
 

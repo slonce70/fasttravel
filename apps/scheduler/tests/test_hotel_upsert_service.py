@@ -19,10 +19,16 @@ class _FakeResult:
 
 
 class _FakeSession:
-    def __init__(self, *, operator_row: tuple[int, ...] | None = (18,)) -> None:
+    def __init__(
+        self,
+        *,
+        operator_row: tuple[int, ...] | None = (18,),
+        destination_row: tuple[int, ...] | None = (37,),
+    ) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.commits = 0
         self.operator_row = operator_row
+        self.destination_row = destination_row
 
     async def execute(self, sql: Any, params: dict[str, Any]) -> _FakeResult:
         statement = str(sql)
@@ -32,7 +38,9 @@ class _FakeSession:
         if "INSERT INTO operators" in statement:
             return _FakeResult((19,))
         if "SELECT id FROM destinations" in statement:
-            return _FakeResult((37,))
+            return _FakeResult(self.destination_row)
+        if "INSERT INTO destinations" in statement:
+            return _FakeResult((38,))
         if "hotel_operator_mapping" in statement and "external_id" in statement:
             return _FakeResult((28644,))
         if "SELECT id FROM hotels WHERE canonical_slug" in statement:
@@ -93,6 +101,22 @@ async def test_country_dest_id_finds_top_level_country_destination() -> None:
     assert db.calls[0][1] == {"iso": "ES"}
 
 
+async def test_country_dest_id_creates_missing_top_level_country_destination() -> None:
+    db = _FakeSession(destination_row=None)
+
+    assert await country_dest_id(_db(db), "TR") == 38
+
+    insert_sql = db.calls[1][0]
+    assert "INSERT INTO destinations" in insert_sql
+    assert "ON CONFLICT (country_iso2, region_slug)" in insert_sql
+    assert db.calls[1][1] == {
+        "iso": "TR",
+        "slug": "turkey",
+        "name_uk": "Туреччина",
+        "name_en": "Turkey",
+    }
+
+
 async def test_upsert_hotel_reuses_existing_farvater_mapping_when_slug_changes() -> None:
     db = _FakeSession()
 
@@ -102,6 +126,7 @@ async def test_upsert_hotel_reuses_existing_farvater_mapping_when_slug_changes()
     update_calls = [params for sql, params in db.calls if "UPDATE hotels" in sql]
     assert update_calls
     assert update_calls[0]["id"] == 28644
+    assert update_calls[0]["dest"] == 37
 
 
 async def test_upsert_mapping_refreshes_external_name_on_conflict() -> None:

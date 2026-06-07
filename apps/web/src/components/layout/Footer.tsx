@@ -4,6 +4,10 @@ import { fetchDestinations } from '@/lib/api-client';
 import { uniqueCountriesByIso } from '@/lib/countries';
 import type { CountryOut } from '@/lib/types';
 
+export function copyrightYear(now = new Date()): number {
+  return now.getFullYear();
+}
+
 async function getTopCountries(): Promise<CountryOut[]> {
   try {
     const all = await fetchDestinations({ revalidate: 3600 });
@@ -19,6 +23,7 @@ async function getTopCountries(): Promise<CountryOut[]> {
 
 export async function Footer() {
   const topCountries = await getTopCountries();
+  const year = copyrightYear();
 
   return (
     <footer className="mt-16 border-t border-slate-200 bg-white py-10 text-sm text-slate-500">
@@ -45,7 +50,7 @@ export async function Footer() {
 
         <div className="flex flex-col gap-4 border-t border-slate-100 pt-6 md:flex-row md:items-center md:justify-between">
           <p>
-            © {new Date().getFullYear()} FastTravel — інформаційний агрегатор турів.
+            © {year} FastTravel — інформаційний агрегатор турів.{' '}
             <span className="ml-2 hidden text-xs sm:inline">Ми не туроператор.</span>
           </p>
           <nav aria-label="Допоміжна навігація">

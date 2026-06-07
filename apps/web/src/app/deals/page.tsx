@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Container } from '@/components/layout/Container';
 import { DealsFeed } from './DealsFeed';
 import { fetchDeals, fetchDestinations, userMessageForApiError } from '@/lib/api-client';
+import { countriesForSelector } from '@/lib/countries';
 import type { CountryOut } from '@/lib/types';
 
 export const metadata: Metadata = {
@@ -80,9 +81,9 @@ export default async function DealsPage({
 
 async function getCountries(): Promise<CountryOut[]> {
   try {
-    return await fetchDestinations({ revalidate: 3600 });
+    return countriesForSelector(await fetchDestinations({ revalidate: 3600 }));
   } catch {
-    return [];
+    return countriesForSelector([]);
   }
 }
 

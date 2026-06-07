@@ -1,12 +1,12 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useMemo, useState, useTransition, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, useTransition, type FormEvent } from 'react';
 import { Button } from './ui/Button';
 import { PaxPicker, paxFromSearchParams, paxToSearchParams, type PaxValue } from './PaxPicker';
 import { toApiSearchParams, type RouteSearchParams } from '@/lib/search-params';
 import { DEFAULT_SEARCH_SORT, normalizeSearchSort } from '@/lib/search-sort';
-import { accusativeCountry, uniqueCountriesByIso } from '@/lib/countries';
+import { accusativeCountry, countriesForSelector } from '@/lib/countries';
 import { PRECOMPUTED_NIGHTS, type CountryOut } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
@@ -42,9 +42,10 @@ const MEAL_OPTIONS: Array<{ value: string; label: string }> = [
 ];
 
 const NIGHT_OPTIONS = PRECOMPUTED_NIGHTS;
+const EMPTY_COUNTRIES: CountryOut[] = [];
 
 export function SearchForm({
-  countries = [],
+  countries = EMPTY_COUNTRIES,
   defaultCountry,
   variant = 'default',
 }: SearchFormProps) {
@@ -54,49 +55,79 @@ export function SearchForm({
   // Min check-in is today (UTC midnight is a harmless UA edge) so the native
   // picker greys out past dates, which always dead-end on zero results.
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const selectableCountries = useMemo(() => uniqueCountriesByIso(countries), [countries]);
+  const selectableCountries = useMemo(() => countriesForSelector(countries), [countries]);
+  const paramsKey = params.toString();
+  const paramSnapshot = useMemo(() => new URLSearchParams(paramsKey), [paramsKey]);
+  const readCurrentParam = useMemo(
+    () => (key: string) => paramSnapshot.get(key) ?? paramSnapshot.get(`amp;${key}`),
+    [paramSnapshot],
+  );
   const sanitizedInitial = useMemo(
     () =>
       toApiSearchParams({
-        q: readSearchParam(params, 'q') ?? undefined,
-        country: readSearchParam(params, 'country') ?? undefined,
-        check_in: readSearchParam(params, 'check_in') ?? undefined,
-        check_in_min: readSearchParam(params, 'check_in_min') ?? undefined,
-        nights: readSearchParam(params, 'nights') ?? undefined,
-        meal_plan: readSearchParam(params, 'meal_plan') ?? undefined,
-        price_max: readSearchParam(params, 'price_max') ?? undefined,
-        stars_min: readSearchParam(params, 'stars_min') ?? undefined,
-        adults: readSearchParam(params, 'adults') ?? undefined,
-        kids: readSearchParam(params, 'kids') ?? undefined,
-        sort: readSearchParam(params, 'sort') ?? undefined,
+        q: readCurrentParam('q') ?? undefined,
+        country: readCurrentParam('country') ?? undefined,
+        check_in: readCurrentParam('check_in') ?? undefined,
+        check_in_min: readCurrentParam('check_in_min') ?? undefined,
+        nights: readCurrentParam('nights') ?? undefined,
+        meal_plan: readCurrentParam('meal_plan') ?? undefined,
+        price_max: readCurrentParam('price_max') ?? undefined,
+        stars_min: readCurrentParam('stars_min') ?? undefined,
+        adults: readCurrentParam('adults') ?? undefined,
+        kids: readCurrentParam('kids') ?? undefined,
+        sort: readCurrentParam('sort') ?? undefined,
       }),
-    [params],
+    [readCurrentParam],
   );
 
   // URL ?country wins over the prop default — keeps state across refresh.
   const initialCountry = (sanitizedInitial.country ?? defaultCountry ?? '').toUpperCase();
+  const initialPax = useMemo(() => paxFromSearchParams(readCurrentParam), [readCurrentParam]);
+  const initialHotelQuery = sanitizedInitial.q ?? '';
+  const initialCheckIn = sanitizedInitial.check_in ?? '';
+  const initialNights =
+    sanitizedInitial.nights !== undefined ? String(sanitizedInitial.nights) : '';
+  const initialMealPlan = sanitizedInitial.meal_plan ?? '';
+  const initialPriceMax =
+    sanitizedInitial.price_max !== undefined ? String(sanitizedInitial.price_max) : '';
+  const initialStarsMin =
+    sanitizedInitial.stars_min !== undefined ? String(sanitizedInitial.stars_min) : '';
+  const initialFormKey = `${paramsKey}|${defaultCountry ?? ''}`;
 
-  const [hotelQuery, setHotelQuery] = useState(sanitizedInitial.q ?? '');
+  const [hotelQuery, setHotelQuery] = useState(initialHotelQuery);
   const [country, setCountry] = useState(initialCountry);
   // Phase 2 P0-1 collapsed the old date range (check_in_min/max) into a
   // single check_in. The backend now narrows to that specific day via
   // INNER JOIN on hotel_calendar_prices(hotel_id, check_in). Read either
   // the new `check_in` param or the legacy `check_in_min` to preserve
   // bookmarks while old URLs cycle out.
-  const [checkIn, setCheckIn] = useState(sanitizedInitial.check_in ?? '');
-  const [nights, setNights] = useState(
-    sanitizedInitial.nights !== undefined ? String(sanitizedInitial.nights) : '',
-  );
-  const [mealPlan, setMealPlan] = useState(sanitizedInitial.meal_plan ?? '');
-  const [priceMax, setPriceMax] = useState(
-    sanitizedInitial.price_max !== undefined ? String(sanitizedInitial.price_max) : '',
-  );
-  const [starsMin, setStarsMin] = useState(
-    sanitizedInitial.stars_min !== undefined ? String(sanitizedInitial.stars_min) : '',
-  );
-  const [pax, setPax] = useState<PaxValue>(() =>
-    paxFromSearchParams((k) => readSearchParam(params, k)),
-  );
+  const [checkIn, setCheckIn] = useState(initialCheckIn);
+  const [nights, setNights] = useState(initialNights);
+  const [mealPlan, setMealPlan] = useState(initialMealPlan);
+  const [priceMax, setPriceMax] = useState(initialPriceMax);
+  const [starsMin, setStarsMin] = useState(initialStarsMin);
+  const [pax, setPax] = useState<PaxValue>(initialPax);
+
+  useEffect(() => {
+    setHotelQuery(initialHotelQuery);
+    setCountry(initialCountry);
+    setCheckIn(initialCheckIn);
+    setNights(initialNights);
+    setMealPlan(initialMealPlan);
+    setPriceMax(initialPriceMax);
+    setStarsMin(initialStarsMin);
+    setPax(initialPax);
+  }, [
+    initialCheckIn,
+    initialCountry,
+    initialFormKey,
+    initialHotelQuery,
+    initialMealPlan,
+    initialNights,
+    initialPax,
+    initialPriceMax,
+    initialStarsMin,
+  ]);
 
   // Stable lookup so we can show "Знайти тури в {country}" without re-scanning.
   const countryByIso = useMemo(() => {
@@ -117,7 +148,7 @@ export function SearchForm({
     e.preventDefault();
     if (isPending) return;
     const qs = new URLSearchParams();
-    const currentSort = normalizeSearchSort(readSearchParam(params, 'sort'));
+    const currentSort = normalizeSearchSort(readCurrentParam('sort'));
     const raw: RouteSearchParams = {
       q: hotelQuery,
       country,
@@ -207,6 +238,7 @@ export function SearchForm({
             onChange={(e) => setHotelQuery(e.target.value)}
             className="input"
             placeholder="Rixos, Dana Beach..."
+            aria-label="Назва готелю"
             autoComplete="off"
           />
         </Field>
@@ -236,6 +268,7 @@ export function SearchForm({
             min={today}
             onChange={(e) => setCheckIn(e.target.value)}
             className="input"
+            aria-label="Дата заїзду"
           />
         </Field>
         <Field label="Ночей">
@@ -285,10 +318,16 @@ export function SearchForm({
             value={priceMax}
             onChange={(e) => setPriceMax(e.target.value)}
             className="input"
+            aria-label="Бюджет, ₴"
           />
         </Field>
         <Field label="Зірок, не менше">
-          <select value={starsMin} onChange={(e) => setStarsMin(e.target.value)} className="input">
+          <select
+            value={starsMin}
+            onChange={(e) => setStarsMin(e.target.value)}
+            className="input"
+            aria-label="Зірок, не менше"
+          >
             <option value="">Будь-яких</option>
             <option value="3">3★+</option>
             <option value="4">4★+</option>
@@ -324,11 +363,6 @@ export function SearchForm({
           background-color: white;
           font-size: 0.875rem;
           color: rgb(15 23 42);
-          /* Strip OS-default control chrome (dropdown arrows, inner spin) so
-             native select/date/number all share the hero's flat look. */
-          appearance: none;
-          -webkit-appearance: none;
-          -moz-appearance: none;
         }
         .input:focus {
           outline: 2px solid rgb(37 99 235);
@@ -338,6 +372,9 @@ export function SearchForm({
            SVG, and date/number fields keep their own affordances). */
         select.input {
           padding-right: 2rem;
+          appearance: none;
+          -webkit-appearance: none;
+          -moz-appearance: none;
           background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%2364748b'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 111.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z' clip-rule='evenodd'/%3E%3C/svg%3E");
           background-position: right 0.5rem center;
           background-repeat: no-repeat;
@@ -355,10 +392,6 @@ export function SearchForm({
       `}</style>
     </form>
   );
-}
-
-function readSearchParam(params: ReturnType<typeof useSearchParams>, key: string): string | null {
-  return params.get(key) ?? params.get(`amp;${key}`);
 }
 
 function Field({

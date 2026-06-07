@@ -72,11 +72,14 @@ class _FakeSession:
         *,
         lock_acquired: bool = True,
         mark_rowcount: int = 1,
+        posted_today: int = 0,
     ) -> None:
         self._rows = rows
         self._marked = marked
         self._lock_acquired = lock_acquired
         self._mark_rowcount = mark_rowcount
+        self._posted_today = posted_today
+        self.select_params: list[dict] = []
         self.commits = 0
 
     async def __aenter__(self):
@@ -92,8 +95,9 @@ class _FakeSession:
         if "pg_advisory_unlock" in text:
             return _Result(scalar=True)
         if "SELECT COUNT(*) AS n" in text:
-            return _Result(scalar=0)
+            return _Result(scalar=self._posted_today)
         if "FROM deals d" in text:
+            self.select_params.append(dict(params or {}))
             return _Result(rows=self._rows)
         if "RETURNING id" in text:
             return _Result(scalar=(params or {}).get("deal_id"))
@@ -157,6 +161,30 @@ async def test_post_deals_existing_runner_skips_before_select_or_bot(monkeypatch
     await post_deals_job()
 
     assert marked == []
+
+
+@pytest.mark.asyncio
+async def test_post_deals_zero_daily_cap_means_unlimited(monkeypatch) -> None:
+    module = post_deals_module
+    marked: list[dict] = []
+    bot = _FakeBot()
+    rows = [_deal_row(1), _deal_row(2), _deal_row(3)]
+    session = _FakeSession(rows, marked, posted_today=30)
+
+    monkeypatch.setattr(module, "get_settings", lambda: _settings(deals_daily_cap=0))
+    monkeypatch.setattr(module, "async_session_factory", lambda: session)
+    monkeypatch.setattr(module, "make_bot", lambda _token: bot)
+
+    async def broadcast(_bot, _channel, _text):
+        return 777
+
+    monkeypatch.setattr(module, "broadcast_deal", broadcast)
+
+    await post_deals_job()
+
+    assert [m["deal_id"] for m in marked] == [1, 2, 3]
+    assert session.select_params[0]["lim"] == 5
+    assert bot.session.closed is True
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,15 @@ const countries: CountryOut[] = [
     hotel_count: 12,
     regions: [],
   },
+  {
+    id: 2,
+    country_iso2: 'EG',
+    country_slug: 'egypt',
+    name_uk: 'Єгипет',
+    name_en: 'Egypt',
+    hotel_count: 8,
+    regions: [],
+  },
 ];
 
 describe('SearchForm', () => {
@@ -74,6 +83,27 @@ describe('SearchForm', () => {
     expect(screen.getByLabelText('Назва готелю')).toBeInTheDocument();
   });
 
+  it('updates selected country value and submit copy after choosing a country', async () => {
+    const user = userEvent.setup();
+    render(<SearchForm countries={countries} />);
+
+    await user.selectOptions(screen.getByLabelText('Країна призначення'), 'TR');
+
+    expect(screen.getByLabelText('Країна призначення')).toHaveValue('TR');
+    expect(screen.getByRole('button', { name: 'Знайти тури в Туреччину' })).toBeInTheDocument();
+  });
+
+  it('prefills country from defaultCountry when URL has no country', async () => {
+    const user = userEvent.setup();
+    render(<SearchForm countries={countries} defaultCountry="EG" />);
+
+    expect(screen.getByLabelText('Країна призначення')).toHaveValue('EG');
+
+    await user.click(screen.getByRole('button', { name: 'Знайти тури в Єгипет' }));
+
+    expect(push).toHaveBeenCalledWith('/search?country=EG&adults=2');
+  });
+
   it('constrains the check-in input to today and later', () => {
     render(<SearchForm countries={countries} />);
 
@@ -90,6 +120,33 @@ describe('SearchForm', () => {
 
     expect(push).toHaveBeenCalledTimes(1);
     expect(push).toHaveBeenCalledWith('/search?country=TR&adults=2');
+  });
+
+  it('keeps core countries selectable when the live destinations catalog is empty', async () => {
+    const user = userEvent.setup();
+    render(<SearchForm countries={[]} />);
+
+    await user.selectOptions(screen.getByLabelText('Країна призначення'), 'TR');
+    await user.click(screen.getByRole('button', { name: /знайти тури/i }));
+
+    expect(screen.getByRole('option', { name: 'Туреччина' })).toBeInTheDocument();
+    expect(push).toHaveBeenCalledWith('/search?country=TR&adults=2');
+  });
+
+  it('syncs controlled fields when URL filters change after mount', async () => {
+    const user = userEvent.setup();
+    currentParams.set('country', 'TR');
+    const { rerender } = render(<SearchForm countries={countries} />);
+
+    expect(screen.getByLabelText('Країна призначення')).toHaveValue('TR');
+
+    currentParams.delete('country');
+    rerender(<SearchForm countries={countries} />);
+
+    expect(screen.getByLabelText('Країна призначення')).toHaveValue('');
+    await user.click(screen.getByRole('button', { name: /знайти тури/i }));
+
+    expect(push).toHaveBeenCalledWith('/search?adults=2');
   });
 
   it('injects a synthetic option so an out-of-range nights filter stays visible', () => {
