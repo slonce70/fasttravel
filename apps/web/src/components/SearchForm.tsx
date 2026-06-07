@@ -356,7 +356,7 @@ export function SearchForm({
       <style>{`
         .input {
           width: 100%;
-          height: 2.5rem;
+          height: 2.75rem;
           padding: 0 0.75rem;
           border-radius: 0.5rem;
           border: 1px solid rgb(203 213 225);

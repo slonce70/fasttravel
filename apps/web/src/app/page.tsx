@@ -136,7 +136,7 @@ function TravelDataPreview({ heroPhoto, heroDeal }: { heroPhoto: string | null; 
           )}
           <div className="bg-white/92 absolute bottom-3 left-3 right-3 rounded-lg p-3 shadow-sm ring-1 ring-white/80 backdrop-blur">
             <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">
-              Travel + Data
+              Подорож + дані
             </p>
             <p className="mt-1 text-sm font-semibold text-slate-950">
               Фото для бажання поїхати, календар для рішення.

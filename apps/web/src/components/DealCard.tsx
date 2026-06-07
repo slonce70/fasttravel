@@ -92,10 +92,10 @@ export function DealCard({ deal }: DealCardProps) {
       <CardFooter className="flex items-center justify-between">
         <Link
           href={`/deals/${deal.id}`}
-          className="text-xs text-slate-500 hover:text-slate-700"
-          aria-label={`Постійне посилання на варіант ${heading}`}
+          className="inline-flex min-h-11 items-center text-xs font-medium text-slate-500 hover:text-slate-700"
+          aria-label={`Деталі пропозиції ${heading}`}
         >
-          Permalink →
+          Деталі пропозиції →
         </Link>
         {deal.deep_link && (
           <div className="flex flex-col items-end gap-0.5">
@@ -104,7 +104,7 @@ export function DealCard({ deal }: DealCardProps) {
               target="_blank"
               rel="nofollow sponsored noopener"
               aria-label={`Купити тур у ${heading} на сайті оператора (зовнішнє посилання)`}
-              className="inline-flex h-9 items-center justify-center rounded-lg bg-accent-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-700"
+              className="inline-flex h-11 items-center justify-center rounded-lg bg-accent-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-700"
             >
               Купити →
             </a>

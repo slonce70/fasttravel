@@ -129,7 +129,7 @@ test('deal permalink keeps enriched hotel context and links back to the hotel pa
 }) => {
   await page.goto('/deals');
 
-  const permalink = page.getByRole('link', { name: /Постійне посилання/ }).first();
+  const permalink = page.getByRole('link', { name: /Деталі пропозиції/ }).first();
   await expect(permalink).toBeVisible();
   const href = await permalink.getAttribute('href');
   expect(href).toMatch(/^\/deals\/\d+$/);

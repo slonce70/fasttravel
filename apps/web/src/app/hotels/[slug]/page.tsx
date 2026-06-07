@@ -65,11 +65,16 @@ export default async function HotelPage({ params }: { params: Promise<{ slug: st
         </div>
       </header>
 
-      {hotel.description_uk && (
-        <p className="max-w-3xl text-sm leading-relaxed text-slate-600">{hotel.description_uk}</p>
-      )}
-
       <HotelView hotel={hotel} />
+
+      {hotel.description_uk && (
+        <section aria-labelledby="hotel-description-heading" className="max-w-3xl">
+          <h2 id="hotel-description-heading" className="mb-2 text-lg font-semibold text-slate-800">
+            Про готель
+          </h2>
+          <p className="text-sm leading-relaxed text-slate-600">{hotel.description_uk}</p>
+        </section>
+      )}
 
       {hotel.amenities && hotel.amenities.length > 0 && (
         <section aria-labelledby="amenities-heading">

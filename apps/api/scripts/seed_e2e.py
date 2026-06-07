@@ -227,24 +227,6 @@ async def main() -> None:
             {"destination_id": destination_id},
         )
 
-        await session.execute(
-            text(
-                """
-                INSERT INTO hotel_operator_mapping (
-                    operator_id,
-                    external_id,
-                    hotel_id,
-                    external_name
-                )
-                VALUES (:operator_id, 'ci-e2e-kemer-resort', :hotel_id, 'CI E2E Kemer Resort')
-                ON CONFLICT (operator_id, external_id) DO UPDATE
-                SET hotel_id = EXCLUDED.hotel_id,
-                    external_name = EXCLUDED.external_name
-                """
-            ),
-            {"operator_id": operator_id, "hotel_id": hotel_id},
-        )
-
         tossa_hotel_id = await session.scalar(
             text(
                 """
@@ -305,28 +287,6 @@ async def main() -> None:
                 """
             ),
             {"source_slug": TOSSA_OLD_SLUG, "hotel_id": tossa_hotel_id},
-        )
-
-        await session.execute(
-            text(
-                """
-                INSERT INTO hotel_operator_mapping (
-                    operator_id,
-                    external_id,
-                    hotel_id,
-                    external_name
-                )
-                VALUES (:operator_id, :external_id, :hotel_id, 'Tossa Park Aparthotel')
-                ON CONFLICT (operator_id, external_id) DO UPDATE
-                SET hotel_id = EXCLUDED.hotel_id,
-                    external_name = EXCLUDED.external_name
-                """
-            ),
-            {
-                "operator_id": operator_id,
-                "external_id": TOSSA_CANONICAL_SLUG,
-                "hotel_id": tossa_hotel_id,
-            },
         )
 
         await session.execute(

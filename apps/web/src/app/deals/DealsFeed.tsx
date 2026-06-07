@@ -6,7 +6,7 @@ import type { PaginatedDeals } from '@/lib/types';
 import { DealCard } from '@/components/DealCard';
 import { Button } from '@/components/ui/Button';
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 18;
 
 export function DealsFeed({
   initial,
@@ -48,6 +48,14 @@ export function DealsFeed({
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-col gap-3 rounded-xl bg-white p-3 ring-1 ring-slate-200 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm font-medium text-slate-700">
+          Показано {items.length} з {initial.total} {pluralDeals(initial.total)}
+        </p>
+        <p className="text-xs text-slate-500">
+          Найсвіжіші цінові сигнали зверху, решту можна дозавантажити нижче.
+        </p>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((deal) => (
           <DealCard key={deal.id} deal={deal} />
@@ -57,7 +65,7 @@ export function DealsFeed({
         <div className="flex justify-center">
           <Button
             variant="secondary"
-            size="md"
+            size="lg"
             onClick={() => fetchNextPage()}
             disabled={isFetchingNextPage}
           >
@@ -67,4 +75,12 @@ export function DealsFeed({
       )}
     </div>
   );
+}
+
+function pluralDeals(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'знижку';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'знижки';
+  return 'знижок';
 }

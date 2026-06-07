@@ -6,6 +6,8 @@ import { fetchDeals, fetchDestinations, userMessageForApiError } from '@/lib/api
 import { countriesForSelector } from '@/lib/countries';
 import type { CountryOut } from '@/lib/types';
 
+const DEALS_PAGE_SIZE = 18;
+
 export const metadata: Metadata = {
   title: 'Гарячі знижки на тури',
   description:
@@ -35,7 +37,7 @@ export default async function DealsPage({
   let countryName: string | undefined;
   try {
     const [deals, countries] = await Promise.all([
-      fetchDeals({ limit: 50, country }, { revalidate: 300 }),
+      fetchDeals({ limit: DEALS_PAGE_SIZE, country }, { revalidate: 300 }),
       country ? getCountries() : Promise.resolve<CountryOut[]>([]),
     ]);
     initial = deals;
@@ -44,7 +46,7 @@ export default async function DealsPage({
       : undefined;
   } catch (e) {
     error = userMessageForApiError(e);
-    initial = { items: [], total: 0, limit: 50, offset: 0 };
+    initial = { items: [], total: 0, limit: DEALS_PAGE_SIZE, offset: 0 };
   }
 
   return (

@@ -79,16 +79,39 @@ export async function Header() {
             ))}
           </ul>
         </nav>
-        {/* Mobile: minimalist quick-links. Hamburger comes in Phase 2. */}
-        <nav aria-label="Швидкі дії" className="flex items-center gap-1 md:hidden">
+        <nav
+          aria-label="Мобільна навігація"
+          className="-mr-3 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pl-2 md:hidden"
+        >
           <Link
             href="/search"
-            className="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:text-teal-800"
+            className="inline-flex h-11 shrink-0 items-center rounded-md px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-teal-800"
           >
             Пошук
           </Link>
-          <Link href="/deals" className="rounded-md px-3 py-2 text-sm font-medium text-teal-700">
+          <Link
+            href="/deals"
+            className="inline-flex h-11 shrink-0 items-center rounded-md px-3 text-sm font-medium text-teal-700 hover:bg-slate-100"
+          >
             Знижки
+          </Link>
+          <Link
+            href="/cheap"
+            className="inline-flex h-11 shrink-0 items-center rounded-md px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-teal-800"
+          >
+            Дешеві
+          </Link>
+          <Link
+            href="/telegram"
+            className="inline-flex h-11 shrink-0 items-center rounded-md px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-teal-800"
+          >
+            Telegram
+          </Link>
+          <Link
+            href="/about"
+            className="inline-flex h-11 shrink-0 items-center rounded-md px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-teal-800"
+          >
+            Про нас
           </Link>
         </nav>
       </Container>
