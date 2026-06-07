@@ -64,9 +64,7 @@ def test_card_renders_deep_link_and_stars_and_reviews() -> None:
 
 
 def test_card_drops_optional_blocks_when_absent() -> None:
-    out = render_cheap_card(
-        _cheap_row(review_score=None, review_count=0, deep_link=None)
-    )
+    out = render_cheap_card(_cheap_row(review_score=None, review_count=0, deep_link=None))
 
     assert "/10" not in out
     assert "Переглянути" not in out
@@ -122,7 +120,9 @@ def _big_rows(n_countries: int, per_country: int = 3) -> list:
 
 def test_telegram_parsed_len_ignores_hidden_urls_and_markdown() -> None:
     # The hidden URL and MarkdownV2 markers must not count toward the cap.
-    with_link = "💰 ціна від *18 210 ₴*\n🛒 [Переглянути →](https://example.com/very/long/url?q=abc123)"
+    with_link = (
+        "💰 ціна від *18 210 ₴*\n🛒 [Переглянути →](https://example.com/very/long/url?q=abc123)"
+    )
     no_link = "💰 ціна від 18 210 ₴\n🛒 Переглянути →"
     assert telegram_parsed_len(with_link) == telegram_parsed_len(no_link)
 
@@ -136,9 +136,7 @@ def test_digest_stays_under_telegram_cap_in_worst_case() -> None:
 
 
 def test_digest_truncation_footer_points_to_site() -> None:
-    out = render_cheap_digest(
-        _big_rows(20), site_cheap_url="https://fasttravel.test/cheap"
-    )
+    out = render_cheap_digest(_big_rows(20), site_cheap_url="https://fasttravel.test/cheap")
 
     shown = out.count("📍")
     assert shown < 20  # truncated
@@ -155,8 +153,17 @@ def test_digest_realistic_country_count_is_not_over_truncated() -> None:
     # goal with a too-tight cap — and must keep TOP-3 per country shown
     # (never thin cards per country to fit more).
     names = [
-        "Болгарія", "Єгипет", "Туреччина", "Греція", "ОАЕ", "Кіпр",
-        "Іспанія", "Чорногорія", "Албанія", "Туніс", "Грузія",
+        "Болгарія",
+        "Єгипет",
+        "Туреччина",
+        "Греція",
+        "ОАЕ",
+        "Кіпр",
+        "Іспанія",
+        "Чорногорія",
+        "Албанія",
+        "Туніс",
+        "Грузія",
     ]
     rows = []
     for i, name in enumerate(names):
@@ -228,9 +235,7 @@ async def test_show_cheap_renders_digest(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_show_cheap_handles_api_error(monkeypatch) -> None:
-    monkeypatch.setattr(
-        cheap, "get_cheapest_tours", AsyncMock(side_effect=ApiError("boom"))
-    )
+    monkeypatch.setattr(cheap, "get_cheapest_tours", AsyncMock(side_effect=ApiError("boom")))
     message = SimpleNamespace(answer=AsyncMock())
 
     await cheap.show_cheap(message)
@@ -253,9 +258,7 @@ async def test_text_cheap_bridge_clears_state_and_shows(monkeypatch) -> None:
 
 def test_menu_and_commands_register_cheap_with_neutral_copy() -> None:
     assert main_menu.CHEAP in {
-        button.text
-        for row in main_menu.main_menu_kb().keyboard
-        for button in row
+        button.text for row in main_menu.main_menu_kb().keyboard for button in row
     }
     cheap_cmds = [c for c in bot_main.PUBLIC_COMMANDS if c.command == "cheap"]
     assert len(cheap_cmds) == 1

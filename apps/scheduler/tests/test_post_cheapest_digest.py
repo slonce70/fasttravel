@@ -58,18 +58,57 @@ def _row(
 # returns (country_name, rank, hotel_id).
 def _two_country_rows() -> list[SimpleNamespace]:
     return [
-        _row(country_iso2="BG", country_name="Болгарія", hotel_id=1,
-             hotel_name="Chuchulev Hotel", price_uah=18210, rank=1),
-        _row(country_iso2="BG", country_name="Болгарія", hotel_id=2,
-             hotel_name="Topalovi Family Hotel", price_uah=18868, rank=2),
-        _row(country_iso2="BG", country_name="Болгарія", hotel_id=3,
-             hotel_name="Ryor Hotel", price_uah=18949, rank=3),
-        _row(country_iso2="TR", country_name="Туреччина", hotel_id=4,
-             hotel_name="Sea Hotel", price_uah=25000, rank=1, meal_plan="AI"),
-        _row(country_iso2="TR", country_name="Туреччина", hotel_id=5,
-             hotel_name="Sun Resort", price_uah=26000, rank=2, meal_plan="AI"),
-        _row(country_iso2="TR", country_name="Туреччина", hotel_id=6,
-             hotel_name="Bay Hotel", price_uah=27000, rank=3, meal_plan="AI"),
+        _row(
+            country_iso2="BG",
+            country_name="Болгарія",
+            hotel_id=1,
+            hotel_name="Chuchulev Hotel",
+            price_uah=18210,
+            rank=1,
+        ),
+        _row(
+            country_iso2="BG",
+            country_name="Болгарія",
+            hotel_id=2,
+            hotel_name="Topalovi Family Hotel",
+            price_uah=18868,
+            rank=2,
+        ),
+        _row(
+            country_iso2="BG",
+            country_name="Болгарія",
+            hotel_id=3,
+            hotel_name="Ryor Hotel",
+            price_uah=18949,
+            rank=3,
+        ),
+        _row(
+            country_iso2="TR",
+            country_name="Туреччина",
+            hotel_id=4,
+            hotel_name="Sea Hotel",
+            price_uah=25000,
+            rank=1,
+            meal_plan="AI",
+        ),
+        _row(
+            country_iso2="TR",
+            country_name="Туреччина",
+            hotel_id=5,
+            hotel_name="Sun Resort",
+            price_uah=26000,
+            rank=2,
+            meal_plan="AI",
+        ),
+        _row(
+            country_iso2="TR",
+            country_name="Туреччина",
+            hotel_id=6,
+            hotel_name="Bay Hotel",
+            price_uah=27000,
+            rank=3,
+            meal_plan="AI",
+        ),
     ]
 
 
@@ -113,9 +152,17 @@ class _FakeBot:
 # Eleven countries with long names + slugs — the real prod scale. Used to prove
 # the digest chunks rather than overflowing Telegram's 4096-char message limit.
 _COUNTRIES_11 = [
-    "Болгарія", "Туреччина", "Єгипет", "Чорногорія", "Кіпр", "Греція",
-    "Іспанія", "Туніс", "Об'єднані Арабські Емірати",
-    "Домініканська Республіка", "Танзанія",
+    "Болгарія",
+    "Туреччина",
+    "Єгипет",
+    "Чорногорія",
+    "Кіпр",
+    "Греція",
+    "Іспанія",
+    "Туніс",
+    "Об'єднані Арабські Емірати",
+    "Домініканська Республіка",
+    "Танзанія",
 ]
 
 
@@ -175,12 +222,25 @@ def test_render_digest_groups_by_country_with_honest_price_copy():
 
 def test_render_digest_links_are_deep_links_with_fallback_to_hotel_page():
     rows = [
-        _row(country_iso2="BG", country_name="Болгарія", hotel_id=1,
-             hotel_name="With Link", price_uah=18210, rank=1,
-             deep_link="https://farvater.travel/hotel/bg/x"),
-        _row(country_iso2="BG", country_name="Болгарія", hotel_id=2,
-             hotel_name="No Link", price_uah=18868, rank=2,
-             deep_link=None, hotel_slug="fv-bg-y"),
+        _row(
+            country_iso2="BG",
+            country_name="Болгарія",
+            hotel_id=1,
+            hotel_name="With Link",
+            price_uah=18210,
+            rank=1,
+            deep_link="https://farvater.travel/hotel/bg/x",
+        ),
+        _row(
+            country_iso2="BG",
+            country_name="Болгарія",
+            hotel_id=2,
+            hotel_name="No Link",
+            price_uah=18868,
+            rank=2,
+            deep_link=None,
+            hotel_slug="fv-bg-y",
+        ),
     ]
     chunks = render_digest(rows, public_site_url="https://fasttravel.test")
     text = "\n\n".join(chunks)

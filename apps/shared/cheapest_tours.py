@@ -66,9 +66,7 @@ LOOKAHEAD_START_DAYS = 3
 LOOKAHEAD_END_DAYS = 90
 
 
-def cheapest_tours_sql(
-    *, meal_filtered: bool = False, prioritized: bool = False
-) -> str:
+def cheapest_tours_sql(*, meal_filtered: bool = False, prioritized: bool = False) -> str:
     """Render the cheapest-tours selection SQL.
 
     Bind parameters: ``:min_stars`` (int), ``:per_country`` (int). With
@@ -88,9 +86,7 @@ def cheapest_tours_sql(
     """
     # Cast the array binds to text[] so asyncpg can infer the parameter type
     # (a bare `= ANY(:list)` fails to infer inside a CASE/WHERE).
-    meal_clause = (
-        "AND cp.meal_plan = ANY(CAST(:meal_codes AS text[]))" if meal_filtered else ""
-    )
+    meal_clause = "AND cp.meal_plan = ANY(CAST(:meal_codes AS text[]))" if meal_filtered else ""
     rank_limit = (
         # CAST the int branches too: inside a CASE asyncpg can't infer the
         # param type and defaults to text, which breaks `bigint <= text`.
