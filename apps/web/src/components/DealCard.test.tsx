@@ -59,8 +59,11 @@ describe('DealCard', () => {
     expect(heading).toBeInTheDocument();
     // The hotel name links to the detail route — the link the bot now also uses.
     expect(heading).toHaveAttribute('href', '/hotels/belport-beach-hotel');
-    // Permalink anchor under the card footer
-    expect(screen.getByLabelText(/Постійне посилання/i)).toHaveAttribute('href', '/deals/1');
+    // Permanent detail anchor under the card footer.
+    expect(screen.getByRole('link', { name: /Деталі пропозиції/i })).toHaveAttribute(
+      'href',
+      '/deals/1',
+    );
   });
 
   it('rounds the discount percent without a platform emoji badge', () => {

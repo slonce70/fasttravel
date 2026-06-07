@@ -34,7 +34,7 @@ class Settings(BaseAppSettings):
     # Stored raw to avoid pydantic-settings' JSON pre-parsing of list fields.
     # Use `.cors_origins` to get the parsed list.
     cors_origins_raw: str = Field(
-        default="http://localhost:3000,http://localhost:3100,http://127.0.0.1:3100",
+        default="http://localhost:3000,http://127.0.0.1:3000,http://localhost:3100,http://127.0.0.1:3100",
         alias="cors_origins",
     )
 

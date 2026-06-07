@@ -19,7 +19,7 @@
  *   - See apps/api/src/routers/hotels.py + services/calendar_service.py.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { DayPicker, type DayButtonProps } from 'react-day-picker';
 import { uk } from 'date-fns/locale';
@@ -37,6 +37,11 @@ import { buildPriceScale, colorForPrice, priceColor, type ColorScale } from '@/l
 import { Skeleton } from './ui';
 
 import 'react-day-picker/style.css';
+
+const DAY_PICKER_TOUCH_TARGET_STYLE = {
+  '--rdp-nav_button-height': '2.75rem',
+  '--rdp-nav_button-width': '2.75rem',
+} as CSSProperties;
 
 export interface PriceCalendarProps {
   hotelId: number;
@@ -117,6 +122,7 @@ export function PriceCalendar({
           numberOfMonths={2}
           weekStartsOn={1}
           showOutsideDays={false}
+          style={DAY_PICKER_TOUCH_TARGET_STYLE}
           startMonth={today}
           endMonth={to}
           disabled={[{ before: today }, { after: to }]}
@@ -153,7 +159,7 @@ export function PriceCalendar({
             void refetch();
           }}
           disabled={isRefreshingPrices || isFetching}
-          className="rounded px-2 py-1 hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60"
+          className="inline-flex min-h-11 items-center rounded-lg px-3 font-medium hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60"
         >
           {isRefreshingPrices || isFetching ? 'Оновлюємо…' : 'Оновити'}
         </button>
@@ -351,7 +357,7 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
       <button
         type="button"
         onClick={onRetry}
-        className="mt-4 inline-flex h-9 items-center justify-center rounded-lg bg-brand-700 px-4 text-sm font-medium text-white hover:bg-brand-800"
+        className="mt-4 inline-flex h-11 items-center justify-center rounded-lg bg-brand-700 px-4 text-sm font-medium text-white hover:bg-brand-800"
       >
         Спробувати ще раз
       </button>

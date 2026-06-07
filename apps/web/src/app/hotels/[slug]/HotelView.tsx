@@ -33,8 +33,8 @@ const CUSTOM_NIGHTS_MIN = 1;
 const CUSTOM_NIGHTS_MAX = 30;
 const MEAL_OPTIONS: { code: MealPlan; label: string }[] = [
   { code: 'ALL', label: 'Будь-яке' },
-  { code: 'AI', label: 'All Inclusive' },
-  { code: 'UAI', label: 'Ultra AI' },
+  { code: 'AI', label: 'Все включено (AI)' },
+  { code: 'UAI', label: 'Ультра все включено (UAI)' },
   { code: 'HB', label: 'Напівпансіон (HB)' },
   { code: 'BB', label: 'Сніданок (BB)' },
   { code: 'FB', label: 'Повний пансіон (FB)' },
@@ -195,7 +195,11 @@ export function HotelView({ hotel }: { hotel: Hotel }) {
 
       <Card>
         <CardBody>
-          <fieldset className="flex flex-wrap items-center gap-6">
+          <div className="mb-4 rounded-lg bg-brand-50 px-3 py-2 text-sm text-brand-900 ring-1 ring-brand-100">
+            Спочатку оберіть тривалість, харчування й дату в календарі — після цього нижче з'являться
+            актуальні пропозиції операторів.
+          </div>
+          <fieldset className="flex flex-wrap items-center gap-5">
             <legend className="sr-only">Параметри пошуку цін</legend>
             <FilterGroup label="Тривалість">
               {NIGHT_PRESETS.map((n) => (
@@ -221,7 +225,7 @@ export function HotelView({ hotel }: { hotel: Hotel }) {
                 onChange={(e) => {
                   setSelectedDate(e.target.value ? parseLocalDate(e.target.value) : null);
                 }}
-                className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
+                className="h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-200"
                 aria-label="Дата заїзду"
               />
             </FilterGroup>
@@ -295,7 +299,7 @@ function FilterChip({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        'inline-flex h-9 items-center justify-center rounded-full px-4 text-sm font-medium transition-colors',
+        'inline-flex h-11 items-center justify-center rounded-full px-4 text-sm font-medium transition-colors',
         active ? 'bg-brand-700 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200',
       )}
     >
@@ -340,7 +344,7 @@ function CustomNightsInput({
   };
 
   return (
-    <label className="inline-flex h-9 items-center gap-2 rounded-full bg-slate-100 px-3 text-sm font-medium text-slate-700 transition-colors">
+    <label className="inline-flex h-11 items-center gap-2 rounded-full bg-slate-100 px-3 text-sm font-medium text-slate-700 transition-colors">
       <span className="text-xs uppercase tracking-wide opacity-80">Своя</span>
       <input
         type="number"
@@ -365,7 +369,7 @@ function CustomNightsInput({
           }
         }}
         aria-label="Своя кількість ночей"
-        className="h-7 w-14 rounded-md border border-transparent bg-white/90 px-2 text-center text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+        className="h-8 w-14 rounded-md border border-transparent bg-white/90 px-2 text-center text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
       />
     </label>
   );
