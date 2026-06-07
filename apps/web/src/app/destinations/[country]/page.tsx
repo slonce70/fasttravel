@@ -155,7 +155,7 @@ export default async function CountryDestinationPage({
                 ))}
               </div>
               <p className="mt-3 text-xs text-slate-400">
-                Інтерактивна карта регіонів — у Phase 2.
+                Дані регіонів оновлюються разом із каталогом готелів.
               </p>
             </section>
           )}

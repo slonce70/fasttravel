@@ -3,7 +3,7 @@
 // dedup that collapses the same country carried under multiple operators.
 import { describe, expect, it } from 'vitest';
 import type { CountryOut } from '@/lib/types';
-import { accusativeCountry, uniqueCountriesByIso } from './countries';
+import { accusativeCountry, countriesForSelector, uniqueCountriesByIso } from './countries';
 
 describe('accusativeCountry', () => {
   it('returns the accusative form for known countries', () => {
@@ -41,5 +41,44 @@ describe('uniqueCountriesByIso', () => {
 
   it('returns an empty list unchanged', () => {
     expect(uniqueCountriesByIso([])).toEqual([]);
+  });
+});
+
+describe('countriesForSelector', () => {
+  const make = (iso: string, name: string, hotelCount = 0): CountryOut => ({
+    id: 100,
+    country_iso2: iso,
+    country_slug: name.toLowerCase(),
+    name_uk: name,
+    name_en: null,
+    hotel_count: hotelCount,
+    regions: [],
+  });
+
+  it('keeps every Farvater runtime catalog country selectable when the live API is empty', () => {
+    expect(countriesForSelector([]).map((country) => country.country_iso2)).toEqual([
+      'TR',
+      'EG',
+      'AE',
+      'GR',
+      'ES',
+      'BG',
+      'TH',
+      'CY',
+      'HR',
+      'ME',
+      'MV',
+    ]);
+  });
+
+  it('prefers live API country data over fallback rows for the same ISO', () => {
+    const result = countriesForSelector([make('TR', 'Live Turkey', 42)]);
+
+    expect(result[0]).toMatchObject({
+      country_iso2: 'TR',
+      name_uk: 'Live Turkey',
+      hotel_count: 42,
+    });
+    expect(result.filter((country) => country.country_iso2 === 'TR')).toHaveLength(1);
   });
 });

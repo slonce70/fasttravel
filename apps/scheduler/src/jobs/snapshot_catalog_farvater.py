@@ -128,6 +128,7 @@ async def snapshot_catalog_farvater(*, max_per_country: int | None = None) -> in
             for country_slug, iso2 in CATALOG_COUNTRIES:
                 async with async_session_factory() as db:
                     dest_id = await country_dest_id(db, iso2)
+                    await db.commit()
 
                 try:
                     hotel_paths = await list_country_hotels(client, country_slug)

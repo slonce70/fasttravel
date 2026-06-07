@@ -12,6 +12,7 @@ The wrapper must:
 
 from __future__ import annotations
 
+import asyncio
 import socket
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
@@ -271,3 +272,66 @@ async def test_main_refreshes_mv_once_when_country_inserts_prices(
 
     assert result == 1
     refresh_views.assert_awaited_once_with()
+
+
+async def test_main_does_not_block_forever_on_hung_hotel_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def list_hotels(_client: object, *, iso2_filter: set[str]) -> dict[str, list[str]]:
+        assert iso2_filter == {"TR"}
+        return {"TR": ["/uk/hotel/tr/hung-hotel/"]}
+
+    async def process_hotel(*_args: object) -> tuple[int, int]:
+        await asyncio.Event().wait()
+        return (1, 1)
+
+    monkeypatch.setattr(sl, "CATALOG_COUNTRIES", [("Turkey", "TR")])
+    monkeypatch.setattr(sl, "PER_HOTEL_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(sl, "async_session_factory", lambda: _FakeSessionFactory())
+    monkeypatch.setattr(sl, "ensure_operator", AsyncMock(return_value=18))
+    monkeypatch.setattr(sl, "country_dest_id", AsyncMock(return_value=7))
+    monkeypatch.setattr(sl, "open_farvater_client", lambda: _FakeClientContext())
+    monkeypatch.setattr(sl, "list_sitemap_hotels", list_hotels)
+    monkeypatch.setattr(sl, "_already_ingested", AsyncMock(return_value=set()))
+    monkeypatch.setattr(sl, "_process_hotel", process_hotel)
+    monkeypatch.setattr(sl, "_refresh_views", AsyncMock())
+
+    result = await sl.main(cap=1)
+
+    assert result == 0
+
+
+async def test_process_hotel_timeout_wrapper_preserves_concurrency_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = 0
+    max_active = 0
+    two_active = asyncio.Event()
+    release = asyncio.Event()
+
+    async def process_hotel(*_args: object) -> tuple[int, int]:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        if active == 2:
+            two_active.set()
+        await release.wait()
+        active -= 1
+        return (1, 0)
+
+    monkeypatch.setattr(sl, "PER_HOTEL_TIMEOUT_S", 10)
+    monkeypatch.setattr(sl, "_process_hotel", process_hotel)
+
+    semaphore = asyncio.Semaphore(2)
+    tasks = [
+        asyncio.create_task(sl._process_hotel_with_timeout(object(), str(i), "TR", 18, 7, semaphore))
+        for i in range(4)
+    ]
+
+    await asyncio.wait_for(two_active.wait(), timeout=1)
+    assert max_active == 2
+    assert sum(task.done() for task in tasks) == 0
+
+    release.set()
+    assert await asyncio.gather(*tasks) == [(1, 0), (1, 0), (1, 0), (1, 0)]
+    assert max_active == 2

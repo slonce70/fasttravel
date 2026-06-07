@@ -25,8 +25,9 @@ Operational invariants:
   * INSERTs are idempotent — re-running the snapshot only writes new
     observations (dedup by (hotel_id, operator_id, check_in, nights,
     meal_plan, price_uah) within the last 12h)
-  * concurrency-3 per host, plus 1s spacing per worker, so we stay polite
-    even when the catalog grows
+  * concurrency and pacing are env-driven; recovery can run with zero extra
+    per-hotel sleep while the shared HTTP client still enforces breaker/cap
+    safety
   * records progress to scrape_runs so the dashboards can track success rate
   * captures ALL countries we have in destinations (TR, EG, AE, GR, ES, BG,
     ME, HR, CY, TH, MV) and ALL hotels per country (no per-country cap)
@@ -289,6 +290,7 @@ async def snapshot_farvater(
             async with async_session_factory() as db:
                 for iso2 in by_country:
                     dest_ids[iso2] = await _country_dest_id(db, iso2)
+                await db.commit()
 
             tasks = [
                 _process_hotel(

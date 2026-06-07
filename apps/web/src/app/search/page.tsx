@@ -7,7 +7,7 @@ import { SearchForm } from '@/components/SearchForm';
 import { SearchSortControl } from '@/components/SearchSortControl';
 import { TelegramCta } from '@/components/TelegramCta';
 import { fetchDestinations, searchHotels, userMessageForApiError } from '@/lib/api-client';
-import { accusativeCountry } from '@/lib/countries';
+import { accusativeCountry, countriesForSelector } from '@/lib/countries';
 import {
   PAGE_SIZE,
   readParam,
@@ -72,8 +72,9 @@ export default async function SearchPage({
   const to = Math.min(results.offset + results.items.length, results.total);
   const hasPaxNotice = searchResult.ok && !results.pax_supported;
 
+  const selectableCountries = countriesForSelector(countries);
   const selectedCountry = params.country
-    ? countries.find((c) => c.country_iso2.toUpperCase() === params.country)
+    ? selectableCountries.find((c) => c.country_iso2.toUpperCase() === params.country)
     : undefined;
   const heading = params.q
     ? `Готелі за назвою “${params.q}”`
@@ -111,7 +112,7 @@ export default async function SearchPage({
 
           {hasPaxNotice && (
             <div
-              role="status"
+              aria-live="polite"
               className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900 ring-1 ring-amber-200"
             >
               Ціни у видачі зараз рахуються для {results.price_basis_adults} дорослих

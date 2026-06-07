@@ -16,9 +16,9 @@ Two usage modes:
    that calls `main()` directly. Useful when you want an immediate full
    refresh after extending CATALOG_COUNTRIES.
 
-Tuned for throughput. The daily price snapshot keeps CONCURRENCY=3 /
-DELAY=1s because it runs unattended every 12h. This long-tail pass is
-operator-driven so it bumps both: CONCURRENCY=12 / DELAY=0.05s.
+Tuned for throughput. This long-tail pass is operator-driven and reads
+CONCURRENCY / DELAY from env, defaulting to CONCURRENCY=12 / DELAY=0.05s.
+For local full-catalog recovery, set FT_SITEMAP_INGEST_DELAY_S=0.
 
 Cloudflare in front of farvater rarely rate-limits at this rate; if you
 see 429s or 503s drop CONCURRENCY first, DELAY second.
@@ -75,6 +75,7 @@ log = get_logger(__name__)
 # Aggressive operator-driven tuning. See module docstring.
 CONCURRENCY = int(os.environ.get("FT_SITEMAP_INGEST_CONCURRENCY", "12"))
 PER_REQUEST_DELAY_S = float(os.environ.get("FT_SITEMAP_INGEST_DELAY_S", "0.05"))
+PER_HOTEL_TIMEOUT_S = float(os.environ.get("FT_SITEMAP_HOTEL_TIMEOUT_S", "90.0"))
 # One broad price-calendar request per long-tail hotel. This mirrors
 # snapshot_farvater's current one-request product window.
 PROBE_OFFSETS = CHECK_IN_OFFSETS_DAYS
@@ -111,32 +112,28 @@ async def _process_hotel(
     iso2: str,
     operator_id: int,
     dest_id: int | None,
-    semaphore: asyncio.Semaphore,
 ) -> tuple[int, int]:
     """Fetch meta + probe a few calendar dates. Returns (hotel_seen, price_rows)."""
-    async with semaphore:
+    await asyncio.sleep(PER_REQUEST_DELAY_S)
+    meta = await fetch_hotel_meta(client, url_path, iso2)
+    if meta is None:
+        return (0, 0)
+
+    # Persist meta first — even if calendar probe fails the catalog row stays.
+    async with async_session_factory() as db:
+        hotel_db_id = await upsert_hotel(db, meta, dest_id, operator_id)
+        await upsert_mapping(db, hotel_db_id, operator_id, meta)
+        await db.commit()
+
+    # Probe the full supported check-in window for this hotel.
+    all_prices = []
+    seen_keys: set[str] = set()
+    for offset in PROBE_OFFSETS:
         await asyncio.sleep(PER_REQUEST_DELAY_S)
-        meta = await fetch_hotel_meta(client, url_path, iso2)
-        if meta is None:
-            return (0, 0)
-
-        # Persist meta first — even if calendar probe fails the catalog row stays.
-        async with async_session_factory() as db:
-            hotel_db_id = await upsert_hotel(db, meta, dest_id, operator_id)
-            await upsert_mapping(db, hotel_db_id, operator_id, meta)
-            await db.commit()
-
-        # Probe the full supported check-in window for this hotel.
-        all_prices = []
-        seen_keys: set[str] = set()
-        for offset in PROBE_OFFSETS:
-            await asyncio.sleep(PER_REQUEST_DELAY_S)
-            chunk = await fetch_calendar(
-                client, meta.hotel_id, date.today() + timedelta(days=offset)
-            )
-            new = [r for r in chunk if r.system_key not in seen_keys]
-            all_prices.extend(new)
-            seen_keys.update(r.system_key for r in new)
+        chunk = await fetch_calendar(client, meta.hotel_id, date.today() + timedelta(days=offset))
+        new = [r for r in chunk if r.system_key not in seen_keys]
+        all_prices.extend(new)
+        seen_keys.update(r.system_key for r in new)
 
     if all_prices:
         async with async_session_factory() as db:
@@ -158,6 +155,29 @@ async def _process_hotel(
     log.info("sitemap.hotel.no_inventory", hotel=meta.name[:50], hotel_key=meta.hotel_id)
     await _mark_price_probe_complete(hotel_db_id, has_active_prices=False)
     return (1, 0)
+
+
+async def _process_hotel_with_timeout(
+    client: Any,
+    url_path: str,
+    iso2: str,
+    operator_id: int,
+    dest_id: int | None,
+    semaphore: asyncio.Semaphore,
+) -> tuple[int, int]:
+    # Acquire the concurrency slot before starting the per-hotel timeout so a
+    # healthy hotel is not timed out merely because it sat behind the semaphore
+    # in a large batch. Keep the slot for the whole active hotel-processing
+    # window so CONCURRENCY remains the upstream/DB safety boundary.
+    async with semaphore:
+        try:
+            return await asyncio.wait_for(
+                _process_hotel(client, url_path, iso2, operator_id, dest_id),
+                timeout=PER_HOTEL_TIMEOUT_S,
+            )
+        except TimeoutError:
+            log.warning("sitemap.hotel.timeout", timeout_s=PER_HOTEL_TIMEOUT_S)
+            return (0, 0)
 
 
 async def _refresh_views() -> None:
@@ -199,6 +219,7 @@ async def main(cap: int | None) -> int:
         for iso2, paths in by_iso.items():
             async with async_session_factory() as db:
                 dest_id = await country_dest_id(db, iso2)
+                await db.commit()
 
             slugs = [make_slug(iso2, p) for p in paths]
             existing = await _already_ingested(slugs)
@@ -217,7 +238,10 @@ async def main(cap: int | None) -> int:
             if not fresh:
                 continue
 
-            tasks = [_process_hotel(client, p, iso2, operator_id, dest_id, sem) for p in fresh]
+            tasks = [
+                _process_hotel_with_timeout(client, p, iso2, operator_id, dest_id, sem)
+                for p in fresh
+            ]
 
             # Drain in batches of ~200 to keep memory bounded and surface progress.
             batch = 200
@@ -231,6 +255,8 @@ async def main(cap: int | None) -> int:
                         inserted_prices += r[1]
                         if r[1] > 0:
                             country_priced += 1
+                    elif isinstance(r, Exception):
+                        log.warning("sitemap.hotel.failed", error=str(r)[:200])
                 log.info(
                     "sitemap.country.progress",
                     iso2=iso2,

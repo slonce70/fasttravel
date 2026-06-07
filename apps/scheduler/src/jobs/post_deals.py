@@ -306,19 +306,22 @@ async def _post_deals_locked(settings: Settings) -> None:
     today = date.today()
 
     async with async_session_factory() as db:
-        posted_today = (await db.execute(_COUNT_TODAY, {"today": today})).scalar_one()
-        remaining = max(0, settings.deals_daily_cap - int(posted_today))
-        if remaining == 0:
-            log.info(
-                "post_deals.skipped",
-                reason="daily_cap_reached",
-                posted_today=int(posted_today),
-                cap=settings.deals_daily_cap,
-            )
-            return
+        posted_today = int((await db.execute(_COUNT_TODAY, {"today": today})).scalar_one())
+        if settings.deals_daily_cap > 0:
+            remaining = max(0, settings.deals_daily_cap - posted_today)
+            if remaining == 0:
+                log.info(
+                    "post_deals.skipped",
+                    reason="daily_cap_reached",
+                    posted_today=posted_today,
+                    cap=settings.deals_daily_cap,
+                )
+                return
 
-        # Take the smaller of: this-tick allowance, daily-cap remainder.
-        limit = min(settings.deals_per_post_tick, remaining)
+            # Take the smaller of: this-tick allowance, daily-cap remainder.
+            limit = min(settings.deals_per_post_tick, remaining)
+        else:
+            limit = settings.deals_per_post_tick
         rows = (
             await db.execute(
                 _SELECT_UNPOSTED,

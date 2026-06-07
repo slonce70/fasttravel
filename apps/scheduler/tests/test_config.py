@@ -40,7 +40,7 @@ def test_prod_requires_telegram_when_channel_posts_are_enabled() -> None:
         settings.assert_prod_secrets()
 
 
-def test_prod_allows_telegram_absence_when_channel_posts_are_disabled() -> None:
+def test_prod_requires_telegram_when_channel_posts_are_unlimited() -> None:
     settings = Settings(
         _env_file=None,
         environment="prod",
@@ -50,4 +50,5 @@ def test_prod_allows_telegram_absence_when_channel_posts_are_disabled() -> None:
         deals_daily_cap=0,
     )
 
-    settings.assert_prod_secrets()
+    with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN.*TELEGRAM_CHANNEL_ID"):
+        settings.assert_prod_secrets()

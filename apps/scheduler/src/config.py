@@ -21,7 +21,8 @@ class Settings(BaseAppSettings):
     public_site_url: str = "https://fasttravel.com.ua"
 
     # --- Job tuning ---
-    # Telegram channel daily post cap (anti-spam contract with subscribers).
+    # Telegram channel daily post cap (anti-spam default). 0 or less is an
+    # explicit operator opt-in to unlimited posting.
     deals_daily_cap: int = 30
     # How many unposted deals to consider per post_deals tick.
     deals_per_post_tick: int = 5
@@ -46,14 +47,10 @@ class Settings(BaseAppSettings):
 
     def _extra_prod_offenders(self) -> list[str]:
         offenders: list[str] = []
-        # Telegram is required in prod only when the channel posting is
-        # actually enabled. Skip when ops deliberately set daily_cap=0
-        # (kill switch for the broadcast).
-        if self.deals_daily_cap > 0:
-            if not self.telegram_bot_token:
-                offenders.append("TELEGRAM_BOT_TOKEN")
-            if not self.telegram_channel_id:
-                offenders.append("TELEGRAM_CHANNEL_ID")
+        if not self.telegram_bot_token:
+            offenders.append("TELEGRAM_BOT_TOKEN")
+        if not self.telegram_channel_id:
+            offenders.append("TELEGRAM_CHANNEL_ID")
         return offenders
 
 
