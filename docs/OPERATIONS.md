@@ -305,6 +305,7 @@ the repo root unless the command starts with `cd`.
 | Bot tests | `cd apps/bot && PYTHONPATH=.:.. poetry run pytest -q` | Telegram handlers, rendering, callbacks, and bot service tests pass. DB-backed tests require `DATABASE_URL`/Postgres and may skip under the existing gate when no DB is reachable. |
 | Web static checks | `cd apps/web && pnpm lint && pnpm typecheck` | Next.js/React lint and TypeScript contracts pass. |
 | Web unit tests | `cd apps/web && pnpm test` | Vitest component and API-client contracts pass, including search serialization and sort behavior. |
+| Web build | `cd apps/web && pnpm build` | The production Next.js/OpenNext build completes before browser or deploy checks. |
 | Web browser smoke | `cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm test:e2e` | Playwright smoke covers the browser-facing UX routes against the local API. Install browsers first only if missing: `pnpm test:e2e:install`. |
 | Docker test overlay | `docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet` | Test compose overlay remains valid. |
 | Live API smoke | `curl -fsS http://localhost:8000/health && curl -fsS "http://localhost:8000/api/search?limit=5" && curl -fsS "http://localhost:8000/api/deals?limit=5"` | A running local API can answer health, search, and deals requests. |
@@ -333,12 +334,16 @@ calling final QA complete:
 
 | Route | Check |
 |---|---|
-| `/search?country=TR&offset=24` | Change the sort control. The resulting URL should reset pagination by removing `offset` and any escaped `amp;offset` key while preserving the real filters. |
+| `/` | Home renders the primary search entry point, destination context, and Telegram CTA without layout overlap. |
+| `/cheap` | Cheapest tours page renders current grouped offers and each card links to the hotel detail route. |
+| `/telegram` | Telegram landing route renders the channel CTA and QR/link affordance without broken copy or missing destination. |
+| `/about` | About page renders the trust/content sections and navigation without API error leakage. |
+| `/search?country=TR&offset=48` | Change the sort control. The resulting URL should reset pagination by removing `offset` and any escaped `amp;offset` key while preserving the real filters. |
 | `/search` | Submit a basic search and confirm the loading/pending state appears during server navigation and results remain readable after navigation. |
 | `/deals` | Each deal card should expose the hotel detail link visibly by hotel name, pointing to `/hotels/{slug}`; the separate deal permalink still points to `/deals/{id}`. |
 | `/deals/1` or another known deal id | The detail page should render without leaking raw API errors; hotel context and outbound deal CTA remain visible when data is present. |
-| `/hotels/{known-slug}` | The hotel detail view should keep selected nights stable across calendar/offers interactions; custom nights clamp to the supported range instead of breaking the view. |
-| `/hotels/{known-slug}` refresh action | Trigger or observe hotel refresh. Repeated navigation within the cooldown should not re-fire auto-refresh, and manual refresh should leave nights/offers state stable. |
+| `/hotels/{seeded-slug}` | Use a slug that exists in the seeded/local database. The hotel detail view should keep selected nights stable across calendar/offers interactions; custom nights clamp to the supported range instead of breaking the view. |
+| `/hotels/{seeded-slug}` refresh action | Use the same seeded slug. Trigger or observe hotel refresh. Repeated navigation within the cooldown should not re-fire auto-refresh, and manual refresh should leave nights/offers state stable. |
 
 Use a real slug/id from `/search` or `/deals` when seeded data differs between
 local databases.
