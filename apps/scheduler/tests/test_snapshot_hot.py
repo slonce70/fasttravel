@@ -109,3 +109,24 @@ async def test_snapshot_hot_respects_shared_refresh_queue_cap(monkeypatch) -> No
     assert await redis.llen("refresh:queue") == snapshot_hot_module.REFRESH_QUEUE_MAX_LEN
     payload = json.loads((await redis.lrange("refresh:queue", 0, 0))[0])
     assert payload["hotel_id"] == 20
+
+
+@pytest.mark.asyncio
+async def test_snapshot_hot_skips_hotels_with_custom_nights_refresh_lock(monkeypatch) -> None:
+    redis = _FakeRedis(decode_responses=True)
+    await redis.set("hot:hotel:20", "9")
+    await redis.set("hot:hotel:30", "5")
+    await redis.set("refresh:hotel:20:nights:15", "already-refreshing")
+
+    monkeypatch.setattr(snapshot_hot_module, "get_redis", lambda: redis)
+    monkeypatch.setattr(
+        snapshot_hot_module,
+        "_resolve_farvater_keys",
+        _resolver({20: "fv20", 30: "fv30"}),
+    )
+
+    queued = await snapshot_hot_module.snapshot_hot(top_n=2)
+
+    assert queued == 1
+    payloads = [json.loads(item) for item in await redis.lrange("refresh:queue", 0, -1)]
+    assert [item["hotel_id"] for item in payloads] == [30]

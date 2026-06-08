@@ -23,6 +23,7 @@ from shared.refresh_queue import (
     RefreshQueueFullError,
     RefreshQueueUnavailableError,
     push_refresh_job_with_cap,
+    refresh_lock_key,
 )
 
 from src.infra.logging import get_logger
@@ -94,11 +95,7 @@ async def enqueue_refresh(
         QueueUnavailableError if Redis dies between lock acquire and
             enqueue (lock is rolled back inside).
     """
-    cache_key = (
-        f"refresh:hotel:{hotel_id}"
-        if requested_nights is None
-        else f"refresh:hotel:{hotel_id}:nights:{requested_nights}"
-    )
+    cache_key = refresh_lock_key(hotel_id)
 
     # Queue cap — hard ceiling on the persistent list. Reject well below
     # OOM so capacity exhaustion is visible in metrics instead of swap.
