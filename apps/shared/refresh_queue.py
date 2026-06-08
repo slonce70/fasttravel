@@ -13,6 +13,20 @@ from typing import Any
 
 REFRESH_QUEUE_KEY = "refresh:queue"
 REFRESH_QUEUE_MAX_LEN = 200
+REFRESH_LOCK_PREFIX = "refresh:hotel:"
+
+
+def refresh_lock_key(hotel_id: int, requested_nights: int | None = None) -> str:
+    """Return the Redis lock key for one hotel refresh request."""
+    base = f"{REFRESH_LOCK_PREFIX}{hotel_id}"
+    if requested_nights is None:
+        return base
+    return f"{base}:nights:{requested_nights}"
+
+
+def refresh_lock_patterns(hotel_id: int) -> tuple[str, str]:
+    """Keys/patterns that indicate this hotel already has refresh work."""
+    return (refresh_lock_key(hotel_id), f"{refresh_lock_key(hotel_id)}:nights:*")
 
 _ENQUEUE_WITH_CAP_SCRIPT = """
 local current = redis.call('LLEN', KEYS[1])

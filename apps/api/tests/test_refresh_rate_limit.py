@@ -176,7 +176,7 @@ async def test_refresh_rate_limit_caps_at_ten_per_hour(
 
 
 @pytest.mark.asyncio
-async def test_refresh_custom_nights_queues_exact_duration_with_separate_lock(
+async def test_refresh_custom_nights_respects_base_hotel_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     redis = _FakeRedis()
@@ -197,12 +197,12 @@ async def test_refresh_custom_nights_queues_exact_duration_with_separate_lock(
     )
 
     assert first.queued is True
-    assert second.queued is True
-    assert redis.set_calls == [f"refresh:hotel:{hotel_id}", f"refresh:hotel:{hotel_id}:nights:15"]
+    assert second.queued is False
+    assert redis.set_calls == [f"refresh:hotel:{hotel_id}", f"refresh:hotel:{hotel_id}"]
 
     payloads = [json.loads(item) for item in redis.lists[hotels_router.REFRESH_QUEUE_KEY]]
-    assert payloads[0]["requested_nights"] == [15]
-    assert "requested_nights" not in payloads[1]
+    assert len(payloads) == 1
+    assert "requested_nights" not in payloads[0]
 
 
 @pytest.mark.asyncio

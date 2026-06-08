@@ -33,6 +33,7 @@ from shared.refresh_queue import (
     REFRESH_QUEUE_KEY,
     RefreshQueueFullError,
     push_refresh_job_with_cap,
+    refresh_lock_patterns,
 )
 from shared.refresh_queue import (
     REFRESH_QUEUE_MAX_LEN as SHARED_REFRESH_QUEUE_MAX_LEN,
@@ -49,11 +50,6 @@ QUEUE_KEY = REFRESH_QUEUE_KEY
 REFRESH_QUEUE_MAX_LEN = SHARED_REFRESH_QUEUE_MAX_LEN
 TOP_N = 50
 OPERATOR_CODE = "farvater"
-# Mirrors `apps/api/src/routers/hotels.py::REFRESH_MIN_INTERVAL_S` — if a
-# hotel was refreshed (user-triggered or by a previous tick) within this
-# window, we skip re-enqueueing. Keeps farvater from being hit twice for
-# the same hotel by a `POST /refresh` + `snapshot_hot` overlap.
-REFRESH_LOCK_PREFIX = "refresh:hotel:"
 # Conservative SCAN batch — big enough that ~few-hundred hot keys
 # resolve in one round-trip, small enough to keep each MATCH iteration
 # under a millisecond on a busy Redis.
@@ -133,17 +129,25 @@ async def snapshot_hot(*, top_n: int = TOP_N) -> int:
         log.info("snapshot_hot.no_mappings", top=len(top_ids))
         return 0
 
-    # Batch EXISTS check on the per-hotel refresh locks (`refresh:hotel:{id}`)
-    # set by `POST /api/hotels/{id}/refresh`. We skip any hotel that was
-    # just refreshed — the worker would no-op anyway, but the LPUSH itself
-    # contributes to the queue-cap, so dedup at this layer keeps capacity
-    # for hotels that actually need work.
-    lock_keys = [f"{REFRESH_LOCK_PREFIX}{hid}" for hid in mapping]
+    # Batch lock checks on the per-hotel refresh locks set by
+    # `POST /api/hotels/{id}/refresh`. Legacy custom-night locks also mean
+    # the hotel has active refresh work, so skip them here too.
     pipe = redis.pipeline()
-    for key in lock_keys:
-        pipe.exists(key)
+    lock_checks: list[tuple[int, str]] = []
+    for hid in mapping:
+        exact_key, nights_pattern = refresh_lock_patterns(hid)
+        pipe.exists(exact_key)
+        lock_checks.append((hid, "exact"))
+        pipe.keys(nights_pattern)
+        lock_checks.append((hid, "nights"))
     lock_results = await pipe.execute()
-    locked = {hid for hid, exists in zip(mapping.keys(), lock_results, strict=False) if exists}
+
+    locked: set[int] = set()
+    for (hid, kind), result in zip(lock_checks, lock_results, strict=False):
+        if kind == "exact" and result:
+            locked.add(hid)
+        if kind == "nights" and result:
+            locked.add(hid)
 
     now_iso = datetime.now(UTC).isoformat()
     queued = 0
