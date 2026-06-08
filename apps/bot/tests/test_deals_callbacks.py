@@ -120,3 +120,44 @@ async def test_best_edit_failure_sends_fresh_message(monkeypatch: pytest.MonkeyP
     assert call.kwargs["reply_markup"].inline_keyboard[1][0].url == (
         "https://fasttravel.test/hotels/fv-tr-unsafe-best?utm_source=tg_bot&utm_medium=best"
     )
+
+
+@pytest.mark.asyncio
+async def test_best_not_modified_edit_error_does_not_send_duplicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        deals,
+        "get_deals",
+        AsyncMock(
+            return_value={
+                "items": [
+                    {
+                        "discount_pct": 30,
+                        "hotel_name_uk": "Same Best",
+                        "hotel_slug": "fv-tr-same-best",
+                        "deep_link": "https://operator.test/same",
+                        "check_in": "2026-06-14",
+                        "nights": 7,
+                        "meal_plan": "AI",
+                        "price_uah": 30000,
+                        "baseline_p50": 43000,
+                    }
+                ]
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        deals,
+        "get_settings",
+        lambda: SimpleNamespace(public_site_url="https://fasttravel.test"),
+    )
+    message = SimpleNamespace(
+        edit_text=AsyncMock(side_effect=RuntimeError("Bad Request: message is not modified")),
+        answer=AsyncMock(),
+    )
+
+    await deals._send_best(message, nights_filter=(7, 7), edit=True)  # type: ignore[arg-type]
+
+    message.edit_text.assert_awaited_once()
+    message.answer.assert_not_awaited()

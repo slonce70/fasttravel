@@ -95,6 +95,30 @@ def _render_page(deals: list[dict[str, Any]], page: int, total_pages: int) -> st
     return fit_markdown_v2_message(header, blocks, _TRUNCATED_FOOTER, _DEALS_SEPARATOR)
 
 
+def _is_message_not_modified_error(exc: Exception) -> bool:
+    return "message is not modified" in str(exc).lower()
+
+
+async def _fallback_send_after_edit_failure(
+    message: Message,
+    *,
+    text: str,
+    reply_markup: InlineKeyboardMarkup,
+    log_event: str,
+    error: Exception,
+) -> None:
+    if _is_message_not_modified_error(error):
+        log.debug(log_event.replace("failed_fallback_send", "not_modified_noop"), error=str(error))
+        return
+    log.warning(log_event, error=str(error))
+    await message.answer(
+        text,
+        parse_mode=ParseMode.MARKDOWN_V2,
+        disable_web_page_preview=True,
+        reply_markup=reply_markup,
+    )
+
+
 async def _send_page(
     message: Message,
     *,
@@ -134,12 +158,12 @@ async def _send_page(
                 reply_markup=kb,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("deals.edit_failed_fallback_send", error=str(exc))
-            await message.answer(
-                text,
-                parse_mode=ParseMode.MARKDOWN_V2,
-                disable_web_page_preview=True,
+            await _fallback_send_after_edit_failure(
+                message,
+                text=text,
                 reply_markup=kb,
+                log_event="deals.edit_failed_fallback_send",
+                error=exc,
             )
     else:
         await message.answer(
@@ -287,12 +311,12 @@ async def _send_best(
                 reply_markup=kb,
             )
         except Exception as exc:  # noqa: BLE001
-            log.warning("best.edit_failed_fallback_send", error=str(exc))
-            await message.answer(
-                text,
-                parse_mode=ParseMode.MARKDOWN_V2,
-                disable_web_page_preview=True,
+            await _fallback_send_after_edit_failure(
+                message,
+                text=text,
                 reply_markup=kb,
+                log_event="best.edit_failed_fallback_send",
+                error=exc,
             )
     else:
         await message.answer(
