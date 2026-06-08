@@ -36,6 +36,7 @@ describe('HotelPhotoCarousel', () => {
     const imgs = screen.getAllByRole('img');
     expect(imgs).toHaveLength(1);
     expect(imgs[0]).toHaveAttribute('src', 'https://cdn.test/a.jpg');
+    expect(imgs[0]).toHaveAttribute('loading', 'eager');
     // No thumbnail list.
     expect(screen.queryByRole('list')).toBeNull();
     // No position overlay with a single photo.

@@ -122,5 +122,6 @@ describe('HotelCard', () => {
     }
     expect(hasGroupAncestor).toBe(true);
     expect(img.className).toContain('group-hover:scale-105');
+    expect(img).toHaveAttribute('loading', 'lazy');
   });
 });
