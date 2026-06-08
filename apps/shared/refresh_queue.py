@@ -26,6 +26,7 @@ def legacy_custom_nights_lock_pattern() -> str:
     """Return the pattern for pre-unification custom-night refresh locks."""
     return f"{REFRESH_LOCK_PREFIX}*:nights:*"
 
+
 _ENQUEUE_WITH_CAP_SCRIPT = """
 local current = redis.call('LLEN', KEYS[1])
 local cap = tonumber(ARGV[1])
