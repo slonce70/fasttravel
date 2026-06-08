@@ -13,12 +13,12 @@ from collections.abc import Iterator
 
 import pytest
 from httpx import AsyncClient
+from shared.refresh_queue import DEFAULT_REFRESH_NIGHTS
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infra.limiter import limiter
 from src.routers import hotels as hotels_router
-from shared.refresh_queue import DEFAULT_REFRESH_NIGHTS
 from src.services.refresh_queue import (
     REFRESH_QUEUE_KEY,
     REFRESH_QUEUE_MAX_LEN,
