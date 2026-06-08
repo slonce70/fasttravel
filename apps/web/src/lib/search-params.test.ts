@@ -9,7 +9,10 @@ import {
 
 describe('localTodayIso', () => {
   it('formats local calendar parts instead of slicing a UTC timestamp', () => {
-    expect(localTodayIso(new Date(2026, 0, 9, 23, 59, 0))).toBe('2026-01-09');
+    const localMidnightBoundary = new Date(2026, 0, 10, 0, 30, 0);
+
+    expect(localMidnightBoundary.toISOString().slice(0, 10)).toBe('2026-01-09');
+    expect(localTodayIso(localMidnightBoundary)).toBe('2026-01-10');
   });
 });
 
