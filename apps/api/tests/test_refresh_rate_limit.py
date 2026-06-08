@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.infra.limiter import limiter
 from src.routers import hotels as hotels_router
+from shared.refresh_queue import DEFAULT_REFRESH_NIGHTS
 from src.services.refresh_queue import (
     REFRESH_QUEUE_KEY,
     REFRESH_QUEUE_MAX_LEN,
@@ -203,6 +204,36 @@ async def test_refresh_custom_nights_respects_base_hotel_lock(
     payloads = [json.loads(item) for item in redis.lists[hotels_router.REFRESH_QUEUE_KEY]]
     assert len(payloads) == 1
     assert "requested_nights" not in payloads[0]
+
+
+@pytest.mark.asyncio
+async def test_refresh_custom_nights_queues_default_nights_plus_custom_then_rejects_broad(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis = _FakeRedis()
+    monkeypatch.setattr(hotels_router, "get_redis", lambda: redis)
+
+    hotel_id = 42
+    first = await hotels_router.trigger_refresh.__wrapped__(
+        request=object(),
+        hotel_id=hotel_id,
+        nights=15,
+        session=_FakeRefreshSession(),
+    )
+    second = await hotels_router.trigger_refresh.__wrapped__(
+        request=object(),
+        hotel_id=hotel_id,
+        nights=None,
+        session=_FakeRefreshSession(),
+    )
+
+    assert first.queued is True
+    assert second.queued is False
+    assert redis.set_calls == [f"refresh:hotel:{hotel_id}", f"refresh:hotel:{hotel_id}"]
+
+    payloads = [json.loads(item) for item in redis.lists[hotels_router.REFRESH_QUEUE_KEY]]
+    assert len(payloads) == 1
+    assert payloads[0]["requested_nights"] == [*DEFAULT_REFRESH_NIGHTS, 15]
 
 
 @pytest.mark.asyncio

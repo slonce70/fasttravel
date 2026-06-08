@@ -14,19 +14,17 @@ from typing import Any
 REFRESH_QUEUE_KEY = "refresh:queue"
 REFRESH_QUEUE_MAX_LEN = 200
 REFRESH_LOCK_PREFIX = "refresh:hotel:"
+DEFAULT_REFRESH_NIGHTS = (7, 8, 9, 10, 11, 12, 13, 14)
 
 
-def refresh_lock_key(hotel_id: int, requested_nights: int | None = None) -> str:
-    """Return the Redis lock key for one hotel refresh request."""
-    base = f"{REFRESH_LOCK_PREFIX}{hotel_id}"
-    if requested_nights is None:
-        return base
-    return f"{base}:nights:{requested_nights}"
+def refresh_base_lock_key(hotel_id: int) -> str:
+    """Return the current Redis lock key for hotel-wide refresh work."""
+    return f"{REFRESH_LOCK_PREFIX}{hotel_id}"
 
 
-def refresh_lock_patterns(hotel_id: int) -> tuple[str, str]:
-    """Keys/patterns that indicate this hotel already has refresh work."""
-    return (refresh_lock_key(hotel_id), f"{refresh_lock_key(hotel_id)}:nights:*")
+def legacy_custom_nights_lock_pattern() -> str:
+    """Return the pattern for pre-unification custom-night refresh locks."""
+    return f"{REFRESH_LOCK_PREFIX}*:nights:*"
 
 _ENQUEUE_WITH_CAP_SCRIPT = """
 local current = redis.call('LLEN', KEYS[1])
