@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { SearchResultItem } from '@/lib/types';
 import { Card } from './ui/Card';
+import { SafeImage } from './ui/SafeImage';
 import { Stars } from './ui/Stars';
 import { formatPrice } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -40,36 +41,12 @@ export function HotelCard({ hotel, variant = 'card' }: HotelCardProps) {
               : 'h-44 w-full',
           )}
         >
-          {photo?.url ? (
-            // Cloudflare Workers deploy does not run image optimization yet; plain <img>
-            // is intentional. Lazy-loaded so off-screen cards don't fetch.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={photo.url}
-              alt={hotel.name_uk}
-              loading="lazy"
-              decoding="async"
-              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-teal-50 via-cyan-50 to-indigo-50 text-teal-800/75">
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={1.8}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-16 w-16"
-              >
-                <path d="M3 21h18" />
-                <path d="M5 21V5a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v16" />
-                <path d="M14 9h4a1 1 0 0 1 1 1v11" />
-                <path d="M8 8h2M8 12h2M8 16h2" />
-              </svg>
-            </div>
-          )}
+          <SafeImage
+            src={photo?.url}
+            alt={hotel.name_uk}
+            className="h-full w-full"
+            imgClassName="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+          />
         </div>
         <div
           className={cn('flex flex-1 flex-col p-5', variant === 'row' && 'sm:flex-row sm:gap-5')}

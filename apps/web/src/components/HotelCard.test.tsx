@@ -1,8 +1,8 @@
 // Component-shape tests for HotelCard (search/destination grids). Asserts the
 // contract: name + slug link + "від" price, and the two honesty cues —
-// duration-fallback badge and the ≥6h price-age note — plus the no-photo
-// placeholder. Layout/tailwind is intentionally not asserted.
-import { render, screen } from '@testing-library/react';
+// duration-fallback badge and the ≥6h price-age note — plus the resilient
+// photo fallback. Layout/tailwind is intentionally not asserted.
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SearchResultItem } from '@/lib/types';
 import { HotelCard } from './HotelCard';
@@ -90,14 +90,20 @@ describe('HotelCard', () => {
     expect(screen.getByText(/оновлено 8 год тому/)).toBeInTheDocument(); // 8h → stale
   });
 
-  it('renders an inline SVG placeholder (not a platform emoji) when there is no photo', () => {
-    const { container } = render(<HotelCard hotel={{ ...baseHotel, photos: [] }} />);
-    // No <img> for a photoless hotel, and the placeholder is a decorative SVG
-    // glyph rather than the OS/font-dependent 🏨 emoji.
+  it('renders fallback text when there is no photo', () => {
+    render(<HotelCard hotel={{ ...baseHotel, photos: [] }} />);
+
     expect(screen.queryByRole('img')).toBeNull();
-    expect(screen.queryByText('🏨')).toBeNull();
-    const svg = container.querySelector('svg[aria-hidden="true"]');
-    expect(svg).not.toBeNull();
+    expect(screen.getByText('Фото недоступне')).toBeInTheDocument();
+  });
+
+  it('switches to fallback text when the card photo fails to load', () => {
+    render(<HotelCard hotel={baseHotel} />);
+
+    fireEvent.error(screen.getByRole('img', { name: 'Rixos Premium' }));
+
+    expect(screen.queryByRole('img', { name: 'Rixos Premium' })).toBeNull();
+    expect(screen.getByText('Фото недоступне')).toBeInTheDocument();
   });
 
   it('puts a `group` class on an ancestor so the image group-hover zoom can fire', () => {
