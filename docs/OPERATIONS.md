@@ -163,10 +163,12 @@ Recovery uses `restore_command` pulling from R2 + the latest base dump.
 
 ---
 
-## 4. Mypy ratchet — refreshing the baseline
+## 4. Mypy ratchet — historical baseline support
 
-CI enforces "mypy errors per service must not exceed baseline".
-Baselines live in `infra/scripts/mypy-baseline.txt`.
+Current CI gates type safety directly with `poetry run mypy src/` in each
+Python service (`apps/api`, `apps/scheduler`, and `apps/bot`). The ratchet
+script is manual/historical support for refreshing
+`infra/scripts/mypy-baseline.txt` only if that baseline workflow is used again.
 
 After a typing cleanup (you reduced the count):
 
@@ -176,10 +178,8 @@ git add infra/scripts/mypy-baseline.txt
 git commit -m "chore(mypy): refresh ratchet baseline after typing cleanup"
 ```
 
-Current baseline (May 2026): `api=0`, `scheduler=0`, `bot=70`.
-The bot's 70 are pre-existing aiogram `Message | InaccessibleMessage |
-None` union-narrowing gaps; ratchet just prevents regression while a
-targeted PR closes them.
+Historical baseline (May 2026): `api=0`, `scheduler=0`, `bot=70`.
+Treat it as ratchet-script state, not the current CI contract.
 
 ---
 
@@ -300,13 +300,16 @@ the repo root unless the command starts with `cd`.
 | API lint/format | `cd apps/api && poetry run ruff check src tests ../shared && poetry run ruff format --check src tests ../shared` | API Python code and shared imports match CI ruff rules. |
 | Scheduler lint/format | `cd apps/scheduler && poetry run ruff check src tests ../shared && poetry run ruff format --check src tests ../shared` | Scheduler Python code and shared imports match CI ruff rules. |
 | Bot lint/format | `cd apps/bot && poetry run ruff check src tests ../shared && poetry run ruff format --check src tests ../shared` | Bot Python code and shared imports match CI ruff rules. |
+| API typecheck | `cd apps/api && poetry run mypy src/` | API types pass the same direct mypy gate CI runs. |
+| Scheduler typecheck | `cd apps/scheduler && poetry run mypy src/` | Scheduler types pass the same direct mypy gate CI runs. |
+| Bot typecheck | `cd apps/bot && poetry run mypy src/` | Bot types pass the same direct mypy gate CI runs. |
 | API tests | `cd apps/api && PYTHONPATH=.:.. poetry run pytest -q` | FastAPI service tests pass. DB-backed tests require a reachable `DATABASE_URL`/Postgres; under the existing test gate they may skip when no DB is reachable. |
 | Scheduler tests | `cd apps/scheduler && PYTHONPATH=.:.. poetry run pytest -q` | Scheduler jobs, selectors, and shared publishing tests pass. DB-backed integration tests require `DATABASE_URL`/Postgres and may skip under the existing gate when no DB is reachable. |
 | Bot tests | `cd apps/bot && PYTHONPATH=.:.. poetry run pytest -q` | Telegram handlers, rendering, callbacks, and bot service tests pass. DB-backed tests require `DATABASE_URL`/Postgres and may skip under the existing gate when no DB is reachable. |
 | Web static checks | `cd apps/web && pnpm lint && pnpm typecheck` | Next.js/React lint and TypeScript contracts pass. |
 | Web unit tests | `cd apps/web && pnpm test` | Vitest component and API-client contracts pass, including search serialization and sort behavior. |
-| Web build | `cd apps/web && pnpm build` | The production Next.js/OpenNext build completes before browser or deploy checks. |
-| Web browser smoke | `cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm test:e2e` | Playwright smoke covers the browser-facing UX routes against the local API. Install browsers first only if missing: `pnpm test:e2e:install`. |
+| Web build | `cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm build` | The production Next.js/OpenNext build completes with `NEXT_PUBLIC_API_URL` pointed at a reachable API, because prerendered pages fetch destinations and deals. |
+| Web browser smoke | `cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm test:e2e` | Playwright smoke covers browser-facing UX routes against the local API. Requires either an already seeded local DB or first running `FASTTRAVEL_ALLOW_E2E_SEED=1 docker compose run --rm api python -m scripts.seed_e2e` against the local DB. Install browsers first only if missing: `pnpm test:e2e:install`. |
 | Docker test overlay | `docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet` | Test compose overlay remains valid. |
 | Live API smoke | `curl -fsS http://localhost:8000/health && curl -fsS "http://localhost:8000/api/search?limit=5" && curl -fsS "http://localhost:8000/api/deals?limit=5"` | A running local API can answer health, search, and deals requests. |
 | Live web smoke | `cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm dev` | Starts the web app against the local API for manual browser smoke routes below. |
