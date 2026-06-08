@@ -38,6 +38,7 @@ export function HotelPhotoCarousel({ photos, alt }: HotelPhotoCarouselProps) {
         <SafeImage
           src={main.url}
           alt={main.alt ?? alt}
+          loading="eager"
           className="h-full w-full"
           imgClassName="h-full w-full object-cover"
         />

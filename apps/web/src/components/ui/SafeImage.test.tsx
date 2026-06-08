@@ -20,11 +20,25 @@ describe('SafeImage', () => {
 
     const image = screen.getByRole('img', { name: 'Готель' });
     expect(image).toHaveAttribute('src', 'https://cdn.test/hotel.jpg');
+    expect(image).toHaveAttribute('loading', 'lazy');
     expect(screen.queryByText('Фото недоступне')).toBeNull();
 
     fireEvent.error(image);
 
     expect(screen.getByText('Фото недоступне')).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: 'Готель' })).toBeNull();
+  });
+
+  it('allows eager loading when requested', () => {
+    render(
+      <SafeImage
+        src="https://cdn.test/hotel.jpg"
+        alt="Готель"
+        className="h-32 w-full"
+        loading="eager"
+      />,
+    );
+
+    expect(screen.getByRole('img', { name: 'Готель' })).toHaveAttribute('loading', 'eager');
   });
 });

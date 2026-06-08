@@ -6,11 +6,12 @@ import { cn } from '@/lib/utils';
 export interface SafeImageProps {
   src: string | null | undefined;
   alt: string;
+  loading?: 'lazy' | 'eager';
   className?: string;
   imgClassName?: string;
 }
 
-export function SafeImage({ src, alt, className, imgClassName }: SafeImageProps) {
+export function SafeImage({ src, alt, loading = 'lazy', className, imgClassName }: SafeImageProps) {
   const normalizedSrc = src?.trim() || null;
   const [hasError, setHasError] = useState(false);
 
@@ -54,7 +55,7 @@ export function SafeImage({ src, alt, className, imgClassName }: SafeImageProps)
       <img
         src={normalizedSrc}
         alt={alt}
-        loading="lazy"
+        loading={loading}
         decoding="async"
         onError={() => setHasError(true)}
         className={imgClassName}
