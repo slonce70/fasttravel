@@ -288,7 +288,64 @@ Related quick references: `.env.example` has the editable template values,
 
 ---
 
-## 10. Related docs
+## 10. Full Local Verification Matrix
+
+Use this matrix for final QA after cross-service changes. Run commands from
+the repo root unless the command starts with `cd`.
+
+| Area | Commands | What it proves |
+|---|---|---|
+| Repository hygiene | `git diff --check` | No whitespace errors in the current diff. |
+| Production preflight | `ENV_FILE=.env STRICT_ENV=1 ./infra/scripts/production-preflight.sh` | Compose, workflow, stale-config, env, and production guardrails still pass before deploy. |
+| API lint/format | `cd apps/api && poetry run ruff check src tests ../shared && poetry run ruff format --check src tests ../shared` | API Python code and shared imports match CI ruff rules. |
+| Scheduler lint/format | `cd apps/scheduler && poetry run ruff check src tests ../shared && poetry run ruff format --check src tests ../shared` | Scheduler Python code and shared imports match CI ruff rules. |
+| Bot lint/format | `cd apps/bot && poetry run ruff check src tests ../shared && poetry run ruff format --check src tests ../shared` | Bot Python code and shared imports match CI ruff rules. |
+| API tests | `cd apps/api && PYTHONPATH=.:.. poetry run pytest -q` | FastAPI service tests pass. DB-backed tests require a reachable `DATABASE_URL`/Postgres; under the existing test gate they may skip when no DB is reachable. |
+| Scheduler tests | `cd apps/scheduler && PYTHONPATH=.:.. poetry run pytest -q` | Scheduler jobs, selectors, and shared publishing tests pass. DB-backed integration tests require `DATABASE_URL`/Postgres and may skip under the existing gate when no DB is reachable. |
+| Bot tests | `cd apps/bot && PYTHONPATH=.:.. poetry run pytest -q` | Telegram handlers, rendering, callbacks, and bot service tests pass. DB-backed tests require `DATABASE_URL`/Postgres and may skip under the existing gate when no DB is reachable. |
+| Web static checks | `cd apps/web && pnpm lint && pnpm typecheck` | Next.js/React lint and TypeScript contracts pass. |
+| Web unit tests | `cd apps/web && pnpm test` | Vitest component and API-client contracts pass, including search serialization and sort behavior. |
+| Web browser smoke | `cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm test:e2e` | Playwright smoke covers the browser-facing UX routes against the local API. Install browsers first only if missing: `pnpm test:e2e:install`. |
+| Docker test overlay | `docker compose -f docker-compose.yml -f docker-compose.test.yml config --quiet` | Test compose overlay remains valid. |
+| Live API smoke | `curl -fsS http://localhost:8000/health && curl -fsS "http://localhost:8000/api/search?limit=5" && curl -fsS "http://localhost:8000/api/deals?limit=5"` | A running local API can answer health, search, and deals requests. |
+| Live web smoke | `cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm dev` | Starts the web app against the local API for manual browser smoke routes below. |
+
+DB-backed API/scheduler/bot tests should use the same database URL shape as CI,
+for example
+`DATABASE_URL=postgresql+asyncpg://test:test@localhost:5432/test` and
+`DATABASE_URL_SYNC=postgresql+psycopg://test:test@localhost:5432/test`.
+The docker test overlay can provide that Postgres when a full local run is
+needed:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.test.yml up -d postgres
+docker compose -f docker-compose.yml -f docker-compose.test.yml build api-test scheduler-test bot-test
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test alembic upgrade head
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps api-test pytest -q
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps scheduler-test pytest -q
+docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm --no-deps bot-test pytest -q
+```
+
+### Browser UX smoke routes
+
+Start the API and web app locally, then smoke these routes in a browser before
+calling final QA complete:
+
+| Route | Check |
+|---|---|
+| `/search?country=TR&offset=24` | Change the sort control. The resulting URL should reset pagination by removing `offset` and any escaped `amp;offset` key while preserving the real filters. |
+| `/search` | Submit a basic search and confirm the loading/pending state appears during server navigation and results remain readable after navigation. |
+| `/deals` | Each deal card should expose the hotel detail link visibly by hotel name, pointing to `/hotels/{slug}`; the separate deal permalink still points to `/deals/{id}`. |
+| `/deals/1` or another known deal id | The detail page should render without leaking raw API errors; hotel context and outbound deal CTA remain visible when data is present. |
+| `/hotels/{known-slug}` | The hotel detail view should keep selected nights stable across calendar/offers interactions; custom nights clamp to the supported range instead of breaking the view. |
+| `/hotels/{known-slug}` refresh action | Trigger or observe hotel refresh. Repeated navigation within the cooldown should not re-fire auto-refresh, and manual refresh should leave nights/offers state stable. |
+
+Use a real slug/id from `/search` or `/deals` when seeded data differs between
+local databases.
+
+---
+
+## 11. Related docs
 
 - [`README.md`](../README.md) — project overview, quick start, structure
 - [`infra/SETUP.md`](../infra/SETUP.md) — full Oracle Cloud VM provisioning runbook
