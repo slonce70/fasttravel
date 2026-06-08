@@ -8,6 +8,7 @@ import {
   normalizeSearchSort,
   type SearchSort,
 } from '@/lib/search-sort';
+import { serializeSearchParams, type SearchUrlValue } from '@/lib/search-params';
 
 interface SearchSortControlProps {
   value: SearchSort;
@@ -20,17 +21,13 @@ export function SearchSortControl({ value }: SearchSortControlProps) {
   const [isPending, startTransition] = useTransition();
 
   function handleChange(nextValue: SearchSort) {
-    const qs = new URLSearchParams(params.toString());
-    qs.delete('offset');
-    qs.delete('amp;offset');
-    qs.delete('amp;sort');
+    const values: Record<string, SearchUrlValue> = Object.fromEntries(params.entries());
+    values.offset = undefined;
+    values['amp;offset'] = undefined;
+    values['amp;sort'] = undefined;
+    values.sort = nextValue === DEFAULT_SEARCH_SORT ? undefined : nextValue;
 
-    if (nextValue === DEFAULT_SEARCH_SORT) {
-      qs.delete('sort');
-    } else {
-      qs.set('sort', nextValue);
-    }
-
+    const qs = serializeSearchParams(values);
     const query = qs.toString();
     // useTransition keeps `isPending` true through the /search round-trip so
     // the control can disable itself during the in-page navigation. `push`

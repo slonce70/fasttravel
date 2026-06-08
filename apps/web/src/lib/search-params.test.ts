@@ -1,5 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { PAGE_SIZE, searchHref, toApiSearchParams } from './search-params';
+import {
+  PAGE_SIZE,
+  localTodayIso,
+  searchHref,
+  serializeSearchParams,
+  toApiSearchParams,
+} from './search-params';
+
+describe('localTodayIso', () => {
+  it('formats local calendar parts instead of slicing a UTC timestamp', () => {
+    expect(localTodayIso(new Date(2026, 0, 9, 23, 59, 0))).toBe('2026-01-09');
+  });
+});
+
+describe('serializeSearchParams', () => {
+  it('drops empty values and escaped amp-prefixed keys while preserving valid values', () => {
+    const params = serializeSearchParams({
+      country: 'TR',
+      checkIn: '',
+      nights: '7',
+      sort: 'price_desc',
+      offset: undefined,
+      'amp;offset': '100',
+      price_max: null,
+    });
+
+    expect(params.toString()).toBe('country=TR&nights=7&sort=price_desc');
+  });
+});
 
 describe('toApiSearchParams', () => {
   it('drops unsafe numeric URL params instead of forwarding them to the API', () => {

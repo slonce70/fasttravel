@@ -39,16 +39,18 @@ describe('SearchSortControl', () => {
     expect(push).toHaveBeenCalledWith('/search?country=TR');
   });
 
-  it('removes pre-existing escaped amp;offset / amp;sort keys on sort change', async () => {
+  it('removes pre-existing escaped amp;offset / amp;sort and empty keys on sort change', async () => {
     const user = userEvent.setup();
-    currentParams = new URLSearchParams('country=TR&amp;offset=48&amp;sort=name_asc');
+    currentParams = new URLSearchParams('country=TR&meal_plan=&amp;offset=48&amp;sort=name_asc');
     render(<SearchSortControl value="price_asc" />);
 
     await user.selectOptions(screen.getByLabelText('Сортування результатів'), 'price_desc');
 
     const pushedUrl = push.mock.calls[0]?.[0] as string;
+    expect(pushedUrl).toBe('/search?country=TR&sort=price_desc');
     expect(pushedUrl).toContain('sort=price_desc');
     expect(pushedUrl).not.toContain('offset');
+    expect(pushedUrl).not.toContain('meal_plan');
     expect(pushedUrl).not.toContain('amp%3Boffset');
     expect(pushedUrl).not.toContain('amp%3Bsort');
     expect(pushedUrl).not.toContain('amp;offset');
