@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { localTodayIso } from '@/lib/search-params';
 import type { CountryOut } from '@/lib/types';
 import { SearchForm } from './SearchForm';
 
@@ -37,6 +38,10 @@ describe('SearchForm', () => {
   beforeEach(() => {
     push.mockClear();
     for (const key of Array.from(currentParams.keys())) currentParams.delete(key);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('drops API-invalid URL filter defaults before rendering the form', async () => {
@@ -105,10 +110,14 @@ describe('SearchForm', () => {
   });
 
   it('constrains the check-in input to today and later', () => {
+    const localMidnightBoundary = new Date(2026, 0, 10, 0, 30, 0);
+    vi.useFakeTimers();
+    vi.setSystemTime(localMidnightBoundary);
+
     render(<SearchForm countries={countries} />);
 
-    const today = new Date().toISOString().slice(0, 10);
-    expect(screen.getByLabelText('Дата заїзду')).toHaveAttribute('min', today);
+    expect(localMidnightBoundary.toISOString().slice(0, 10)).toBe('2026-01-09');
+    expect(screen.getByLabelText('Дата заїзду')).toHaveAttribute('min', localTodayIso());
   });
 
   it('navigates through a transition so the submit URL is still pushed once', async () => {
