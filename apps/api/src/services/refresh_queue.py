@@ -18,12 +18,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from shared.refresh_queue import (
+    DEFAULT_REFRESH_NIGHTS,
     REFRESH_QUEUE_KEY,
     REFRESH_QUEUE_MAX_LEN,
     RefreshQueueFullError,
     RefreshQueueUnavailableError,
     push_refresh_job_with_cap,
-    refresh_lock_key,
+    refresh_base_lock_key,
 )
 
 from src.infra.logging import get_logger
@@ -95,7 +96,7 @@ async def enqueue_refresh(
         QueueUnavailableError if Redis dies between lock acquire and
             enqueue (lock is rolled back inside).
     """
-    cache_key = refresh_lock_key(hotel_id)
+    cache_key = refresh_base_lock_key(hotel_id)
 
     # Queue cap — hard ceiling on the persistent list. Reject well below
     # OOM so capacity exhaustion is visible in metrics instead of swap.
@@ -128,7 +129,7 @@ async def enqueue_refresh(
         "trigger": trigger,
     }
     if requested_nights is not None:
-        job["requested_nights"] = [requested_nights]
+        job["requested_nights"] = sorted({*DEFAULT_REFRESH_NIGHTS, requested_nights})
     job_json = json.dumps(job)
 
     try:

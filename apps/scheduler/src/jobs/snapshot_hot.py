@@ -32,8 +32,9 @@ from sqlalchemy import text
 from shared.refresh_queue import (
     REFRESH_QUEUE_KEY,
     RefreshQueueFullError,
+    legacy_custom_nights_lock_pattern,
     push_refresh_job_with_cap,
-    refresh_lock_patterns,
+    refresh_base_lock_key,
 )
 from shared.refresh_queue import (
     REFRESH_QUEUE_MAX_LEN as SHARED_REFRESH_QUEUE_MAX_LEN,
@@ -54,6 +55,21 @@ OPERATOR_CODE = "farvater"
 # resolve in one round-trip, small enough to keep each MATCH iteration
 # under a millisecond on a busy Redis.
 SCAN_COUNT = 200
+
+
+def _parse_legacy_custom_nights_lock_hotel_id(key: object) -> int | None:
+    if isinstance(key, bytes):
+        key = key.decode()
+    if not isinstance(key, str):
+        return None
+
+    parts = key.split(":")
+    if len(parts) != 5 or parts[0] != "refresh" or parts[1] != "hotel" or parts[3] != "nights":
+        return None
+    try:
+        return int(parts[2])
+    except ValueError:
+        return None
 
 
 async def _resolve_farvater_keys(hotel_ids: list[int]) -> dict[int, str]:
@@ -129,25 +145,24 @@ async def snapshot_hot(*, top_n: int = TOP_N) -> int:
         log.info("snapshot_hot.no_mappings", top=len(top_ids))
         return 0
 
-    # Batch lock checks on the per-hotel refresh locks set by
-    # `POST /api/hotels/{id}/refresh`. Legacy custom-night locks also mean
-    # the hotel has active refresh work, so skip them here too.
+    # Batch base-lock checks for current API refreshes, then run one bounded
+    # SCAN for legacy custom-night locks left by pre-unification producers.
     pipe = redis.pipeline()
-    lock_checks: list[tuple[int, str]] = []
     for hid in mapping:
-        exact_key, nights_pattern = refresh_lock_patterns(hid)
-        pipe.exists(exact_key)
-        lock_checks.append((hid, "exact"))
-        pipe.keys(nights_pattern)
-        lock_checks.append((hid, "nights"))
-    lock_results = await pipe.execute()
+        pipe.exists(refresh_base_lock_key(hid))
+    base_lock_results = await pipe.execute()
 
-    locked: set[int] = set()
-    for (hid, kind), result in zip(lock_checks, lock_results, strict=False):
-        if kind == "exact" and result:
-            locked.add(hid)
-        if kind == "nights" and result:
-            locked.add(hid)
+    locked = {
+        hid for hid, exists in zip(mapping.keys(), base_lock_results, strict=False) if exists
+    }
+    mapped_ids = set(mapping)
+    async for key in redis.scan_iter(
+        match=legacy_custom_nights_lock_pattern(),
+        count=SCAN_COUNT,
+    ):
+        legacy_hotel_id = _parse_legacy_custom_nights_lock_hotel_id(key)
+        if legacy_hotel_id is not None and legacy_hotel_id in mapped_ids:
+            locked.add(legacy_hotel_id)
 
     now_iso = datetime.now(UTC).isoformat()
     queued = 0
