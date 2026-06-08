@@ -152,9 +152,7 @@ async def snapshot_hot(*, top_n: int = TOP_N) -> int:
         pipe.exists(refresh_base_lock_key(hid))
     base_lock_results = await pipe.execute()
 
-    locked = {
-        hid for hid, exists in zip(mapping.keys(), base_lock_results, strict=False) if exists
-    }
+    locked = {hid for hid, exists in zip(mapping.keys(), base_lock_results, strict=False) if exists}
     mapped_ids = set(mapping)
     async for key in redis.scan_iter(
         match=legacy_custom_nights_lock_pattern(),
