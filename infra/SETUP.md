@@ -200,23 +200,31 @@ From the repo root on your laptop:
 
 ```bash
 scp -i ~/.ssh/fasttravel_oracle \
-    infra/systemd/*.service \
-    infra/systemd/*.timer \
+    infra/systemd/fasttravel-stack.service \
+    infra/systemd/fasttravel-keepalive.service \
+    infra/systemd/fasttravel-keepalive.timer \
     ubuntu@<public_ip>:/tmp/
 ```
 
 On the VM:
 
 ```bash
-sudo mv /tmp/fasttravel-*.service /tmp/fasttravel-*.timer /etc/systemd/system/
+sudo mv \
+    /tmp/fasttravel-stack.service \
+    /tmp/fasttravel-keepalive.service \
+    /tmp/fasttravel-keepalive.timer \
+    /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now fasttravel-stack.service     # docker-compose at boot
-sudo systemctl enable --now fasttravel-snapshot.timer    # 06:00 / 18:00
 sudo systemctl enable --now fasttravel-keepalive.timer   # hourly
 
 systemctl list-timers --all | grep fasttravel
 ```
 
+> **Price snapshots**: `snapshot_farvater` is scheduled inside the scheduler
+> container by APScheduler at 06:00/18:00 Europe/Kyiv. Do not add or enable a
+> host systemd timer for it.
+>
 > **Note**: `fasttravel-stack.service` will exit harmlessly until you deploy a
 > full repo checkout plus `.env` to `/opt/fasttravel/` (next step). The prod
 > compose file is an overlay and must always be used together with
@@ -258,7 +266,6 @@ curl -fsS https://api.<your-domain>/health   # should return {"status":"ok"} onc
 
 # On the VM
 sudo journalctl -u fasttravel-stack.service -n 50 --no-pager
-sudo journalctl -u fasttravel-snapshot.service -n 50 --no-pager
 cd /opt/fasttravel
 docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=100
 systemctl list-timers --all | grep fasttravel

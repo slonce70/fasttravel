@@ -36,6 +36,14 @@ require_file() {
     fi
 }
 
+require_absent_file() {
+    if [[ -f "$ROOT/$1" ]]; then
+        fail "retired file is still present: $1"
+    else
+        ok "retired file absent: $1"
+    fi
+}
+
 require_cmd docker
 require_cmd jq
 require_cmd curl
@@ -56,6 +64,8 @@ require_file infra/prometheus/prometheus.yml
 require_file infra/prometheus/alertmanager.yml
 require_file infra/scripts/secrets-bootstrap.sh
 require_file infra/scripts/backup-restore-drill.sh
+require_absent_file infra/systemd/fasttravel-snapshot.service
+require_absent_file infra/systemd/fasttravel-snapshot.timer
 
 echo
 echo "== compose =="
@@ -228,8 +238,15 @@ require_workflow_contains ".github/workflows/daily-backup.yml" "pg_dump -U .*POS
 require_workflow_contains "infra/scripts/secrets-bootstrap.sh" "ALERTMANAGER_WEBHOOK_SECRET" "secrets bootstrap creates alert webhook secret"
 require_workflow_contains "infra/scripts/secrets-bootstrap.sh" "infra/prometheus/\\.webhook_secret" "secrets bootstrap writes AlertManager secret file"
 require_workflow_contains "infra/systemd/fasttravel-stack.service" "-f docker-compose\\.yml -f docker-compose\\.prod\\.yml up -d" "systemd stack uses base compose plus prod overlay"
-require_workflow_contains "infra/systemd/fasttravel-snapshot.service" "-f docker-compose\\.yml -f docker-compose\\.prod\\.yml exec -T scheduler python -m src\\.jobs\\.snapshot_farvater" "systemd snapshot runs the real Farvater snapshot module"
 require_workflow_contains "infra/systemd/fasttravel-keepalive.service" "-f docker-compose\\.yml -f docker-compose\\.prod\\.yml exec -T postgres" "systemd keepalive uses base compose plus prod overlay"
+if rg -n 'fasttravel-snapshot\.(service|timer)|snapshot_farvater\.timer' \
+    "$ROOT/infra/systemd" "$ROOT/infra/SETUP.md" "$ROOT/infra/systemd/README.md" \
+    -g '!infra/scripts/production-preflight.sh' >/tmp/fasttravel-preflight-snapshot-owner.txt; then
+    cat /tmp/fasttravel-preflight-snapshot-owner.txt >&2
+    fail "systemd snapshot timer/service references found; APScheduler is the only price snapshot owner"
+else
+    ok "no systemd snapshot owner references found"
+fi
 require_workflow_contains "infra/cloud-init.yml" "cd /opt/fasttravel \\|\\| exit 0" "cloud-init healthcheck waits for repo checkout"
 require_workflow_contains "infra/cloud-init.yml" "-f docker-compose\\.yml -f docker-compose\\.prod\\.yml exec -T api" "cloud-init healthcheck uses internal API container health"
 require_workflow_contains "infra/cloud-init.yml" "apache2-utils" "cloud-init installs htpasswd tooling for Grafana basic-auth"

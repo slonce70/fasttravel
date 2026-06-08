@@ -13,6 +13,10 @@ Schedule (Europe/Kyiv):
 Plus a long-running async task:
 - refresh_worker_loop       — drains `refresh:queue` via BRPOP (P1-4)
 
+Price snapshots are owned here, not by host systemd. Production must not
+enable a second `snapshot_farvater` timer because duplicate 06:00/18:00
+runs create scrape overlap, queue pressure, and lock noise.
+
 Single-process for MVP. When the workload grows we split each job into
 its own container (or move heavy ingest jobs to a dedicated worker pool).
 Until then, APScheduler with a memory job store keeps the moving parts
