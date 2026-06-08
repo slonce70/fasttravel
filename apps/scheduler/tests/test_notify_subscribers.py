@@ -3,9 +3,12 @@ from __future__ import annotations
 import importlib
 from datetime import date
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
+from structlog.testing import capture_logs
 
+from src.config import Settings
 from src.jobs.notify_subscribers import _notify_subscribers_locked, _render
 
 
@@ -160,13 +163,16 @@ def test_render_unknown_method_uses_neutral_baseline_without_savings_claim() -> 
 
 
 @pytest.mark.asyncio
-async def test_sent_but_unrecorded_alert_logs_distinct_warning_not_failed(monkeypatch) -> None:
+async def test_sent_but_unrecorded_alert_logs_distinct_warning_not_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A successful send whose ledger write fails must NOT count as 'failed'.
 
-    The message was delivered, so sent stays incremented and the run logs a
-    DISTINCT `mark_notified_failed` warning (the duplicate-alert risk) rather
-    than folding it into the generic 'failed' bucket — which would
-    double-count the row (sent+1 then failed+1) and skew the completion log.
+    The message was delivered, so sent stays incremented and the ledger
+    session is rolled back before logging a DISTINCT
+    `notified_ledger_failed` warning (the duplicate-alert risk) rather than
+    folding it into the generic 'failed' bucket, which would double-count the
+    row (sent+1 then failed+1) and skew the completion log.
     """
     module = importlib.import_module("src.jobs.notify_subscribers")
 
@@ -196,8 +202,8 @@ async def test_sent_but_unrecorded_alert_logs_distinct_warning_not_failed(monkey
         def all(self):  # type: ignore[no-untyped-def]
             return [row]
 
-    class _Session:
-        """Returns the match row; raises only on the _MARK_NOTIFIED write."""
+    class _MatchSession:
+        """Returns the match row from the first query session."""
 
         async def __aenter__(self):  # type: ignore[no-untyped-def]
             return self
@@ -206,16 +212,30 @@ async def test_sent_but_unrecorded_alert_logs_distinct_warning_not_failed(monkey
             return None
 
         async def execute(self, sql, *_args, **_kwargs):  # type: ignore[no-untyped-def]
-            statement = str(sql)
-            # Discriminate on the INSERT (not the bare table name), because
-            # the match query references telegram_filter_notifications inside
-            # a NOT EXISTS too.
-            if "INSERT INTO telegram_filter_notifications" in statement:
-                raise RuntimeError("ledger write failed after a successful send")
+            assert "INSERT INTO telegram_filter_notifications" not in str(sql)
             return _MatchResult()
 
-        async def commit(self) -> None:
+    class _LedgerSession:
+        """Raises only on the _MARK_NOTIFIED write."""
+
+        def __init__(self) -> None:
+            self.rollback_calls = 0
+
+        async def __aenter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
             return None
+
+        async def execute(self, sql, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            assert "INSERT INTO telegram_filter_notifications" in str(sql)
+            raise RuntimeError("ledger write failed after a successful send")
+
+        async def commit(self) -> None:
+            raise AssertionError("commit should not be reached when the ledger write fails")
+
+        async def rollback(self) -> None:
+            self.rollback_calls += 1
 
     class _FakeBotSession:
         async def close(self) -> None:
@@ -231,36 +251,37 @@ async def test_sent_but_unrecorded_alert_logs_distinct_warning_not_failed(monkey
             return SimpleNamespace(message_id=1)
 
     fake_bot = _FakeBot()
+    match_session = _MatchSession()
+    ledger_session = _LedgerSession()
+    sessions = iter([match_session, ledger_session])
 
-    events: list[tuple[str, dict]] = []
-
-    class _FakeLog:
-        def info(self, event: str, **kwargs):  # type: ignore[no-untyped-def]
-            events.append((event, kwargs))
-
-        def warning(self, event: str, **kwargs):  # type: ignore[no-untyped-def]
-            events.append((event, kwargs))
-
-    monkeypatch.setattr(module, "async_session_factory", lambda: _Session())
+    monkeypatch.setattr(module, "async_session_factory", lambda: next(sessions))
     monkeypatch.setattr(module, "make_bot", lambda _token: fake_bot)
-    monkeypatch.setattr(module, "log", _FakeLog())
     monkeypatch.setattr(module, "SEND_DELAY_S", 0.0)
 
     settings = SimpleNamespace(telegram_bot_token="x", public_site_url="https://fasttravel.test")
 
-    sent = await _notify_subscribers_locked(settings)
+    with capture_logs() as events:
+        sent = await _notify_subscribers_locked(cast(Settings, settings))
 
     # Message delivered exactly once and counted as sent.
     assert fake_bot.sends == 1
     assert sent == 1
+    assert ledger_session.rollback_calls == 1
 
-    warnings_logged = {event for event, _ in events}
+    warnings_logged = {event["event"] for event in events}
     # The ledger-write failure is its own distinct warning...
-    assert "notify_subscribers.mark_notified_failed" in warnings_logged
+    assert "notify_subscribers.notified_ledger_failed" in warnings_logged
     # ...and is NOT folded into the generic send-failed bucket.
     assert "notify_subscribers.send_failed" not in warnings_logged
+    ledger_warning = next(
+        event for event in events if event["event"] == "notify_subscribers.notified_ledger_failed"
+    )
+    assert ledger_warning["filter_id"] == 42
+    assert ledger_warning["deal_id"] == 9001
+    assert ledger_warning["error"] == "ledger write failed after a successful send"
 
-    completed = [kwargs for event, kwargs in events if event == "notify_subscribers.completed"]
+    completed = [event for event in events if event["event"] == "notify_subscribers.completed"]
     assert completed, "expected a completion log line"
     assert completed[0]["sent"] == 1
     # The unrecorded-but-sent row must not double-count into 'failed'.

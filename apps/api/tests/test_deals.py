@@ -298,7 +298,7 @@ async def test_list_deals_excludes_zero_discount_deals(
 
 
 @pytest.mark.asyncio
-async def test_list_deals_orders_equal_key_rows_by_id_deterministically(
+async def test_list_deals_uses_unique_tie_break_for_offset_pages(
     client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """Equal-key rows must tie-break on the PK so paging is deterministic.
@@ -310,9 +310,14 @@ async def test_list_deals_orders_equal_key_rows_by_id_deterministically(
     statements backing consecutive pages — rows can duplicate or be
     skipped. Appending Deal.id.desc() makes the order total.
     """
-    shared_detected_at = datetime.now(timezone.utc)
+    shared_detected_at = datetime(2035, 1, 1, tzinfo=timezone.utc)
     seeded = [
-        await _seed_minimal_deal(db_session, detected_at=shared_detected_at) for _ in range(6)
+        await _seed_minimal_deal(
+            db_session,
+            detected_at=shared_detected_at,
+            discount_pct=44.0,
+        )
+        for _ in range(6)
     ]
     seeded_ids = [s.deal_id for s in seeded]
 
@@ -327,8 +332,8 @@ async def test_list_deals_orders_equal_key_rows_by_id_deterministically(
     ours = [deal_id for deal_id in all_ids if deal_id in set(seeded_ids)]
     assert ours == sorted(seeded_ids, reverse=True)
 
-    # Secondary: two consecutive offset pages over the same stable ordering
-    # must equal the first 2*limit rows — no overlap, no gap.
+    # Two consecutive offset pages over the same stable ordering must cover
+    # all six tied seeded rows exactly once.
     page_size = 3
     page1 = await client.get(f"/api/deals?limit={page_size}&offset=0&sort=newest")
     page2 = await client.get(f"/api/deals?limit={page_size}&offset={page_size}&sort=newest")
@@ -336,6 +341,9 @@ async def test_list_deals_orders_equal_key_rows_by_id_deterministically(
     assert page2.status_code == 200
     page1_ids = [item["id"] for item in page1.json()["items"]]
     page2_ids = [item["id"] for item in page2.json()["items"]]
-    # Within our seeded set the first six rows of the stable order are the
-    # seeded ids, descending. No id appears on both pages.
-    assert set(page1_ids).isdisjoint(set(page2_ids))
+    combined_seeded_ids = [
+        deal_id for deal_id in [*page1_ids, *page2_ids] if deal_id in set(seeded_ids)
+    ]
+    assert len(combined_seeded_ids) == 6
+    assert len(set(combined_seeded_ids)) == 6
+    assert combined_seeded_ids == sorted(seeded_ids, reverse=True)

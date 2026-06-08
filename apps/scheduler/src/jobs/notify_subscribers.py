@@ -20,6 +20,7 @@ contract as post_deals.py.
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
@@ -298,16 +299,21 @@ async def _notify_subscribers_locked(settings: Settings) -> int:
                 # window — logged loudly here for operator visibility. The
                 # scalar cursor remains a high-water marker for legacy/admin
                 # visibility only.
+                ledger_db = None
                 try:
                     async with async_session_factory() as db:
+                        ledger_db = db
                         await db.execute(
                             _MARK_NOTIFIED,
                             {"deal_id": row.deal_id, "filter_id": row.filter_id},
                         )
                         await db.commit()
                 except Exception as exc:  # noqa: BLE001
+                    if ledger_db is not None:
+                        with suppress(Exception):
+                            await ledger_db.rollback()
                     log.warning(
-                        "notify_subscribers.mark_notified_failed",
+                        "notify_subscribers.notified_ledger_failed",
                         chat_id=row.chat_id,
                         filter_id=row.filter_id,
                         deal_id=row.deal_id,
