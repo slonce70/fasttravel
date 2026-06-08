@@ -3,6 +3,8 @@ import type { SearchParams } from './types';
 
 export const PAGE_SIZE = 24;
 
+export type SearchUrlValue = string | number | null | undefined;
+
 export type RouteSearchParams = {
   q?: string;
   country?: string;
@@ -21,6 +23,24 @@ export type RouteSearchParams = {
 };
 
 const MAX_KIDS = 6;
+
+export function localTodayIso(now = new Date()): string {
+  const year = String(now.getFullYear());
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function serializeSearchParams(values: Record<string, SearchUrlValue>): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (key.startsWith('amp;') || value === undefined || value === null || value === '') {
+      continue;
+    }
+    params.set(key, String(value));
+  }
+  return params;
+}
 
 export function readParam(sp: RouteSearchParams, key: string): string | undefined {
   return sp[key] ?? sp[`amp;${key}`];

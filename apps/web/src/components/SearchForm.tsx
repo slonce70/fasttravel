@@ -3,8 +3,13 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState, useTransition, type FormEvent } from 'react';
 import { Button } from './ui/Button';
-import { PaxPicker, paxFromSearchParams, paxToSearchParams, type PaxValue } from './PaxPicker';
-import { toApiSearchParams, type RouteSearchParams } from '@/lib/search-params';
+import { PaxPicker, paxFromSearchParams, type PaxValue } from './PaxPicker';
+import {
+  localTodayIso,
+  serializeSearchParams,
+  toApiSearchParams,
+  type RouteSearchParams,
+} from '@/lib/search-params';
 import { DEFAULT_SEARCH_SORT, normalizeSearchSort } from '@/lib/search-sort';
 import { accusativeCountry, countriesForSelector } from '@/lib/countries';
 import { PRECOMPUTED_NIGHTS, type CountryOut } from '@/lib/types';
@@ -52,9 +57,9 @@ export function SearchForm({
   const router = useRouter();
   const params = useSearchParams();
   const [isPending, startTransition] = useTransition();
-  // Min check-in is today (UTC midnight is a harmless UA edge) so the native
-  // picker greys out past dates, which always dead-end on zero results.
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  // Min check-in is today in the user's local calendar, so the native picker
+  // greys out past dates that always dead-end on zero results.
+  const today = useMemo(() => localTodayIso(), []);
   const selectableCountries = useMemo(() => countriesForSelector(countries), [countries]);
   const paramsKey = params.toString();
   const paramSnapshot = useMemo(() => new URLSearchParams(paramsKey), [paramsKey]);
@@ -147,7 +152,6 @@ export function SearchForm({
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (isPending) return;
-    const qs = new URLSearchParams();
     const currentSort = normalizeSearchSort(readCurrentParam('sort'));
     const raw: RouteSearchParams = {
       q: hotelQuery,
@@ -162,17 +166,17 @@ export function SearchForm({
       sort: currentSort,
     };
     const sanitized = toApiSearchParams(raw);
-    if (sanitized.country) qs.set('country', sanitized.country);
-    if (sanitized.check_in) qs.set('check_in', sanitized.check_in);
-    if (sanitized.nights !== undefined) qs.set('nights', String(sanitized.nights));
-    if (sanitized.meal_plan) qs.set('meal_plan', sanitized.meal_plan);
-    if (sanitized.price_max !== undefined) qs.set('price_max', String(sanitized.price_max));
-    if (sanitized.stars_min !== undefined) qs.set('stars_min', String(sanitized.stars_min));
-    if (sanitized.q) qs.set('q', sanitized.q);
-    if (sanitized.sort && sanitized.sort !== DEFAULT_SEARCH_SORT) qs.set('sort', sanitized.sort);
-    paxToSearchParams(qs, {
+    const qs = serializeSearchParams({
+      country: sanitized.country,
+      check_in: sanitized.check_in,
+      nights: sanitized.nights,
+      meal_plan: sanitized.meal_plan,
+      price_max: sanitized.price_max,
+      stars_min: sanitized.stars_min,
+      q: sanitized.q,
+      sort: sanitized.sort !== DEFAULT_SEARCH_SORT ? sanitized.sort : undefined,
       adults: sanitized.adults ?? pax.adults,
-      kids: sanitized.kids ?? [],
+      kids: sanitized.kids && sanitized.kids.length > 0 ? sanitized.kids.join(',') : undefined,
     });
     const query = qs.toString();
     // useTransition keeps `isPending` true through the server round-trip on
