@@ -14,7 +14,7 @@ apps/bot/
     alert_webhook.py        POST /alerts handler (HMAC-verified, fail-closed in prod)
     handlers/
       commands.py           /start, /help, /channel + reply-keyboard text dispatchers
-      deals.py              /deals (paginated), /best (top-10 by discount)
+      deals.py              /deals (paginated), /best (top-20 by discount)
       destinations.py       /destinations
       search_wizard.py      6-step FSM search wizard
       subscribe.py          /subscribe, filter CRUD, alert opt-out
@@ -46,7 +46,7 @@ apps/bot/
 | Command | What it does |
 |---|---|
 | `/start` | Welcome + reply-keyboard menu |
-| `/best` | Top-10 current deals sorted by discount % — single message, 5 inline buttons |
+| `/best` | Top-20 current deals sorted by discount % — single message, 5 inline buttons |
 | `/search` | 6-step wizard (country → nights → when → budget → meal → stars) → paginated results |
 | `/deals` | Full paginated deals feed (5 per page) |
 | `/destinations` | Country catalog with hotel counts |

@@ -30,6 +30,8 @@ from src.config import get_settings
 from src.infra.api_client import ApiError, get_deals
 from src.infra.callbacks import callback_int_tail, callback_message, callback_tail
 from src.infra.logging import get_logger
+from src.infra.telegram_text import fit_markdown_v2_message
+from src.infra.url_safety import safe_http_url
 from src.keyboards.main_menu import main_menu_kb
 from src.templates.deal import render_deal
 
@@ -39,6 +41,8 @@ log = get_logger(__name__)
 _PAGE_SIZE = 5
 _MAX_FETCH = 50  # one /api/deals call covers up to 10 pages
 _BEST_COUNT = 20  # `/best` shows the top 20 by discount in a single message
+_DEALS_SEPARATOR = "\n\n— · — · —\n\n"
+_TRUNCATED_FOOTER = "Повний список доступний через /deals або сайт\\."
 
 # Quick-filter buckets for /best. Tuples are (label, nights_min, nights_max).
 # Picked to match what's actually in `deals` for current ingest: 7n / 9n and
@@ -60,7 +64,7 @@ def _build_keyboard(
     rows: list[list[InlineKeyboardButton]] = []
     for d in deals:
         slug = d.get("hotel_slug")
-        deep_link = d.get("deep_link")
+        deep_link = safe_http_url(d.get("deep_link"))
         hotel_name = (d.get("hotel_name_uk") or "Готель")[:24]
         url = deep_link
         if not url:
@@ -78,10 +82,17 @@ def _build_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _render_row_for_message(row: dict[str, Any]) -> dict[str, Any]:
+    """Keep unsafe operator URLs out of Markdown links in message bodies."""
+    clean = dict(row)
+    clean["deep_link"] = safe_http_url(row.get("deep_link"))
+    return clean
+
+
 def _render_page(deals: list[dict[str, Any]], page: int, total_pages: int) -> str:
     header = f"🔥 *Гарячі варіанти* · сторінка *{page}/{total_pages}*"
-    body = "\n\n— · — · —\n\n".join(render_deal(d) for d in deals)
-    return f"{header}\n\n{body}"
+    blocks = [render_deal(_render_row_for_message(d)) for d in deals]
+    return fit_markdown_v2_message(header, blocks, _TRUNCATED_FOOTER, _DEALS_SEPARATOR)
 
 
 async def _send_page(
@@ -123,7 +134,13 @@ async def _send_page(
                 reply_markup=kb,
             )
         except Exception as exc:  # noqa: BLE001
-            log.debug("deals.edit_skip", error=str(exc))
+            log.warning("deals.edit_failed_fallback_send", error=str(exc))
+            await message.answer(
+                text,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                disable_web_page_preview=True,
+                reply_markup=kb,
+            )
     else:
         await message.answer(
             text,
@@ -172,7 +189,7 @@ async def _best_keyboard(
         # doesn't blow past Telegram's 100-button-per-message cap when
         # the feed surfaces lots of hotels.
         slug = d.get("hotel_slug")
-        deep_link = d.get("deep_link")
+        deep_link = safe_http_url(d.get("deep_link"))
         discount = int(round(float(d.get("discount_pct") or 0)))
         hotel_name = (d.get("hotel_name_uk") or "Готель")[:22]
         url = deep_link
@@ -257,8 +274,8 @@ async def _send_best(
         return
 
     header = _best_header(nights_filter)
-    body = "\n\n— · — · —\n\n".join(render_deal(d) for d in items)
-    text = f"{header}\n\n{body}"
+    blocks = [render_deal(_render_row_for_message(d)) for d in items]
+    text = fit_markdown_v2_message(header, blocks, _TRUNCATED_FOOTER, _DEALS_SEPARATOR)
     kb = await _best_keyboard(items, active_nights=nights_filter)
 
     if edit:
@@ -270,7 +287,13 @@ async def _send_best(
                 reply_markup=kb,
             )
         except Exception as exc:  # noqa: BLE001
-            log.debug("best.edit_skip", error=str(exc))
+            log.warning("best.edit_failed_fallback_send", error=str(exc))
+            await message.answer(
+                text,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                disable_web_page_preview=True,
+                reply_markup=kb,
+            )
     else:
         await message.answer(
             text,

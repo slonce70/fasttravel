@@ -40,8 +40,30 @@ def test_site_only_hit_renders_when_deep_link_missing() -> None:
     row = rows[0]
     assert all("Забронювати" not in b.text for b in row)  # no operator button
     site = next(b for b in row if b.url and "/hotels/" in b.url)
+    assert site.url is not None
     assert site.url.startswith(f"{_BASE}/hotels/fv-tr-no-link")
     assert "No Link Hotel" in site.text  # name surfaces on the lone button
+
+
+def test_unsafe_operator_deep_link_falls_back_to_public_hotel_url() -> None:
+    rows = wizard_render.result_link_rows(
+        [
+            {
+                "name_uk": "Unsafe Link Hotel",
+                "canonical_slug": "fv-tr-unsafe-link",
+                "deep_link": " javascript:alert(1) ",
+            }
+        ],
+        site_base_url=_BASE,
+    )
+
+    assert len(rows) == 1
+    assert all("Забронювати" not in b.text for b in rows[0])
+    assert len(rows[0]) == 1
+    assert rows[0][0].url == (
+        f"{_BASE}/hotels/fv-tr-unsafe-link?utm_source=tg_bot&utm_medium=wizard"
+    )
+    assert "Unsafe Link Hotel" in rows[0][0].text
 
 
 def test_operator_only_when_no_site_base() -> None:
