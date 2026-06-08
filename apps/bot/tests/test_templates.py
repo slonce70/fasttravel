@@ -8,17 +8,45 @@ emoji header so users can scan the chat by sigil alone.
 
 from __future__ import annotations
 
+from src.infra.telegram_text import fit_markdown_v2_message, telegram_parsed_len
 from src.templates.deal import render_deal, render_search_hit
 
 
-def test_render_search_hit_minimal():
+def test_telegram_parsed_len_ignores_markdown_link_urls_and_counts_utf16() -> None:
+    with_link = r"*Тур* [дивитись](https://operator.example/really/long/path?q=1) \! 🏖️"
+    visible = "Тур дивитись ! 🏖️"
+
+    assert telegram_parsed_len(with_link) == len(visible.encode("utf-16-le")) // 2
+
+
+def test_fit_markdown_v2_message_truncates_blocks_and_keeps_footer() -> None:
+    header = "*H*"
+    blocks = ["A" * 20, "B" * 20, "C" * 20]
+    footer = "F"
+    separator = "\n\n— · — · —\n\n"
+
+    out = fit_markdown_v2_message(
+        header,
+        blocks,
+        footer,
+        separator,
+        max_parsed_len=telegram_parsed_len(f"{header}\n\n{blocks[0]}\n\n{footer}"),
+    )
+
+    assert blocks[0] in out
+    assert blocks[1] not in out
+    assert footer in out
+    assert telegram_parsed_len(out) <= telegram_parsed_len(f"{header}\n\n{blocks[0]}\n\n{footer}")
+
+
+def test_render_search_hit_minimal() -> None:
     hit = {"name_uk": "Belport Beach", "min_price_uah": 32200}
     out = render_search_hit(hit)
     assert "Belport Beach" in out
     assert "32 200 ₴" in out
 
 
-def test_render_search_hit_full():
+def test_render_search_hit_full() -> None:
     hit = {
         "name_uk": "Pickalbatros Vita",
         "stars": 5,
@@ -36,7 +64,7 @@ def test_render_search_hit_full():
     assert "115 відгуків" in out
 
 
-def test_render_search_hit_pluralizes_review_counts():
+def test_render_search_hit_pluralizes_review_counts() -> None:
     one = render_search_hit(
         {
             "name_uk": "One Review Hotel",
@@ -67,7 +95,7 @@ def test_render_search_hit_pluralizes_review_counts():
     assert "5 відгуків" in many
 
 
-def test_render_search_hit_escapes_special_chars_in_name():
+def test_render_search_hit_escapes_special_chars_in_name() -> None:
     """Hotel name with characters MarkdownV2 reserves must come out escaped."""
     hit = {"name_uk": "Hotel (Beach) - Premium!", "min_price_uah": 30000}
     out = render_search_hit(hit)
@@ -77,7 +105,7 @@ def test_render_search_hit_escapes_special_chars_in_name():
     assert "\\!" in out
 
 
-def test_render_search_hit_marks_nights_fallback():
+def test_render_search_hit_marks_nights_fallback() -> None:
     hit = {
         "name_uk": "Bin Billa Hotel",
         "min_price_uah": 27401,
@@ -91,7 +119,7 @@ def test_render_search_hit_marks_nights_fallback():
     assert "не за 8 ночей" in out
 
 
-def test_render_deal_full():
+def test_render_deal_full() -> None:
     row = {
         "discount_pct": 38,
         "hotel_name_uk": "Belport Beach Hotel",
@@ -117,7 +145,7 @@ def test_render_deal_full():
     assert "~51 500 ₴~" not in out
 
 
-def test_render_deal_handles_missing_destination():
+def test_render_deal_handles_missing_destination() -> None:
     row = {
         "discount_pct": 12,
         "hotel_name_uk": "Test Hotel",
@@ -135,7 +163,7 @@ def test_render_deal_handles_missing_destination():
     assert "📍" not in out
 
 
-def test_render_deal_calendar_anomaly_shows_neighbour_average_strikethrough():
+def test_render_deal_calendar_anomaly_shows_neighbour_average_strikethrough() -> None:
     row = {
         "discount_pct": 19,
         "hotel_name_uk": "Albatros Dana Beach Resort",
@@ -158,7 +186,7 @@ def test_render_deal_calendar_anomaly_shows_neighbour_average_strikethrough():
     assert "економія" not in out
 
 
-def test_render_deal_percentile_uses_same_hotel_baseline_without_savings_claim():
+def test_render_deal_percentile_uses_same_hotel_baseline_without_savings_claim() -> None:
     row = {
         "discount_pct": 18,
         "hotel_name_uk": "Historical Hotel",
@@ -180,7 +208,7 @@ def test_render_deal_percentile_uses_same_hotel_baseline_without_savings_claim()
     assert "~39 000 ₴~" not in out
 
 
-def test_render_deal_peer_anomaly_names_peer_baseline_without_savings_claim():
+def test_render_deal_peer_anomaly_names_peer_baseline_without_savings_claim() -> None:
     row = {
         "discount_pct": 29,
         "hotel_name_uk": "Peer Hotel",
@@ -202,7 +230,7 @@ def test_render_deal_peer_anomaly_names_peer_baseline_without_savings_claim():
     assert "~45 500 ₴~" not in out
 
 
-def test_render_deal_promo_discount_uses_operator_savings_claim():
+def test_render_deal_promo_discount_uses_operator_savings_claim() -> None:
     row = {
         "discount_pct": 37,
         "hotel_name_uk": "Promo Hotel",
@@ -223,7 +251,7 @@ def test_render_deal_promo_discount_uses_operator_savings_claim():
     assert "Спецціна від оператора" in out
 
 
-def test_render_deal_unknown_method_uses_neutral_baseline_without_savings_claim():
+def test_render_deal_unknown_method_uses_neutral_baseline_without_savings_claim() -> None:
     row = {
         "discount_pct": 18,
         "hotel_name_uk": "Mystery Hotel",
@@ -245,7 +273,7 @@ def test_render_deal_unknown_method_uses_neutral_baseline_without_savings_claim(
     assert "нижча за звичайну" not in out
 
 
-def test_render_deal_includes_optional_short_hotel_context():
+def test_render_deal_includes_optional_short_hotel_context() -> None:
     row = {
         "discount_pct": 38,
         "hotel_name_uk": "Belport Beach Hotel",
@@ -267,7 +295,7 @@ def test_render_deal_includes_optional_short_hotel_context():
     assert "Пляжний готель \\(центр\\) \\- family\\_friendly\\!" in out
 
 
-def test_render_deal_keeps_long_hotel_description_useful():
+def test_render_deal_keeps_long_hotel_description_useful() -> None:
     description = (
         "Готель розташований на першій лінії біля моря з приватним пляжем, "
         "великим басейном, сучасним спа-центром та просторими номерами. "
@@ -296,7 +324,7 @@ def test_render_deal_keeps_long_hotel_description_useful():
     assert len(out) < 4096
 
 
-def test_render_deal_expands_raw_and_cyrillic_meal_codes():
+def test_render_deal_expands_raw_and_cyrillic_meal_codes() -> None:
     cyrillic_code = render_deal(
         {
             "discount_pct": 20,

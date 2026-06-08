@@ -21,7 +21,6 @@ the website so a user never concludes a missing destination has no tours.
 
 from __future__ import annotations
 
-import re
 from itertools import groupby
 from typing import Any
 
@@ -37,26 +36,7 @@ from shared.text_uk import (
     format_stars,
     format_uah,
 )
-
-# Telegram's hard message cap is 4096; keep a margin for safety.
-_MAX_PARSED_LEN = 3800
-
-_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-
-
-def telegram_parsed_len(text: str) -> int:
-    """Estimate the length Telegram counts against its 4096 cap.
-
-    Telegram measures the message "after entities parsing" in UTF-16 code
-    units: the hidden URL in ``[label](url)`` doesn't count (only the
-    label), and the MarkdownV2 ``*`` bold markers / ``\\`` escapes don't
-    count either. Emoji are 2 UTF-16 units. Counting raw ``len()`` would
-    massively over-count our many long deep-link URLs and truncate
-    countries that actually fit.
-    """
-    stripped = _LINK_RE.sub(r"\1", text)  # keep link label, drop the URL
-    stripped = stripped.replace("\\", "").replace("*", "")
-    return len(stripped.encode("utf-16-le")) // 2
+from src.infra.telegram_text import DEFAULT_PARSED_LIMIT, telegram_parsed_len
 
 
 def render_cheap_card(row: dict[str, Any]) -> str:
@@ -139,7 +119,7 @@ def render_cheap_digest(
     for block in country_blocks:
         cost = telegram_parsed_len(block) + telegram_parsed_len(sep)
         # Always keep at least one country, even if it alone is large.
-        if shown and used + cost > _MAX_PARSED_LEN:
+        if shown and used + cost > DEFAULT_PARSED_LIMIT:
             break
         shown.append(block)
         used += cost

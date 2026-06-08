@@ -16,6 +16,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from shared.site_urls import public_hotel_url
 from shared.text_uk import plural_uk
+from src.infra.url_safety import safe_http_url
 from src.keyboards.filters import results_actions_kb
 
 # Deterministic step order for the 6-step search wizard. /help advertises a
@@ -78,7 +79,7 @@ def result_link_rows(
     """
     rows: list[list[InlineKeyboardButton]] = []
     for h in items:
-        deep_link = h.get("deep_link")
+        deep_link = safe_http_url(h.get("deep_link"))
         # 22-char name cap leaves room for the emoji/prefix in Telegram's
         # ~64-byte button-label budget.
         name = (h.get("name_uk") or "Тур")[:22]
