@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { HotelPhoto } from '@/lib/types';
+import { SafeImage } from './ui/SafeImage';
 import { cn } from '@/lib/utils';
 
 export interface HotelPhotoCarouselProps {
@@ -34,14 +35,11 @@ export function HotelPhotoCarousel({ photos, alt }: HotelPhotoCarouselProps) {
   return (
     <div className="flex min-w-0 max-w-full flex-col gap-2 overflow-hidden">
       <div className="relative aspect-[16/7] w-full overflow-hidden rounded-2xl bg-slate-100">
-        {/* Using a plain <img> until Cloudflare Images is wired. See
-            next.config.mjs `images.unoptimized`. */}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <SafeImage
           src={main.url}
           alt={main.alt ?? alt}
-          className="h-full w-full object-cover"
-          loading="eager"
+          className="h-full w-full"
+          imgClassName="h-full w-full object-cover"
         />
         {photos.length > 1 && (
           <span

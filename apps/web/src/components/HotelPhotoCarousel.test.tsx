@@ -88,4 +88,24 @@ describe('HotelPhotoCarousel', () => {
 
     expect(screen.getByText('1 / 2')).toBeInTheDocument();
   });
+
+  it('switches the broken main image to fallback while preserving thumbnails and overlay', () => {
+    render(
+      <HotelPhotoCarousel
+        photos={[photo('https://cdn.test/a.jpg'), photo('https://cdn.test/b.jpg')]}
+        alt="Готель"
+      />,
+    );
+
+    fireEvent.error(screen.getByRole('img', { name: 'Готель' }));
+
+    expect(screen.queryByRole('img', { name: 'Готель' })).toBeNull();
+    expect(screen.getByText('Фото недоступне')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Фото 1 з 2' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: 'Фото 2 з 2' })).toBeInTheDocument();
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+  });
 });

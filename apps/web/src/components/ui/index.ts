@@ -5,3 +5,5 @@ export { Badge } from './Badge';
 export type { BadgeProps } from './Badge';
 export { Skeleton } from './Skeleton';
 export { Stars } from './Stars';
+export { SafeImage } from './SafeImage';
+export type { SafeImageProps } from './SafeImage';
