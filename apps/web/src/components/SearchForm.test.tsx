@@ -116,8 +116,10 @@ describe('SearchForm', () => {
 
     render(<SearchForm countries={countries} />);
 
-    expect(localMidnightBoundary.toISOString().slice(0, 10)).toBe('2026-01-09');
-    expect(screen.getByLabelText('Дата заїзду')).toHaveAttribute('min', localTodayIso());
+    expect(screen.getByLabelText('Дата заїзду')).toHaveAttribute(
+      'min',
+      localTodayIso(localMidnightBoundary),
+    );
   });
 
   it('navigates through a transition so the submit URL is still pushed once', async () => {

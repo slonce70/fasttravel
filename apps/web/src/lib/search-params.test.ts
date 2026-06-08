@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   PAGE_SIZE,
   localTodayIso,
@@ -7,9 +7,16 @@ import {
   toApiSearchParams,
 } from './search-params';
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('localTodayIso', () => {
   it('formats local calendar parts instead of slicing a UTC timestamp', () => {
-    const localMidnightBoundary = new Date(2026, 0, 10, 0, 30, 0);
+    const localMidnightBoundary = new Date('2026-01-09T22:30:00.000Z');
+    vi.spyOn(localMidnightBoundary, 'getFullYear').mockReturnValue(2026);
+    vi.spyOn(localMidnightBoundary, 'getMonth').mockReturnValue(0);
+    vi.spyOn(localMidnightBoundary, 'getDate').mockReturnValue(10);
 
     expect(localMidnightBoundary.toISOString().slice(0, 10)).toBe('2026-01-09');
     expect(localTodayIso(localMidnightBoundary)).toBe('2026-01-10');
