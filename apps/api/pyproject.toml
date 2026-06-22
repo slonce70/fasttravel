@@ -18,12 +18,12 @@ python = "^3.12"
 # CVE-2025-62727). starlette 1.0.1 (which closes PYSEC-2026-161 too) is
 # blocked for now because prometheus-fastapi-instrumentator <=7.1.0 caps
 # starlette <1.0.0; revisit when that lib ships an update.
-fastapi = "^0.132.0"
+fastapi = ">=0.132,<0.139"
 starlette = "^0.49.3"
-uvicorn = {extras = ["standard"], version = "^0.32.0"}
+uvicorn = {extras = ["standard"], version = ">=0.32,<0.50"}
 sqlalchemy = {extras = ["asyncio"], version = "^2.0.36"}
 alembic = "^1.13.3"
-asyncpg = "^0.30.0"
+asyncpg = ">=0.30,<0.32"
 # Sync driver — used only by Alembic for offline mode and by ad-hoc scripts.
 psycopg = {extras = ["binary"], version = "^3.2.3"}
 redis = "^5.2.0"
@@ -34,10 +34,10 @@ sentry-sdk = {extras = ["fastapi"], version = "^2.18.0"}
 prometheus-fastapi-instrumentator = "^7.1.0"
 # Audit #5 — closes 3 CVEs (CVE-2026-24486/40347/42561). 0.0.29 is the
 # current head; ^ pins inside the 0.0.x range.
-python-multipart = "^0.0.29"
+python-multipart = ">=0.0.29,<0.0.33"
 # httpx with HTTP/2 — outbound calls to farvater.travel for the on-demand
 # /api/hotels/{id}/refresh stale-while-revalidate endpoint.
-httpx = {extras = ["http2"], version = "^0.27.2"}
+httpx = {extras = ["http2"], version = ">=0.27.2,<0.29.0"}
 # Per-IP rate limiting for the user-triggered `/api/hotels/{id}/refresh`.
 # Queue cap + per-hotel lock alone don't stop an attacker rotating hotel_ids
 # from a single IP — slowapi caps that at 10 req/IP/hour.
@@ -50,7 +50,7 @@ slowapi = "^0.1.9"
 pytest = "^8.3.3"
 pytest-asyncio = "^0.24.0"
 pytest-cov = "^6.0.0"
-ruff = "^0.7.4"
+ruff = ">=0.7.4,<0.16.0"
 mypy = "^1.13.0"
 
 [tool.pytest.ini_options]
