@@ -29,7 +29,7 @@ psycopg = {extras = ["binary"], version = "^3.2.3"}
 redis = "^5.2.0"
 pydantic = "^2.9.2"
 pydantic-settings = "^2.6.0"
-structlog = "^24.4.0"
+structlog = ">=24.4,<27.0"
 sentry-sdk = {extras = ["fastapi"], version = "^2.18.0"}
 prometheus-fastapi-instrumentator = "^7.1.0"
 # Audit #5 — closes 3 CVEs (CVE-2026-24486/40347/42561). 0.0.29 is the
