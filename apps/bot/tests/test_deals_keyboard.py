@@ -49,6 +49,5 @@ def test_deals_keyboard_falls_back_to_site_url_when_no_deep_link(monkeypatch) ->
     )
 
     assert keyboard.inline_keyboard[0][0].url == (
-        "https://web.fasttravel.test/hotels/fv-es-dolce-sitges"
-        "?utm_source=tg_bot&utm_medium=deals"
+        "https://web.fasttravel.test/hotels/fv-es-dolce-sitges?utm_source=tg_bot&utm_medium=deals"
     )

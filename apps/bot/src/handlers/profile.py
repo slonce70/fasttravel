@@ -89,7 +89,7 @@ async def cb_delete_confirm(query: CallbackQuery) -> None:
         await query.answer("Повідомлення недоступне", show_alert=False)
         return
     await message.edit_text(
-        "🗑 *Видалити всі дані\\?*\n\n" "Це безповоротно видалить ваш профіль і всі підписки\\.",
+        "🗑 *Видалити всі дані\\?*\n\nЦе безповоротно видалить ваш профіль і всі підписки\\.",
         parse_mode=ParseMode.MARKDOWN_V2,
         reply_markup=_confirm_delete_kb(),
     )

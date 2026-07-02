@@ -52,7 +52,7 @@ def test_prod_requires_telegram_credentials() -> None:
         alertmanager_webhook_secret="abc123",
     )
 
-    with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN.*TELEGRAM_CHANNEL_ID"):
+    with pytest.raises(RuntimeError, match=r"TELEGRAM_BOT_TOKEN.*TELEGRAM_CHANNEL_ID"):
         settings.assert_prod_secrets()
 
 
