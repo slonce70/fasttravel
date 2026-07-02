@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CalendarDay } from '@/lib/types';
 import { fetchCalendar } from '@/lib/api-client';
 import { PriceCalendar } from './PriceCalendar';
@@ -10,6 +10,16 @@ vi.mock('@/lib/api-client', () => ({
 }));
 
 const fetchCalendarMock = vi.mocked(fetchCalendar);
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-05-28T12:00:00Z'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  fetchCalendarMock.mockReset();
+});
 
 function renderCalendar(rows: CalendarDay[]) {
   const client = new QueryClient({
