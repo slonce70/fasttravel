@@ -214,7 +214,7 @@ async def _best_keyboard(
         # the feed surfaces lots of hotels.
         slug = d.get("hotel_slug")
         deep_link = safe_http_url(d.get("deep_link"))
-        discount = int(round(float(d.get("discount_pct") or 0)))
+        discount = round(float(d.get("discount_pct") or 0))
         hotel_name = (d.get("hotel_name_uk") or "Готель")[:22]
         url = deep_link
         if not url:

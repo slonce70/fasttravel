@@ -98,9 +98,7 @@ def render_cheap_digest(
     header = "🔥 *Найдешевші тури по напрямках*"
 
     if not rows:
-        empty = (
-            "Зараз немає свіжих варіантів\\. Завітайте трохи пізніше або " "перегляньте /search\\."
-        )
+        empty = "Зараз немає свіжих варіантів\\. Завітайте трохи пізніше або перегляньте /search\\."
         return f"{header}\n\n{empty}"
 
     country_blocks = [
