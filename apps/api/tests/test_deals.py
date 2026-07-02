@@ -46,9 +46,7 @@ async def _seed_minimal_deal(
     suffix = uuid4().hex[:8]
     operator_id = (
         await session.execute(
-            text(
-                "INSERT INTO operators (code, display_name) " "VALUES (:code, :name) RETURNING id"
-            ),
+            text("INSERT INTO operators (code, display_name) VALUES (:code, :name) RETURNING id"),
             {"code": f"ittour-test-{suffix}", "name": "IT-Tour (test)"},
         )
     ).scalar_one()

@@ -32,7 +32,7 @@ async def _seed_hotel(session: AsyncSession) -> tuple[int, int]:
     suffix = uuid4().hex[:8]
     operator_id = (
         await session.execute(
-            text("INSERT INTO operators (code, display_name) " "VALUES (:c, :n) RETURNING id"),
+            text("INSERT INTO operators (code, display_name) VALUES (:c, :n) RETURNING id"),
             {"c": f"farvater-test-{suffix}", "n": "Farvater (test)"},
         )
     ).scalar_one()

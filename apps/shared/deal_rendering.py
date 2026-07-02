@@ -63,7 +63,7 @@ def render_deal_price_semantics(
     semantics here prevents date-dip from drifting back into fake savings or
     strike-through copy.
     """
-    discount = int(round(float(discount_pct or 0)))
+    discount = round(float(discount_pct or 0))
     price_int = int(price_uah or 0)
     baseline_int = int(baseline_uah or 0)
     savings = max(0, baseline_int - price_int)

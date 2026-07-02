@@ -31,9 +31,7 @@ from src.services.cheapest_tours_service import list_cheapest_tours
 async def _seed_operator(session: AsyncSession, suffix: str) -> int:
     return (
         await session.execute(
-            text(
-                "INSERT INTO operators (code, display_name) " "VALUES (:code, :name) RETURNING id"
-            ),
+            text("INSERT INTO operators (code, display_name) VALUES (:code, :name) RETURNING id"),
             {"code": f"cheapest-op-{suffix}", "name": "Cheapest Op (test)"},
         )
     ).scalar_one()
