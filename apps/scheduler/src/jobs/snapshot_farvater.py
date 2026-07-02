@@ -97,7 +97,7 @@ CHECK_IN_OFFSETS_DAYS = farvater_runtime.CHECK_IN_OFFSETS_DAYS
 
 # ── tunables ──────────────────────────────────────────────────────────────
 USER_AGENT = (
-    "FastTravel-Bot/1.0 (+https://fasttravel.com.ua/about; " "snapshot 2x/day; respects robots.txt)"
+    "FastTravel-Bot/1.0 (+https://fasttravel.com.ua/about; snapshot 2x/day; respects robots.txt)"
 )
 PER_REQUEST_DELAY_S = float(os.environ.get("FT_FARVATER_REQUEST_DELAY_S", "0.0"))
 CONCURRENCY = int(os.environ.get("FT_FARVATER_CONCURRENCY", "3"))

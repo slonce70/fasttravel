@@ -171,7 +171,7 @@ def _render(row: Any, public_site_url: str) -> str:
         title = "🔔 *Знижка за вашою підпискою*"
 
     return (
-        f"{title}\n\n" f"🏨 *{name}* {stars}".rstrip()
+        f"{title}\n\n🏨 *{name}* {stars}".rstrip()
         + "\n"
         + (f"📍 {location}\n" if location else "")
         + hotel_context

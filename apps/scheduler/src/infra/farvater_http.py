@@ -267,8 +267,7 @@ class FarvaterProdClient:
             # inaccurately if the operator wants to inspect it.
             await self._redis.decr(key)
             raise DailyCapHit(
-                f"daily cap {self._config.daily_cap} reached "
-                f"({new_count - 1} prior calls today)"
+                f"daily cap {self._config.daily_cap} reached ({new_count - 1} prior calls today)"
             )
 
     async def _throttle(self) -> None:

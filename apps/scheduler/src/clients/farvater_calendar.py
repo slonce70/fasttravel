@@ -13,7 +13,7 @@ from src.services.price_validation import parse_check_in, validate_price_row
 log = get_logger(__name__)
 
 DEFAULT_USER_AGENT = (
-    "FastTravel-Bot/1.0 (+https://fasttravel.com.ua/about; " "snapshot 2x/day; respects robots.txt)"
+    "FastTravel-Bot/1.0 (+https://fasttravel.com.ua/about; snapshot 2x/day; respects robots.txt)"
 )
 CALENDAR_DATE_SHIFT_DAYS = 60
 NIGHTS = [7, 8, 9, 10, 11, 12, 13, 14]

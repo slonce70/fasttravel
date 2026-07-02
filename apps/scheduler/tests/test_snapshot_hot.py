@@ -4,17 +4,15 @@ import inspect
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from importlib import import_module
-from typing import Any, TypeVar
+from typing import Any
 
 import pytest
 from fakeredis.aioredis import FakeRedis
 
 snapshot_hot_module = import_module("src.jobs.snapshot_hot")
 
-T = TypeVar("T")
 
-
-async def _await_if_needed(value: Awaitable[T] | T) -> T:
+async def _await_if_needed[T](value: Awaitable[T] | T) -> T:
     if inspect.isawaitable(value):
         return await value
     return value
