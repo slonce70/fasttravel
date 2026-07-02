@@ -21,7 +21,7 @@ async def _seed_hotel_destination(
     s = suffix or uuid4().hex[:8]
     operator_id = (
         await session.execute(
-            text("INSERT INTO operators (code, display_name) " "VALUES (:c, :n) RETURNING id"),
+            text("INSERT INTO operators (code, display_name) VALUES (:c, :n) RETURNING id"),
             {"c": f"farvater-promo-{s}", "n": "Farvater (promo test)"},
         )
     ).scalar_one()

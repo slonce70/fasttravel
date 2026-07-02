@@ -85,7 +85,7 @@ async def get_calendar(
                 FROM ranked_day_prices
                 WHERE price_rank = 1
             ),
-            {date_dip_local_v_cte_sql(extra_series_filter='AND cp.hotel_id = :hotel_id')},
+            {date_dip_local_v_cte_sql(extra_series_filter="AND cp.hotel_id = :hotel_id")},
             best_date_dip AS (
                 -- Best regime-local V dip per check-in for the requested nights
                 -- (and meal, when given). Identical definition + thresholds to

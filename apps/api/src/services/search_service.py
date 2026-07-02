@@ -106,7 +106,7 @@ async def search_hotels(
         current_price_date_filter = "AND cp.check_in = CAST(:check_in AS DATE)"
     elif use_range:
         current_price_date_filter = (
-            "AND cp.check_in BETWEEN CAST(:check_in_min AS DATE) " "AND CAST(:check_in_max AS DATE)"
+            "AND cp.check_in BETWEEN CAST(:check_in_min AS DATE) AND CAST(:check_in_max AS DATE)"
         )
     else:
         current_price_date_filter = ""
