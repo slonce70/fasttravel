@@ -36,7 +36,7 @@ def test_prod_requires_telegram_when_channel_posts_are_enabled() -> None:
         deals_daily_cap=30,
     )
 
-    with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN.*TELEGRAM_CHANNEL_ID"):
+    with pytest.raises(RuntimeError, match=r"TELEGRAM_BOT_TOKEN.*TELEGRAM_CHANNEL_ID"):
         settings.assert_prod_secrets()
 
 
@@ -50,5 +50,5 @@ def test_prod_requires_telegram_when_channel_posts_are_unlimited() -> None:
         deals_daily_cap=0,
     )
 
-    with pytest.raises(RuntimeError, match="TELEGRAM_BOT_TOKEN.*TELEGRAM_CHANNEL_ID"):
+    with pytest.raises(RuntimeError, match=r"TELEGRAM_BOT_TOKEN.*TELEGRAM_CHANNEL_ID"):
         settings.assert_prod_secrets()
