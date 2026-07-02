@@ -61,7 +61,6 @@ async def test_decay_uses_default_7_days(
     monkeypatch.delenv("DECAY_STALE_AFTER_DAYS", raising=False)
     await sut.decay_active_prices()
     # The SQL bound `:d` to 7 by default.
-    _, kwargs = _patch_session["execute"].await_args
     # SQLAlchemy `execute(sql, params)` — params is positional[1] not kwarg.
     args = _patch_session["execute"].await_args.args
     assert args[1] == {"d": 7}

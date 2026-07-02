@@ -69,7 +69,7 @@ def test_hotel_context_renders_reviews_and_escaped_description() -> None:
     )
 
     assert rendered == (
-        "⭐ 9\\.0/10 · 1 відгук\n" "ℹ️ Тихий готель \\(центр\\) \\- family\\_friendly\\!\n"
+        "⭐ 9\\.0/10 · 1 відгук\nℹ️ Тихий готель \\(центр\\) \\- family\\_friendly\\!\n"
     )
 
 

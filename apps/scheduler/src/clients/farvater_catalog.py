@@ -17,7 +17,7 @@ from src.infra.logging import get_logger
 log = get_logger(__name__)
 
 DEFAULT_USER_AGENT = (
-    "FastTravel-Bot/1.0 (+https://fasttravel.com.ua/about; snapshot 2x/day; " "respects robots.txt)"
+    "FastTravel-Bot/1.0 (+https://fasttravel.com.ua/about; snapshot 2x/day; respects robots.txt)"
 )
 
 HOTEL_URL_RE = re.compile(r'href="(/uk/hotel/[a-z]{2,3}/[a-z0-9-]+/)"', re.IGNORECASE)
