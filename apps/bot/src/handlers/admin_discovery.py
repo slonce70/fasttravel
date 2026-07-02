@@ -38,7 +38,5 @@ async def on_my_chat_member(event: ChatMemberUpdated) -> None:
         old_status=old_status,
         new_status=new_status,
         promoted_by=event.from_user.id if event.from_user else None,
-        hint=(
-            "Set TELEGRAM_CHANNEL_ID to this chat_id in .env if this is " "the broadcast channel."
-        ),
+        hint=("Set TELEGRAM_CHANNEL_ID to this chat_id in .env if this is the broadcast channel."),
     )
