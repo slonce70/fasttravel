@@ -26,7 +26,7 @@ alembic = "^1.13.3"
 asyncpg = ">=0.30,<0.32"
 # Sync driver — used only by Alembic for offline mode and by ad-hoc scripts.
 psycopg = {extras = ["binary"], version = "^3.2.3"}
-redis = "^5.2.0"
+redis = ">=5.2,<9.0"
 pydantic = "^2.9.2"
 pydantic-settings = "^2.6.0"
 structlog = ">=24.4,<27.0"
