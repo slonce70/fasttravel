@@ -312,26 +312,26 @@ dev = ["PyTest", "PyTest-Cov", "bump2version (<1)", "setuptools ; python_version
 
 [[package]]
 name = "fastapi"
-version = "0.132.1"
+version = "0.139.0"
 description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "fastapi-0.132.1-py3-none-any.whl", hash = "sha256:0f50df9aed7cfa379b0f4a7dbe798d3dfc2c6bfb05362fe5c7cc4795fa6d1b7a"},
-    {file = "fastapi-0.132.1.tar.gz", hash = "sha256:e5b224024e20ac2aa0141f1ca2c6014cf88b87dc447e31b4c8527c5cf403ce30"},
+    {file = "fastapi-0.139.0-py3-none-any.whl", hash = "sha256:cf15e1e9e667ddb0ad63811e60bd11390d1aac838ca4a7a23f421807b2308189"},
+    {file = "fastapi-0.139.0.tar.gz", hash = "sha256:99ab7b2d92223c76d6cf10757ab3f89d45b38267fc20b2a136cf02f6beac3145"},
 ]
 
 [package.dependencies]
 annotated-doc = ">=0.0.2"
-pydantic = ">=2.7.0"
-starlette = ">=0.40.0,<1.0.0"
+pydantic = ">=2.9.0"
+starlette = ">=0.46.0"
 typing-extensions = ">=4.8.0"
 typing-inspection = ">=0.4.2"
 
 [package.extras]
 all = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.8)", "httpx (>=0.23.0,<1.0.0)", "itsdangerous (>=1.1.0)", "jinja2 (>=3.1.5)", "pydantic-extra-types (>=2.0.0)", "pydantic-settings (>=2.0.0)", "python-multipart (>=0.0.18)", "pyyaml (>=5.3.1)", "uvicorn[standard] (>=0.12.0)"]
-standard = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.8)", "httpx (>=0.23.0,<1.0.0)", "jinja2 (>=3.1.5)", "pydantic-extra-types (>=2.0.0)", "pydantic-settings (>=2.0.0)", "python-multipart (>=0.0.18)", "uvicorn[standard] (>=0.12.0)"]
+standard = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.8)", "fastar (>=0.9.0)", "httpx (>=0.23.0,<1.0.0)", "jinja2 (>=3.1.5)", "pydantic-extra-types (>=2.0.0)", "pydantic-settings (>=2.0.0)", "python-multipart (>=0.0.18)", "uvicorn[standard] (>=0.12.0)"]
 standard-no-fastapi-cloud-cli = ["email-validator (>=2.0.0)", "fastapi-cli[standard-no-fastapi-cloud-cli] (>=0.0.8)", "httpx (>=0.23.0,<1.0.0)", "jinja2 (>=3.1.5)", "pydantic-extra-types (>=2.0.0)", "pydantic-settings (>=2.0.0)", "python-multipart (>=0.0.18)", "uvicorn[standard] (>=0.12.0)"]
 
 [[package]]
@@ -1813,14 +1813,14 @@ zstd = ["backports-zstd (>=1.0.0) ; python_version < \"3.14\""]
 
 [[package]]
 name = "uvicorn"
-version = "0.49.0"
+version = "0.50.0"
 description = "The lightning-fast ASGI server."
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
 files = [
-    {file = "uvicorn-0.49.0-py3-none-any.whl", hash = "sha256:ba3d14c3ee7e41c6c654c46c9eb489d33213cdd30aa1696eab1374337c13f68f"},
-    {file = "uvicorn-0.49.0.tar.gz", hash = "sha256:ebf4271aa580d9de97f93192d4595176df6e91f9aae919ca73e4fc07df1e66a3"},
+    {file = "uvicorn-0.50.0-py3-none-any.whl", hash = "sha256:05f0eb19edf38208f79f43df8a63081b48df31b0cd1e5997be957a4dc97d1b19"},
+    {file = "uvicorn-0.50.0.tar.gz", hash = "sha256:0c92e1bc2259cb7faa4fcef774a5966588f2e88542744550b66799fba10b76f1"},
 ]
 
 [package.dependencies]
@@ -1832,10 +1832,10 @@ python-dotenv = {version = ">=0.13", optional = true, markers = "extra == \"stan
 pyyaml = {version = ">=5.1", optional = true, markers = "extra == \"standard\""}
 uvloop = {version = ">=0.15.1", optional = true, markers = "sys_platform != \"win32\" and sys_platform != \"cygwin\" and platform_python_implementation != \"PyPy\" and extra == \"standard\""}
 watchfiles = {version = ">=0.20", optional = true, markers = "extra == \"standard\""}
-websockets = {version = ">=10.4", optional = true, markers = "extra == \"standard\""}
+websockets = {version = ">=11.0", optional = true, markers = "extra == \"standard\""}
 
 [package.extras]
-standard = ["colorama (>=0.4) ; sys_platform == \"win32\"", "httptools (>=0.8.0)", "python-dotenv (>=0.13)", "pyyaml (>=5.1)", "uvloop (>=0.15.1) ; sys_platform != \"win32\" and sys_platform != \"cygwin\" and platform_python_implementation != \"PyPy\"", "watchfiles (>=0.20)", "websockets (>=10.4)"]
+standard = ["colorama (>=0.4) ; sys_platform == \"win32\"", "httptools (>=0.8.0)", "python-dotenv (>=0.13)", "pyyaml (>=5.1)", "uvloop (>=0.15.1) ; sys_platform != \"win32\" and sys_platform != \"cygwin\" and platform_python_implementation != \"PyPy\"", "watchfiles (>=0.20)", "websockets (>=11.0)"]
 
 [[package]]
 name = "uvloop"
@@ -2199,4 +2199,4 @@ dev = ["pytest", "setuptools"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "68f109939dc876f3714f8b3a17b9f22efd10f226be7c4bd76238990da1e3c1da"
+content-hash = "54bed0d3468eae08da7b4ee20aeb60275a3ce83f83e2bcb229e6dbd3aa5680d1"
