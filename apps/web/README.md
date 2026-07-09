@@ -23,7 +23,7 @@ The backend must be reachable at `NEXT_PUBLIC_API_URL`. For the repo-standard
 local path, run the root compose API and point the frontend at it:
 
 ```bash
-cd ~/Documents/Work/fasttravel
+cd fasttravel
 cp .env.example .env
 docker compose up -d postgres redis
 docker compose build api

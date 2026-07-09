@@ -1,5 +1,9 @@
 # FastTravel
 
+FastTravel is a Telegram-first travel deals aggregator for the Ukrainian market that detects anomalously cheap hotel dates. Built with FastAPI, Next.js 15, Postgres/PostGIS, and APScheduler, with Prometheus/Grafana for monitoring and Terraform for infrastructure on Oracle Cloud.
+
+*Full documentation below is in Ukrainian.*
+
 Інформаційний агрегатор турів для українського ринку. **Головне завдання** — знаходити **аномально дешеві дати** на конкретні готелі (коли один день у календарі коштує помітно менше за сусідні) і розсилати їх у Telegram-канал + персональні алерти.
 
 **Не продаємо у себе.** Кнопка "Купити" редіректить на сайт оператора (поки що — [farvater.travel](https://farvater.travel/uk/)).
@@ -46,7 +50,7 @@
 brew install --cask orbstack
 
 # 2. Підняти стек
-cd ~/Documents/Work/fasttravel
+cd fasttravel
 cp .env.example .env
 # Відредагуй .env: достатньо GRAFANA_ADMIN_PASSWORD (обов'язково)
 # і TELEGRAM_BOT_TOKEN/CHANNEL_ID якщо хочеш реальні пуші

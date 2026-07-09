@@ -4,8 +4,7 @@ Revision ID: 016
 Revises: 015
 Create Date: 2026-05-25
 
-Stage 2 of the calendar-anomaly audit (see plan
-~/.claude/plans/mutable-hopping-barto.md).
+Stage 2 of the calendar-anomaly audit.
 
 Background: snapshot_farvater now scrapes prices for all nights in
 [7..14] — but `hotel_calendar_prices` only exposes `min_7n / min_10n /
