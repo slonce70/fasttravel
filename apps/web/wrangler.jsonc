@@ -16,14 +16,14 @@
   ],
   "vars": {
     "NEXT_PUBLIC_API_URL": "https://api.fasttravel.com.ua",
-    "NEXT_PUBLIC_TELEGRAM_CHANNEL_URL": "https://t.me/testtyhhh",
+    "NEXT_PUBLIC_TELEGRAM_CHANNEL_URL": "https://t.me/fasttravel_deals",
   },
   "env": {
     "preview": {
       "name": "fasttravel-web-preview",
       "vars": {
         "NEXT_PUBLIC_API_URL": "https://staging-api.fasttravel.com.ua",
-        "NEXT_PUBLIC_TELEGRAM_CHANNEL_URL": "https://t.me/testtyhhh",
+        "NEXT_PUBLIC_TELEGRAM_CHANNEL_URL": "https://t.me/fasttravel_deals",
       },
       "services": [
         {

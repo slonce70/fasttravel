@@ -52,9 +52,12 @@ jobs:
           FRONTEND_PREVIEW_URL: ${{ vars.FRONTEND_PREVIEW_URL || secrets.FRONTEND_PREVIEW_URL }}
           FRONTEND_PRODUCTION_URL: ${{ vars.FRONTEND_PRODUCTION_URL || secrets.FRONTEND_PRODUCTION_URL }}
           NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'https://api.fasttravel.com.ua' }}
-          NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ vars.NEXT_PUBLIC_TELEGRAM_CHANNEL_URL || 'https://t.me/testtyhhh' }}
+          # Default must be the REAL public channel: if the GitHub var is not
+          # set, production users would otherwise be funnelled into a test
+          # channel (this exact bug shipped as t.me/testtyhhh once).
+          NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ vars.NEXT_PUBLIC_TELEGRAM_CHANNEL_URL || 'https://t.me/fasttravel_deals' }}
           PREVIEW_NEXT_PUBLIC_API_URL: ${{ vars.PREVIEW_NEXT_PUBLIC_API_URL || 'https://staging-api.fasttravel.com.ua' }}
-          PREVIEW_NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ vars.PREVIEW_NEXT_PUBLIC_TELEGRAM_CHANNEL_URL || vars.NEXT_PUBLIC_TELEGRAM_CHANNEL_URL || 'https://t.me/testtyhhh' }}
+          PREVIEW_NEXT_PUBLIC_TELEGRAM_CHANNEL_URL: ${{ vars.PREVIEW_NEXT_PUBLIC_TELEGRAM_CHANNEL_URL || vars.NEXT_PUBLIC_TELEGRAM_CHANNEL_URL || 'https://t.me/fasttravel_deals' }}
           REQUESTED_ENV: ${{ inputs.environment || 'production' }}
         run: |
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then

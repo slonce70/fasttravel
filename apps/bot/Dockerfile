@@ -78,9 +78,16 @@ COPY --chown=app:app shared/ ./shared/
 
 USER app
 
-# Healthcheck targets the /alerts webhook's GET /alerts/health endpoint
-# (port 9103, exposed inside the fasttravel docker network only).
+# The /alerts webhook (port 9103) only binds when ALERT_WEBHOOK_ENABLED is
+# truthy (default off — see src/config.py), so probing it unconditionally
+# left the container permanently "unhealthy" in the default dev AND prod
+# setups, masking real crashes. Probe the webhook only when the feature is
+# on; otherwise verify the PID-1 bot process is alive (/proc avoids a
+# procps dependency in the slim image).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://localhost:9103/alerts/health || exit 1
+    CMD case "${ALERT_WEBHOOK_ENABLED:-}" in \
+        1|true|True|TRUE|yes|on) curl -fsS http://localhost:9103/alerts/health || exit 1 ;; \
+        *) tr '\0' ' ' < /proc/1/cmdline | grep -q 'src.main' || exit 1 ;; \
+        esac
 
 CMD ["python", "-m", "src.main"]

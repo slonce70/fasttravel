@@ -125,6 +125,7 @@ required_env=(
     TELEGRAM_CHANNEL_ID
     TELEGRAM_ALERTS_CHAT_ID
     GRAFANA_ADMIN_PASSWORD
+    COMPOSE_PROFILES
 )
 for name in "${required_env[@]}"; do
     if ! grep -q "^${name}=" "$ROOT/.env.example"; then
@@ -152,6 +153,11 @@ if [[ -f "$ENV_FILE" ]]; then
                 fail "prod env missing non-empty $name"
             fi
         done
+        # Alert rules and the Grafana proxy assume the monitoring services
+        # exist in prod; without this profile no alert ever fires.
+        if ! grep -Eq '^COMPOSE_PROFILES=.*observability' "$ENV_FILE"; then
+            fail "prod env must set COMPOSE_PROFILES=observability"
+        fi
         public_channel="$(grep -E '^TELEGRAM_CHANNEL_ID=' "$ENV_FILE" | tail -n1 | cut -d= -f2-)"
         alerts_channel="$(grep -E '^TELEGRAM_ALERTS_CHAT_ID=' "$ENV_FILE" | tail -n1 | cut -d= -f2-)"
         if [[ -n "$public_channel" && "$public_channel" == "$alerts_channel" ]]; then

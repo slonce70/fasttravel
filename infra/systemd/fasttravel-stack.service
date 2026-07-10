@@ -20,7 +20,11 @@ Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/opt/fasttravel
 EnvironmentFile=-/opt/fasttravel/.env
-ExecStartPre=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+# `-` prefix: pull failures are non-fatal. root has no GHCR login (deploys
+# authenticate with an ephemeral GITHUB_TOKEN under the deploy user), and a
+# reboot without network/registry access must still start the stack from the
+# locally cached images pinned in .env.
+ExecStartPre=-/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
 ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 TimeoutStartSec=300

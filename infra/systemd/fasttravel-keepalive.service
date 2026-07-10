@@ -16,11 +16,13 @@ Requires=fasttravel-stack.service
 Type=oneshot
 WorkingDirectory=/opt/fasttravel
 EnvironmentFile=-/opt/fasttravel/.env
-# Touches the heartbeat table; expected to exist after migration `001_init.sql`.
-# Falls back to a no-op if the table is missing so it doesn't spam the journal.
+# Touches the heartbeats table (created by migration 024) and prunes rows
+# older than 7 days so it never grows. ON_ERROR_STOP=1 on purpose: if the
+# insert fails the unit must go red in journalctl/systemctl — a silently
+# failing keepalive is exactly the bug this once had.
 ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T postgres \
-  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0 -c \
-  "INSERT INTO heartbeats(observed_at, source) VALUES (NOW(), 'systemd-keepalive') ON CONFLICT DO NOTHING;"
+  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c \
+  "INSERT INTO heartbeats(observed_at, source) VALUES (NOW(), 'systemd-keepalive'); DELETE FROM heartbeats WHERE observed_at < NOW() - INTERVAL '7 days';"
 TimeoutStartSec=60
 StandardOutput=journal
 StandardError=journal

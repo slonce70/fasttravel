@@ -89,6 +89,11 @@ jobs:
       - name: Checkout
         if: steps.gate.outputs.skip != 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # workflow_run executes in the context of the latest default-branch
+          # commit, which can be NEWER than the commit CI validated. Pin the
+          # checkout (and therefore the built images) to the CI-validated sha.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set up Docker Buildx
         if: steps.gate.outputs.skip != 'true'
@@ -105,12 +110,17 @@ jobs:
       - name: Compute image tags
         if: steps.gate.outputs.skip != 'true'
         id: tags
+        env:
+          # Same sha the checkout step pinned — NOT GITHUB_SHA, which under
+          # workflow_run points at the latest default-branch commit.
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           # Lowercase the prefix — GHCR requires it.
           PREFIX=$(echo "${IMAGE_PREFIX}" | tr '[:upper:]' '[:lower:]')
-          SHA="${GITHUB_SHA::7}"
+          SHA="${DEPLOY_SHA::7}"
           echo "prefix=${PREFIX}" >> "$GITHUB_OUTPUT"
           echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "full_sha=${DEPLOY_SHA}" >> "$GITHUB_OUTPUT"
 
       # Audit 4.2 Medium ":latest tags pushed alongside sha-<short>" —
       # the `:latest` floating tag defeats image-pin rollback (operator
@@ -207,9 +217,14 @@ jobs:
           export API_IMAGE="${{ steps.tags.outputs.prefix }}-api:${{ steps.tags.outputs.sha }}"
           export BOT_IMAGE="${{ steps.tags.outputs.prefix }}-bot:${{ steps.tags.outputs.sha }}"
           export SCHEDULER_IMAGE="${{ steps.tags.outputs.prefix }}-scheduler:${{ steps.tags.outputs.sha }}"
+          DEPLOY_SHA='${{ steps.tags.outputs.full_sha }}'
 
-          echo "==> git pull"
-          git pull --ff-only origin main
+          # Checkout the exact commit the images were built from — `git pull
+          # origin main` could grab newer compose/nginx/migration files than
+          # the code inside the images (config/image skew).
+          echo "==> git checkout ${DEPLOY_SHA}"
+          git fetch origin main
+          git checkout -B main "${DEPLOY_SHA}"
 
           echo "==> docker login ghcr.io"
           printf '%s' "${GHCR_PULL_TOKEN}" | docker login ghcr.io \
@@ -247,6 +262,26 @@ jobs:
 
           echo "==> production preflight"
           STRICT_ENV=1 ./infra/scripts/production-preflight.sh
+
+          # Persist the deployed image tags ONLY after health + preflight
+          # passed. The systemd unit (reboot) and the cloud-init healthcheck
+          # cron re-run `compose up` from .env: without this they silently
+          # roll services back to whatever tag an operator wrote there last
+          # (old code against newly applied migrations). Persisting last is
+          # deliberate — a failed deploy leaves .env on the previous good
+          # tags, so a reboot rolls back instead of resurrecting the failure.
+          echo "==> persist image tags to .env"
+          persist_env_var() {
+            local key="$1" value="$2"
+            if grep -q "^${key}=" .env; then
+              sed -i "s|^${key}=.*|${key}=${value}|" .env
+            else
+              printf '%s=%s\n' "${key}" "${value}" >> .env
+            fi
+          }
+          persist_env_var API_IMAGE "${API_IMAGE}"
+          persist_env_var BOT_IMAGE "${BOT_IMAGE}"
+          persist_env_var SCHEDULER_IMAGE "${SCHEDULER_IMAGE}"
           REMOTE
 
       - name: Notify on failure (optional webhook)
