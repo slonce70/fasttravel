@@ -169,9 +169,10 @@ services:
       REDIS_URL: redis://redis:6379/0
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
-      # Daily «Найдешевші тури» channel digest — owner-enabled 2026-06-03.
-      # Override with FT_CHEAPEST_DIGEST_ENABLED=false to turn the digest off.
-      FT_CHEAPEST_DIGEST_ENABLED: ${FT_CHEAPEST_DIGEST_ENABLED:-true}
+      # Daily «Найдешевші тури» channel digest — owner-enabled 2026-06-03 via
+      # FT_CHEAPEST_DIGEST_ENABLED=true in .env (see .env.example). The compose
+      # fallback stays false to match the code default (post_cheapest_digest.py).
+      FT_CHEAPEST_DIGEST_ENABLED: ${FT_CHEAPEST_DIGEST_ENABLED:-false}
     depends_on:
       postgres:
         condition: service_healthy

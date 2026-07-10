@@ -104,6 +104,28 @@ groups:
             repeated 403/429 responses. Check scheduler logs before
             retrying manually.
 
+      - alert: FarvaterSchemaDrift
+        # canary_farvater_schema runs once a day at 05:00 Kyiv and never
+        # raises (JOB_RUNS stays outcome="success"), so this counter is
+        # the only Prometheus-visible drift signal. Any failed probe in
+        # the last 25h (one daily cycle + headroom) means the upstream
+        # response shape drifted or the canary could not verify it —
+        # either way the parser-driven ingest is at risk.
+        expr: |
+          increase(fasttravel_canary_schema_failures_total[25h]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: data
+        annotations:
+          summary: "Farvater schema canary failed ({{ $labels.endpoint }}: {{ $labels.reason }})"
+          description: |
+            The daily schema canary reported {{ $labels.reason }} for the
+            farvater {{ $labels.endpoint }} endpoint. Check scheduler logs
+            for `canary.summary` and compare the live response against the
+            required paths in
+            apps/scheduler/src/jobs/canary_farvater_schema.py.
+
       - alert: RefreshQueueBacklog
         expr: |
           fasttravel_refresh_queue_depth > 1000

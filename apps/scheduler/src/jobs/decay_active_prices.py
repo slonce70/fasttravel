@@ -57,8 +57,10 @@ async def _record_run(started_at: datetime, status: str, rows: int, error: str =
 async def decay_active_prices() -> int:
     """Demote stale `has_active_prices=TRUE` rows to FALSE.
 
-    Returns rows demoted. Never raises — the scheduler depends on the
-    daily decay running even when the DB itself wobbles.
+    Returns rows demoted. Raises on failure — after recording the
+    scrape_runs row — so `track_job_metrics` counts outcome="failure"
+    instead of masking a broken decay as success. A raising APScheduler
+    job does not affect other scheduled jobs.
     """
     started_at = datetime.now(UTC)
     threshold = _stale_after_days()
@@ -67,10 +69,10 @@ async def decay_active_prices() -> int:
         async with async_session_factory() as db:
             demoted = await price_state.decay_active_prices(db, threshold)
             await db.commit()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.exception("decay_active_prices.failed", error=str(exc))
         await _record_run(started_at, "failed", 0, str(exc))
-        return 0
+        raise
 
     await _record_run(started_at, "success", demoted)
     log.info("decay_active_prices.done", demoted=demoted, threshold_days=threshold)

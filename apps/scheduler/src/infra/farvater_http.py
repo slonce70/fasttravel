@@ -216,11 +216,15 @@ class FarvaterProdClient:
         request_headers.setdefault("Accept", GET_ACCEPT)
         async with self._semaphore:
             assert self._client is not None, "Use as async context manager"
+            # httpx treats an explicit per-request timeout=None as "disable
+            # all timeouts", not "use the client default" — forward the
+            # sentinel instead so the client-level timeout keeps applying
+            # when callers don't override it.
             response = await self._client.get(
                 url,
                 params=params,
                 headers=request_headers,
-                timeout=timeout,
+                timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT,
             )
 
         if response.status_code in (429, 403):

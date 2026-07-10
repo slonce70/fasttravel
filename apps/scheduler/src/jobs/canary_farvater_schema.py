@@ -9,8 +9,9 @@ won't know until they notice "rows written" trending to zero.
 This canary fires once a day, sends one minimal probe to each
 endpoint, and validates the response shape against a fixed schema
 derived from the May 2026 HAR snapshot. Any mismatch logs at ERROR,
-increments a Prometheus counter, and writes a `failed` row to
-scrape_runs so the SnapshotJobFailed alert family covers it.
+increments the `fasttravel_canary_schema_failures_total` counter (the
+`FarvaterSchemaDrift` alert rule fires on any increase), and writes a
+`failed` row to scrape_runs.
 
 Pure shape check — no business-data assertions. A change in
 `isHot=true|false` ratios doesn't trigger; an `isHot` field that
@@ -109,6 +110,19 @@ _STATIC_TOURS_REQUIRED_PATHS = [
 ]
 
 
+def _record_probe_failure(endpoint: str, reason: str) -> None:
+    """Export the drift signal — the `FarvaterSchemaDrift` alert rule
+    fires on any increase of this counter. The canary intentionally
+    never raises, so JOB_RUNS stays outcome="success"; this counter is
+    the only Prometheus-visible failure signal."""
+    try:
+        from src.infra.metrics import CANARY_SCHEMA_FAILURES
+
+        CANARY_SCHEMA_FAILURES.labels(endpoint=endpoint, reason=reason).inc()
+    except Exception:  # noqa: BLE001 — metrics must never crash the canary
+        log.exception("canary.metric_failed")
+
+
 async def _probe_calendar(client: FarvaterProdClient) -> tuple[bool, list[str]]:
     """Returns (ok, missing_paths)."""
     check_in = date.today() + timedelta(days=14)
@@ -130,11 +144,13 @@ async def _probe_calendar(client: FarvaterProdClient) -> tuple[bool, list[str]]:
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("canary.calendar.fetch_failed", error=str(exc))
+        _record_probe_failure("calendar", "fetch_failed")
         return False, [f"fetch_failed: {exc!s}"]
 
     missing = _missing_paths(payload, _CALENDAR_REQUIRED_PATHS)
     if missing:
         log.error("canary.calendar.schema_mismatch", missing=missing)
+        _record_probe_failure("calendar", "schema_mismatch")
         return False, missing
     return True, []
 
@@ -158,11 +174,13 @@ async def _probe_static_tours(client: FarvaterProdClient) -> tuple[bool, list[st
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("canary.static_tours.fetch_failed", error=str(exc))
+        _record_probe_failure("static_tours", "fetch_failed")
         return False, [f"fetch_failed: {exc!s}"]
 
     missing = _missing_paths(payload, _STATIC_TOURS_REQUIRED_PATHS)
     if missing:
         log.error("canary.static_tours.schema_mismatch", missing=missing)
+        _record_probe_failure("static_tours", "schema_mismatch")
         return False, missing
     return True, []
 
@@ -201,6 +219,7 @@ async def canary_farvater_schema() -> int:
                 errors.append(f"static_tours: {','.join(st_missing)}")
     except Exception as exc:  # noqa: BLE001
         log.exception("canary.failed", error=str(exc))
+        _record_probe_failure("all", "internal_error")
         await _record_run(started_at, "failed", f"outer: {exc!s}")
         return 1
 

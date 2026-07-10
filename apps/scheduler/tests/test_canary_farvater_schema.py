@@ -7,10 +7,17 @@ HTTP and DB sides are stubbed out so this runs without docker.
 from __future__ import annotations
 
 import importlib
+from unittest.mock import AsyncMock, MagicMock
+
+from src.infra.metrics import CANARY_SCHEMA_FAILURES
 
 # Same trick as test_static_tours_sweep — `from src.jobs import
 # canary_farvater_schema` resolves to the FUNCTION, not the module.
 canary = importlib.import_module("src.jobs.canary_farvater_schema")
+
+
+def _drift_counter(endpoint: str, reason: str) -> float:
+    return CANARY_SCHEMA_FAILURES.labels(endpoint=endpoint, reason=reason)._value.get()  # noqa: SLF001
 
 
 def test_missing_paths_returns_empty_when_all_present() -> None:
@@ -143,3 +150,79 @@ def test_static_tours_paths_catch_dropped_ishot() -> None:
     }
     missing = canary._missing_paths(broken, canary._STATIC_TOURS_REQUIRED_PATHS)
     assert "data.tourPackage.tours[0].isHot" in missing
+
+
+# ── Prometheus drift signal ─────────────────────────────────────────────
+# The canary never raises (JOB_RUNS stays outcome="success"), so the
+# fasttravel_canary_schema_failures_total counter is the only metric
+# Prometheus can alert on — FarvaterSchemaDrift fires on any increase.
+
+
+async def test_probe_calendar_mismatch_increments_drift_counter() -> None:
+    client = MagicMock()
+    client.post_json = AsyncMock(return_value={"statusCode": 200, "data": {}})
+
+    before = _drift_counter("calendar", "schema_mismatch")
+    ok, missing = await canary._probe_calendar(client)
+
+    assert not ok
+    assert missing
+    assert _drift_counter("calendar", "schema_mismatch") == before + 1
+
+
+async def test_probe_static_tours_fetch_failure_increments_drift_counter() -> None:
+    client = MagicMock()
+    client.post_json = AsyncMock(side_effect=RuntimeError("cloudflare 403"))
+
+    before = _drift_counter("static_tours", "fetch_failed")
+    ok, missing = await canary._probe_static_tours(client)
+
+    assert not ok
+    assert _drift_counter("static_tours", "fetch_failed") == before + 1
+
+
+async def test_canary_mismatch_returns_nonzero_without_raising(
+    monkeypatch,
+) -> None:
+    """Full-job path: a schema mismatch keeps the never-raises contract
+    (return != 0), records a failed scrape_run, and leaves the drift
+    counter incremented for Prometheus."""
+    monkeypatch.setattr(canary, "_record_run", AsyncMock())
+    monkeypatch.setattr(canary, "get_redis", MagicMock(return_value=MagicMock()))
+
+    class _FakeClient:
+        post_json = AsyncMock(return_value={"statusCode": 200, "data": {}})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+    monkeypatch.setattr(canary, "FarvaterProdClient", lambda _r: _FakeClient())
+
+    cal_before = _drift_counter("calendar", "schema_mismatch")
+    st_before = _drift_counter("static_tours", "schema_mismatch")
+
+    result = await canary.canary_farvater_schema()
+
+    assert result == 2  # both endpoints mismatched
+    canary._record_run.assert_awaited_once()
+    assert canary._record_run.await_args.args[1] == "failed"
+    assert _drift_counter("calendar", "schema_mismatch") == cal_before + 1
+    assert _drift_counter("static_tours", "schema_mismatch") == st_before + 1
+
+
+async def test_canary_internal_error_increments_drift_counter(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(canary, "_record_run", AsyncMock())
+    monkeypatch.setattr(
+        canary, "get_redis", MagicMock(side_effect=RuntimeError("redis down"))
+    )
+
+    before = _drift_counter("all", "internal_error")
+    result = await canary.canary_farvater_schema()
+
+    assert result == 1
+    assert _drift_counter("all", "internal_error") == before + 1

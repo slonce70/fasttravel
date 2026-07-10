@@ -32,6 +32,16 @@ class PriceRow:
 
 _DbConflictKey = tuple[date, int, str, str]
 
+# Serializes concurrent price writers (refresh worker vs scheduled snapshots)
+# per hotel. The unique index on price_observations includes observed_at, and
+# each writer stamps its own datetime.now(UTC), so ON CONFLICT never fires
+# across writers — the 12h dedup below is a non-atomic SELECT-then-INSERT.
+# The xact-scoped lock is held until the caller commits, so the losing writer
+# re-reads the window only after the winner's rows are visible.
+_HOTEL_PRICE_LOCK_SQL = text(
+    "SELECT pg_advisory_xact_lock(hashtext('price_obs:' || CAST(:h AS text)))"
+)
+
 
 def _db_conflict_key(row: PriceRow) -> _DbConflictKey:
     return (row.check_in, row.nights, row.meal_plan, row.room_category or "")
@@ -84,6 +94,7 @@ async def insert_prices(
 ) -> int:
     if not rows:
         return 0
+    await db.execute(_HOTEL_PRICE_LOCK_SQL, {"h": hotel_db_id})
     existing = await dedup_existing(db, hotel_db_id, operator_id)
     new_rows = [
         r

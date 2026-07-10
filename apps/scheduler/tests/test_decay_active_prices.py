@@ -2,8 +2,8 @@
 
 The behaviour we lock in:
 
-  1. Decay never raises — the scheduler depends on the daily tick
-     running even when the underlying SQL errors.
+  1. Failures propagate — track_job_metrics must record
+     outcome="failure" instead of counting a broken decay as success.
   2. scrape_runs gets a row even on failure (so dashboards see it).
   3. The configurable threshold via env DECAY_STALE_AFTER_DAYS is
      respected — defaults to 7 days, matches the inline behaviour
@@ -84,11 +84,11 @@ async def test_decay_falls_back_on_bad_env(
     assert args[1] == {"d": 7}
 
 
-async def test_decay_never_raises_on_db_error(
+async def test_decay_raises_on_db_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Contract: scheduler must never see an exception from the daily
-    decay tick."""
+    """Contract: failures propagate so track_job_metrics records
+    outcome="failure" — the wrapper only sees failures via exceptions."""
 
     class _BadFactory:
         async def __aenter__(self):
@@ -100,12 +100,11 @@ async def test_decay_never_raises_on_db_error(
     monkeypatch.setattr(sut, "async_session_factory", lambda: _BadFactory())
     monkeypatch.setattr(sut, "_record_run", AsyncMock())
 
-    # Must not raise.
-    result = await sut.decay_active_prices()
-    assert result == 0
+    with pytest.raises(RuntimeError, match="postgres unreachable"):
+        await sut.decay_active_prices()
 
 
-async def test_decay_records_failure(
+async def test_decay_records_failure_before_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _BadFactory:
@@ -119,7 +118,8 @@ async def test_decay_records_failure(
     record_mock = AsyncMock()
     monkeypatch.setattr(sut, "_record_run", record_mock)
 
-    await sut.decay_active_prices()
+    with pytest.raises(RuntimeError, match="boom"):
+        await sut.decay_active_prices()
     record_mock.assert_awaited_once()
     args = record_mock.await_args.args
     assert args[1] == "failed"  # status

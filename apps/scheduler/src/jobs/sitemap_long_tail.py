@@ -45,6 +45,7 @@ from src.clients.farvater_runtime import (
     open_farvater_client,
 )
 from src.infra.db import async_session_factory
+from src.infra.job_lock import try_job_lock
 from src.infra.logging import get_logger
 from src.services.hotel_upsert import (
     country_dest_id,
@@ -80,6 +81,15 @@ PER_HOTEL_TIMEOUT_S = float(os.environ.get("FT_SITEMAP_HOTEL_TIMEOUT_S", "90.0")
 # snapshot_farvater's current one-request product window.
 PROBE_OFFSETS = CHECK_IN_OFFSETS_DAYS
 SCRAPE_SOURCE = "catalog_sitemap"
+
+# Cross-run mutex. The ingest is registered under three APScheduler job
+# ids (weekly Sun 02:00, optional startup one-shot, daily 04:45 fallback)
+# plus the CLI wrapper; max_instances=1 only dedupes within one job id,
+# so without this lock two full ~1-2h passes can overlap and double the
+# load on farvater. The lock TTL is renewed while the run is alive, so
+# it survives multi-hour passes yet frees within one TTL after a crash.
+_INGEST_LOCK_KEY = "scheduler:sitemap_long_tail:lock"
+_INGEST_LOCK_TTL_S = 15 * 60
 
 _ALREADY_INGESTED_SQL = text(
     """SELECT canonical_slug
@@ -194,6 +204,14 @@ async def sitemap_long_tail_ingest(cap: int | None = None) -> int:
 
 
 async def main(cap: int | None) -> int:
+    async with try_job_lock(_INGEST_LOCK_KEY, ttl_s=_INGEST_LOCK_TTL_S) as acquired:
+        if not acquired:
+            log.info("sitemap.skipped", reason="already_running")
+            return 0
+        return await _main_locked(cap)
+
+
+async def _main_locked(cap: int | None) -> int:
     started_at = datetime.now(UTC)
     iso_filter = {iso2 for _, iso2 in CATALOG_COUNTRIES}
 

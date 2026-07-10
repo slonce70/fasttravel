@@ -261,6 +261,7 @@ async def static_tours_sweep(
 
     redis = get_redis()
     total_rows = 0
+    succeeded_pairs = 0
     errors: list[str] = []
 
     try:
@@ -304,6 +305,7 @@ async def static_tours_sweep(
                     errors.append(f"{bucket}/{country_id}: {exc!s}")
                     continue
 
+                succeeded_pairs += 1
                 if not tours:
                     log.info(
                         "static_tours_sweep.bucket_empty",
@@ -349,7 +351,7 @@ async def static_tours_sweep(
                     resolved=len(mapping),
                     inserted=inserted,
                 )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.exception("static_tours_sweep.failed")
         async with async_session_factory() as db:
             await _record_sweep_run(
@@ -361,9 +363,20 @@ async def static_tours_sweep(
                 error=str(exc),
             )
             await db.commit()
-        return total_rows
+        # Re-raise so track_job_metrics counts outcome="failure" — a
+        # crashed sweep must not show up as a successful run.
+        raise
 
-    status = "success" if not errors else "partial"
+    # A sweep where every attempted pair failed is a full failure, not
+    # a partial one — raise below so JOB_RUNS sees outcome="failure".
+    if errors and succeeded_pairs == 0:
+        status = "failed"
+    elif errors:
+        status = "partial"
+    else:
+        status = "success"
+
+    error_text = "; ".join(errors)[:500]
     async with async_session_factory() as db:
         await _record_sweep_run(
             db,
@@ -371,20 +384,26 @@ async def static_tours_sweep(
             started_at=started_at,
             status=status,
             rows_inserted=total_rows,
-            error="; ".join(errors)[:500],
+            error=error_text,
         )
         await db.commit()
 
-    # Stamp the staleness gauge so the StaleSnapshot alert family
-    # covers this job too.
-    try:
-        import time as _time
+    if status == "failed":
+        raise RuntimeError(f"static_tours_sweep: all pairs failed: {error_text}")
 
-        from src.infra.metrics import LAST_SUCCESSFUL_SNAPSHOT
+    # Stamp the staleness gauge so the StaleSnapshot alert family covers
+    # this job too. Set ONLY on success — partial runs must not refresh
+    # it, matching snapshot_farvater's contract and the bootstrap query
+    # that re-seeds this gauge from status='success' rows only.
+    if status == "success":
+        try:
+            import time as _time
 
-        LAST_SUCCESSFUL_SNAPSHOT.labels(scheduled_job="static_tours_sweep").set(_time.time())
-    except Exception:  # noqa: BLE001
-        log.exception("static_tours_sweep.metrics_set_failed")
+            from src.infra.metrics import LAST_SUCCESSFUL_SNAPSHOT
+
+            LAST_SUCCESSFUL_SNAPSHOT.labels(scheduled_job="static_tours_sweep").set(_time.time())
+        except Exception:  # noqa: BLE001
+            log.exception("static_tours_sweep.metrics_set_failed")
 
     log.info(
         "static_tours_sweep.done",

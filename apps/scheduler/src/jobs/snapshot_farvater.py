@@ -99,10 +99,44 @@ CHECK_IN_OFFSETS_DAYS = farvater_runtime.CHECK_IN_OFFSETS_DAYS
 USER_AGENT = (
     "FastTravel-Bot/1.0 (+https://fasttravel.com.ua/about; snapshot 2x/day; respects robots.txt)"
 )
-PER_REQUEST_DELAY_S = float(os.environ.get("FT_FARVATER_REQUEST_DELAY_S", "0.0"))
-CONCURRENCY = int(os.environ.get("FT_FARVATER_CONCURRENCY", "3"))
+
+
+def _env_int(name: str, default: int) -> int:
+    """Parse an int env tunable, falling back to `default` on empty or
+    malformed values. These run at import time (before Sentry / metrics
+    init), so a bare int('') would crash-loop the whole scheduler."""
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        log.warning("farvater.snapshot.bad_env_tunable", var=name, raw=raw, fallback=default)
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    """Float twin of `_env_int` — same import-time safety rationale."""
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        log.warning("farvater.snapshot.bad_env_tunable", var=name, raw=raw, fallback=default)
+        return default
+
+
+PER_REQUEST_DELAY_S = _env_float("FT_FARVATER_REQUEST_DELAY_S", 0.0)
+CONCURRENCY = _env_int("FT_FARVATER_CONCURRENCY", 3)
 DEDUP_WINDOW_HOURS = 12
 DEFAULT_MAX_HOTELS_PER_COUNTRY: int | None = None
+# A run stays "success" (and stamps the staleness gauge) when at most this
+# fraction of hotel tasks failed. At ~600 hotels × ~7 upstream requests per
+# run a fully clean pass is statistically rare; treating one transient error
+# as a failed run would freeze the StaleSnapshot gauge and turn the critical
+# alert into permanent noise.
+HOTEL_ERROR_RATE_THRESHOLD = 0.05
 
 
 async def _record_run(
@@ -309,11 +343,22 @@ async def snapshot_farvater(
             chunk = 200
             partial_due_to_budget = False
             hotel_task_errors = 0
+            hotel_tasks_attempted = 0
+            error_type_counts: dict[str, int] = {}
+            error_samples: list[str] = []
             for i in range(0, len(tasks), chunk):
                 results = await asyncio.gather(*tasks[i : i + chunk], return_exceptions=True)
                 inserted = sum(r for r in results if isinstance(r, int))
-                errors = sum(1 for r in results if isinstance(r, Exception))
+                errors = 0
+                for r in results:
+                    if isinstance(r, Exception):
+                        errors += 1
+                        name = type(r).__name__
+                        error_type_counts[name] = error_type_counts.get(name, 0) + 1
+                        if len(error_samples) < 3:
+                            error_samples.append(repr(r))
                 hotel_task_errors += errors
+                hotel_tasks_attempted += len(results)
                 total_inserted += inserted
                 log.info(
                     "farvater.snapshot.progress",
@@ -345,10 +390,27 @@ async def snapshot_farvater(
                     partial_due_to_budget = True
                     break
 
+        # One aggregate line instead of ~600 per-exception ones: counters by
+        # exception type plus a few samples, so a mass DB-write failure is
+        # diagnosable from logs (HTTP-path failures are already logged by
+        # the clients, but write-path exceptions surface only here).
+        hotel_error_rate = hotel_task_errors / hotel_tasks_attempted if hotel_tasks_attempted else 0.0
+        if hotel_task_errors:
+            log.warning(
+                "farvater.snapshot.hotel_task_errors",
+                total=hotel_task_errors,
+                attempted=hotel_tasks_attempted,
+                error_rate=round(hotel_error_rate, 4),
+                by_type=error_type_counts,
+                samples=error_samples,
+            )
+
         # Skip MV refresh on partial snapshots — incomplete data would
         # make the MVs reflect a subset of the catalog. The hourly
         # refresh_views job (:05) picks up the slack on the next tick.
-        partial_due_to_errors = hotel_task_errors > 0
+        # Errors below HOTEL_ERROR_RATE_THRESHOLD don't count as partial —
+        # see the constant's comment for the chronic-false-page rationale.
+        partial_due_to_errors = hotel_error_rate > HOTEL_ERROR_RATE_THRESHOLD
         if not partial_due_to_budget and not partial_due_to_errors:
             await refresh_price_views(log_prefix="farvater.snapshot")
         else:
@@ -391,8 +453,12 @@ async def snapshot_farvater(
         run_errors: list[str] = []
         if partial_due_to_budget:
             run_errors.append(f"wall_clock_budget_exhausted ({max_runtime_minutes}m)")
-        if partial_due_to_errors:
-            run_errors.append(f"hotel_task_errors={hotel_task_errors}")
+        if hotel_task_errors:
+            # Recorded even on threshold-tolerated 'success' runs so
+            # dashboards keep seeing the error count.
+            run_errors.append(
+                f"hotel_task_errors={hotel_task_errors} (sample: {error_samples[0]})"
+            )
         run_error = "; ".join(run_errors)
         async with async_session_factory() as db:
             await _record_run(
@@ -405,9 +471,13 @@ async def snapshot_farvater(
             )
             await db.commit()
         # Stamp the per-job staleness gauge so Prometheus can alert when
-        # a snapshot is overdue. Set ONLY on success; failures leave the
-        # last successful timestamp in place, which is what the alert
-        # rule (`StaleSnapshot`) actually wants.
+        # a snapshot is overdue. Set ONLY on success (which tolerates an
+        # error rate up to HOTEL_ERROR_RATE_THRESHOLD); failed/partial runs
+        # leave the last successful timestamp in place, which is what the
+        # alert rule (`StaleSnapshot`) actually wants. Keeping the gauge
+        # tied to status='success' also keeps it aligned with
+        # bootstrap_last_successful_snapshots, which re-seeds the gauge
+        # from scrape_runs rows WHERE status = 'success' after restart.
         if run_status == "success":
             try:
                 from src.infra.metrics import LAST_SUCCESSFUL_SNAPSHOT

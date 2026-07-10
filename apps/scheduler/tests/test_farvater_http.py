@@ -125,6 +125,24 @@ async def test_get_returns_response_for_legacy_callers(
     )
 
 
+async def test_get_without_timeout_uses_client_default(
+    redis: FakeRedis, fast_config: ProdTierConfig
+) -> None:
+    """Passing timeout=None to httpx disables ALL timeouts (Timeout(None));
+    the wrapper must forward USE_CLIENT_DEFAULT so the client-level timeout
+    keeps protecting hotel-page fetches that never set one explicitly."""
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = 200
+    resp.text = "<html>ok</html>"
+    resp.raise_for_status = MagicMock()
+
+    async with FarvaterProdClient(redis, fast_config) as client:
+        with patch.object(client._client, "get", AsyncMock(return_value=resp)) as get:
+            await client.get_text("https://farvater.travel/hotel")
+
+    assert get.await_args.kwargs["timeout"] is httpx.USE_CLIENT_DEFAULT
+
+
 async def test_success_clears_consecutive_bad_counter(
     redis: FakeRedis, fast_config: ProdTierConfig
 ) -> None:

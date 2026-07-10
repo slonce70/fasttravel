@@ -15,8 +15,9 @@ Historical ``detection_method`` values such as ``percentile`` and
 job no longer schedules those legacy peer/history SQL branches.
 
 Idempotency: a per-hotel cooldown suppresses repeat detections within the
-configured window, and the daily natural-key constraint is handled with
-``ON CONFLICT DO NOTHING`` so re-running this job is safe.
+configured window, a natural-key anti-join drops already-detected deals before
+they can occupy country-cap/LIMIT slots, and any residual insert race is
+absorbed by ``ON CONFLICT DO NOTHING`` so re-running this job is safe.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from shared.deal_detection import DATE_DIP_POLICY, date_dip_local_v_cte_sql
 from shared.deal_signals import metric_detection_method_for_reason
 from src.infra.db import async_session_factory
 from src.infra.logging import get_logger
+from src.jobs.post_deals import MIN_BROADCAST_DISCOUNT_PCT
 
 # Inserted-deal tuple: (deal_id, hotel_id, discount_pct). Hoisted into
 # a type alias because the strategy runners + record helper all use it.
@@ -112,6 +114,19 @@ _DATE_DIP_SQL = text(
                   WHERE d.hotel_id = cand.hotel_id
                     AND d.detected_at >= NOW() - make_interval(hours => :cooldown_hours)
               )
+              -- Natural-key anti-join (uq_deals_natural_key is date-free since
+              -- migration 023): a persistent dip already stored in `deals` would
+              -- only hit ON CONFLICT DO NOTHING, so drop it here before it burns
+              -- a country-cap/LIMIT slot that a genuinely new deal needs.
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM deals d
+                  WHERE d.hotel_id = cand.hotel_id
+                    AND d.check_in = cand.check_in
+                    AND d.nights = cand.nights
+                    AND d.meal_plan = cand.meal_plan
+                    AND d.detection_method = 'calendar_anomaly'
+              )
             ORDER BY cand.hotel_id, cand.discount_pct DESC
         ) per_hotel
     ) ranked
@@ -131,47 +146,72 @@ _PROMO_DISCOUNT_SQL = text(
         price_uah, baseline_p50, discount_pct, deep_link,
         source, detection_method
     )
-    SELECT DISTINCT ON (cand.hotel_id)
-        cand.hotel_id,
-        cand.operator_id,
-        cand.check_in,
-        cand.nights,
-        cand.meal_plan,
-        cand.price_uah,
-        cand.red_price_uah AS baseline_p50,
-        cand.discount_pct,
-        cand.deep_link,
-        'farvater_scrape',
-        'promo_discount'
+    SELECT
+        hotel_id, operator_id, check_in, nights, meal_plan,
+        price_uah, baseline_p50, discount_pct, deep_link,
+        source, detection_method
     FROM (
-        SELECT
-            po.hotel_id,
-            po.operator_id,
-            po.check_in,
-            po.nights,
-            po.meal_plan,
-            po.price_uah,
-            po.red_price_uah,
-            ROUND(100 * (1 - po.price_uah::numeric / po.red_price_uah), 2)
-                AS discount_pct,
-            'https://farvater.travel/?q=' || po.system_key AS deep_link
-        FROM promo_offers po
-        WHERE po.observed_at >= NOW() - INTERVAL '24 hours'
-          AND po.red_price_uah IS NOT NULL
-          AND po.red_price_uah > po.price_uah
-          AND po.price_uah > 0
-          AND po.operator_id IS NOT NULL
-          AND po.check_in BETWEEN CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'
-                              AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'
-    ) cand
-    WHERE cand.discount_pct > 0
-      AND NOT EXISTS (
-          SELECT 1
-          FROM deals d
-          WHERE d.hotel_id = cand.hotel_id
-            AND d.detected_at >= NOW() - make_interval(hours => :cooldown_hours)
-      )
-    ORDER BY cand.hotel_id, cand.discount_pct DESC, cand.price_uah ASC
+        SELECT DISTINCT ON (cand.hotel_id)
+            cand.hotel_id,
+            cand.operator_id,
+            cand.check_in,
+            cand.nights,
+            cand.meal_plan,
+            cand.price_uah,
+            cand.red_price_uah AS baseline_p50,
+            cand.discount_pct,
+            cand.deep_link,
+            'farvater_scrape' AS source,
+            'promo_discount' AS detection_method
+        FROM (
+            SELECT
+                po.hotel_id,
+                po.operator_id,
+                po.check_in,
+                po.nights,
+                po.meal_plan,
+                po.price_uah,
+                po.red_price_uah,
+                ROUND(100 * (1 - po.price_uah::numeric / po.red_price_uah), 2)
+                    AS discount_pct,
+                'https://farvater.travel/?q=' || po.system_key AS deep_link
+            FROM promo_offers po
+            WHERE po.observed_at >= NOW() - INTERVAL '24 hours'
+              AND po.red_price_uah IS NOT NULL
+              AND po.red_price_uah > po.price_uah
+              AND po.price_uah > 0
+              AND po.operator_id IS NOT NULL
+              AND po.check_in BETWEEN CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_start_days} days'
+                                  AND CURRENT_DATE + INTERVAL '{DATE_DIP_POLICY.lookahead_end_days} days'
+        ) cand
+        -- Publication floor: both consumers (post_deals / notify_subscribers)
+        -- drop deals below MIN_BROADCAST_DISCOUNT_PCT, so a shallower promo
+        -- would never be published yet still arm the per-hotel cooldown.
+        WHERE cand.discount_pct >= :min_discount_pct
+          AND NOT EXISTS (
+              SELECT 1
+              FROM deals d
+              WHERE d.hotel_id = cand.hotel_id
+                AND d.detected_at >= NOW() - make_interval(hours => :cooldown_hours)
+          )
+          -- Natural-key anti-join, same rationale as in the date-dip query:
+          -- an already-stored promo must not burn a LIMIT slot only to hit
+          -- ON CONFLICT DO NOTHING.
+          AND NOT EXISTS (
+              SELECT 1
+              FROM deals d
+              WHERE d.hotel_id = cand.hotel_id
+                AND d.check_in = cand.check_in
+                AND d.nights = cand.nights
+                AND d.meal_plan = cand.meal_plan
+                AND d.detection_method = 'promo_discount'
+          )
+        ORDER BY cand.hotel_id, cand.discount_pct DESC, cand.price_uah ASC
+    ) per_hotel
+    -- DISTINCT ON forces hotel_id to lead the inner ORDER BY, so the LIMIT
+    -- budget is applied out here by discount depth (same two-level pattern
+    -- as the date-dip query) instead of by whichever hotels have low ids.
+    ORDER BY discount_pct DESC, hotel_id
     LIMIT :max_per_run
     ON CONFLICT DO NOTHING
     RETURNING id, hotel_id, discount_pct, detection_method
@@ -263,6 +303,7 @@ async def _run_promo_discount_query(
         {
             "cooldown_hours": cooldown_hours,
             "max_per_run": max_per_run,
+            "min_discount_pct": MIN_BROADCAST_DISCOUNT_PCT,
         },
     )
     rows = result.all()

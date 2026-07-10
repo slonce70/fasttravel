@@ -300,6 +300,20 @@ async def test_snapshot_uses_default_country_cap_when_env_missing(monkeypatch) -
     assert captured["max_per_country"] == DEFAULT_MAX_HOTELS_PER_COUNTRY
 
 
+class _FakeGauge:
+    """Stand-in for LAST_SUCCESSFUL_SNAPSHOT capturing stamp attempts."""
+
+    def __init__(self) -> None:
+        self.stamped: list[dict] = []
+
+    def labels(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.stamped.append(kwargs)
+        return self
+
+    def set(self, _value: float) -> None:
+        return None
+
+
 @pytest.mark.asyncio
 async def test_snapshot_marks_run_partial_when_hotel_tasks_error(monkeypatch) -> None:
     module = importlib.import_module("src.jobs.snapshot_farvater")
@@ -357,6 +371,9 @@ async def test_snapshot_marks_run_partial_when_hotel_tasks_error(monkeypatch) ->
     ):  # type: ignore[no-untyped-def]
         recorded.append((status, rows_inserted, error))
 
+    gauge = _FakeGauge()
+    metrics_module = importlib.import_module("src.infra.metrics")
+    monkeypatch.setattr(metrics_module, "LAST_SUCCESSFUL_SNAPSHOT", gauge)
     monkeypatch.setattr(module, "CATALOG_COUNTRIES", [("Turkey", "TR")])
     monkeypatch.setattr(module, "async_session_factory", lambda: _FakeSession())
     monkeypatch.setattr(module, "_ensure_operator", fake_ensure_operator)
@@ -370,8 +387,122 @@ async def test_snapshot_marks_run_partial_when_hotel_tasks_error(monkeypatch) ->
     inserted = await snapshot_farvater(max_hotels_per_country=2)
 
     assert inserted == 0
-    assert recorded == [("partial", 0, "hotel_task_errors=2")]
+    # 2 of 2 tasks failed — over the error-rate threshold, so partial,
+    # with an error sample recorded alongside the count.
+    assert len(recorded) == 1
+    status, rows, error = recorded[0]
+    assert status == "partial"
+    assert rows == 0
+    assert error.startswith("hotel_task_errors=2 (sample: RuntimeError(")
     assert refresh_calls == 0
+    # Partial runs must NOT advance the staleness gauge.
+    assert gauge.stamped == []
+
+
+@pytest.mark.asyncio
+async def test_snapshot_below_error_threshold_stays_success_and_stamps_gauge(
+    monkeypatch,
+) -> None:
+    """One failed hotel out of 40 (2.5% < 5% threshold) must not downgrade
+    the run: status stays 'success', MVs refresh, the StaleSnapshot gauge
+    advances, and the error count is still recorded in scrape_runs."""
+    module = importlib.import_module("src.jobs.snapshot_farvater")
+    recorded: list[tuple[str, int, str]] = []
+    refresh_calls = 0
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        async def commit(self) -> None:
+            return None
+
+        async def execute(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+            return SimpleNamespace(scalar=lambda: 0)
+
+    async def fake_ensure_operator(_db):  # type: ignore[no-untyped-def]
+        return 18
+
+    async def fake_refresh_targets(_db, _iso_filter, _max_per_country):  # type: ignore[no-untyped-def]
+        return [
+            (f"/uk/hotel/tr/hotel-{n}/", "TR", 100 + n, str(45000 + n)) for n in range(40)
+        ]
+
+    async def fake_country_dest_id(_db, _iso2):  # type: ignore[no-untyped-def]
+        return 7
+
+    async def fake_process_hotel(_client, path, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        if path == "/uk/hotel/tr/hotel-0/":
+            raise RuntimeError("one transient calendar flake")
+        return 3
+
+    async def fake_refresh_price_views(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        nonlocal refresh_calls
+        refresh_calls += 1
+        return {"current_prices": "concurrent", "hotel_calendar_prices": "concurrent"}
+
+    async def fake_record_run(
+        _db,
+        _operator_id,
+        status,
+        rows_inserted,
+        *,
+        error="",
+        started_at=None,
+    ):  # type: ignore[no-untyped-def]
+        recorded.append((status, rows_inserted, error))
+
+    gauge = _FakeGauge()
+    metrics_module = importlib.import_module("src.infra.metrics")
+    monkeypatch.setattr(metrics_module, "LAST_SUCCESSFUL_SNAPSHOT", gauge)
+    monkeypatch.setattr(module, "CATALOG_COUNTRIES", [("Turkey", "TR")])
+    monkeypatch.setattr(module, "async_session_factory", lambda: _FakeSession())
+    monkeypatch.setattr(module, "_ensure_operator", fake_ensure_operator)
+    monkeypatch.setattr(module, "_refresh_targets", fake_refresh_targets)
+    monkeypatch.setattr(module, "_country_dest_id", fake_country_dest_id)
+    monkeypatch.setattr(module, "_process_hotel", fake_process_hotel)
+    monkeypatch.setattr(module, "_http_client", lambda: _FakeClient())
+    monkeypatch.setattr(module, "refresh_price_views", fake_refresh_price_views)
+    monkeypatch.setattr(module, "_record_run", fake_record_run)
+
+    inserted = await snapshot_farvater(max_hotels_per_country=40)
+
+    assert inserted == 39 * 3
+    assert len(recorded) == 1
+    status, rows, error = recorded[0]
+    assert status == "success"
+    assert rows == 39 * 3
+    assert error.startswith("hotel_task_errors=1 (sample: RuntimeError(")
+    assert refresh_calls == 1
+    assert gauge.stamped == [{"scheduled_job": "snapshot_farvater"}]
+
+
+def test_env_tunables_fall_back_on_empty_or_malformed_values(monkeypatch) -> None:
+    """`FT_FARVATER_CONCURRENCY=` (name kept, value erased) or a garbage
+    value must not raise at import time — that would crash-loop the whole
+    scheduler before Sentry/metrics initialize."""
+    monkeypatch.setenv("FT_FARVATER_CONCURRENCY", "")
+    monkeypatch.setenv("FT_FARVATER_REQUEST_DELAY_S", "banana")
+
+    module = importlib.reload(importlib.import_module("src.jobs.snapshot_farvater"))
+
+    assert module.CONCURRENCY == 3
+    assert module.PER_REQUEST_DELAY_S == 0.0
+
+    # Restore module-level constants parsed from the clean environment.
+    monkeypatch.delenv("FT_FARVATER_CONCURRENCY", raising=False)
+    monkeypatch.delenv("FT_FARVATER_REQUEST_DELAY_S", raising=False)
+    importlib.reload(module)
 
 
 @pytest.mark.asyncio

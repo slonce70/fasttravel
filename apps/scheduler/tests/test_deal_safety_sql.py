@@ -125,6 +125,47 @@ def test_promo_discount_branch_requires_real_operator_strike_through() -> None:
     assert "'bucket_'" not in sql
 
 
+def test_promo_discount_branch_enforces_publication_floor() -> None:
+    """Promos below the broadcast floor are never published by post_deals or
+    notify_subscribers, yet would still arm the 24h per-hotel cooldown — so
+    they must not be inserted at all, and all three jobs must share one floor."""
+    sql = detect_deals._PROMO_DISCOUNT_SQL.text
+
+    assert "cand.discount_pct >= :min_discount_pct" in sql
+    assert "cand.discount_pct > 0" not in sql
+    assert detect_deals.MIN_BROADCAST_DISCOUNT_PCT == post_deals.MIN_BROADCAST_DISCOUNT_PCT
+    assert post_deals.MIN_BROADCAST_DISCOUNT_PCT == notify_subscribers.MIN_ALERT_DISCOUNT_PCT
+
+
+def test_promo_discount_budget_is_spent_by_discount_depth_not_hotel_id() -> None:
+    """LIMIT must apply to an outer ORDER BY discount_pct DESC (two-level
+    pattern, like the date-dip query); the hotel_id-led inner ORDER BY exists
+    only to satisfy DISTINCT ON and must not decide who gets budget slots."""
+    sql = detect_deals._PROMO_DISCOUNT_SQL.text
+
+    inner = sql.index("ORDER BY cand.hotel_id, cand.discount_pct DESC")
+    outer = sql.index("ORDER BY discount_pct DESC, hotel_id")
+    assert inner < outer < sql.index("LIMIT :max_per_run")
+
+
+def test_detectors_exclude_already_stored_deals_from_ranking() -> None:
+    """Natural-key anti-join: a persistent deal already present in `deals`
+    would only hit ON CONFLICT DO NOTHING, so it must be dropped before it
+    burns a country-cap/LIMIT slot that a genuinely new deal needs."""
+    for sql, method in (
+        (detect_deals._DATE_DIP_SQL.text, "'calendar_anomaly'"),
+        (detect_deals._PROMO_DISCOUNT_SQL.text, "'promo_discount'"),
+    ):
+        anti_join = (
+            "WHERE d.hotel_id = cand.hotel_id"
+            " AND d.check_in = cand.check_in"
+            " AND d.nights = cand.nights"
+            " AND d.meal_plan = cand.meal_plan"
+            f" AND d.detection_method = {method}"
+        )
+        assert anti_join in " ".join(sql.split())
+
+
 def test_date_dip_branch_detects_same_hotel_date_mispricing() -> None:
     """date_dip = one calendar date that is a genuine local V-bottom: cheaper
     than the surrounding dates of the same hotel/operator/nights/meal/room

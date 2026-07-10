@@ -145,6 +145,19 @@ FARVATER_BREAKER_TRIPS = Counter(
 )
 
 
+# Schema-canary drift signal. canary_farvater_schema increments this on
+# every failed probe; the `FarvaterSchemaDrift` alert rule fires on any
+# increase. Kept separate from JOB_RUNS because the canary never raises
+# (a mismatch is a *finding*, not a job crash) — without a dedicated
+# counter, drift would be invisible to Prometheus.
+CANARY_SCHEMA_FAILURES = Counter(
+    "fasttravel_canary_schema_failures_total",
+    "Failed farvater schema-canary probes, by endpoint + reason.",
+    labelnames=("endpoint", "reason"),
+    registry=REGISTRY,
+)
+
+
 # Wall-clock timestamp (unix seconds) of the last successful run per job.
 # Set via .set(time.time()) at the tail of each successful scrape job.
 # Used by Prometheus alert rules to fire `StaleSnapshot` and `StaleCatalog`

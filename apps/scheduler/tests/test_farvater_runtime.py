@@ -40,3 +40,21 @@ def test_prod_tier_config_http_concurrency_env_overrides_default(monkeypatch) ->
     config = runtime.prod_tier_config(default_concurrency=7)
 
     assert config.concurrency == 11
+
+
+def test_prod_tier_config_falls_back_on_empty_or_invalid_env(monkeypatch) -> None:
+    """An empty or non-numeric value in .env must not raise inside farvater
+    jobs — prod_tier_config is evaluated lazily on every job run, so a bare
+    int()/float() would fail every snapshot until the env is fixed."""
+    runtime = importlib.import_module("src.clients.farvater_runtime")
+    monkeypatch.setenv("FT_FARVATER_HTTP_CONCURRENCY", "many")
+    monkeypatch.setenv("FT_FARVATER_HTTP_MIN_INTERVAL_S", "")
+    monkeypatch.setenv("FT_FARVATER_DAILY_CAP", "")
+    monkeypatch.setenv("FT_FARVATER_HTTP_TIMEOUT_S", "30s")
+
+    config = runtime.prod_tier_config(default_concurrency=7)
+
+    assert config.concurrency == 7
+    assert config.min_interval_s == runtime.DEFAULT_MIN_INTERVAL_S
+    assert config.daily_cap == 0
+    assert config.timeout_s == 30.0

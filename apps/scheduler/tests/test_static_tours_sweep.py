@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.clients.static_tours import PromoTourRow
+from src.infra.metrics import LAST_SUCCESSFUL_SNAPSHOT
 
 # `import src.jobs.static_tours_sweep as sweep` resolves to the FUNCTION
 # (jobs/__init__ re-exports it as the same name), shadowing the
@@ -27,6 +28,10 @@ sweep = importlib.import_module("src.jobs.static_tours_sweep")
 def _enable_feature_flag(monkeypatch: pytest.MonkeyPatch) -> None:
     """All tests run with the flag ON unless explicitly cleared."""
     monkeypatch.setenv(sweep.FEATURE_FLAG_ENV, "1")
+
+
+def _staleness_gauge() -> float:
+    return LAST_SUCCESSFUL_SNAPSHOT.labels(scheduled_job="static_tours_sweep")._value.get()  # noqa: SLF001
 
 
 def _row(
@@ -124,6 +129,7 @@ async def test_happy_path_inserts_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sweep, "FarvaterProdClient", lambda _r: _FakeClient())
     monkeypatch.setattr(sweep, "fetch_bucket_all_pages", AsyncMock(return_value=tours))
 
+    gauge_before = _staleness_gauge()
     result = await sweep.static_tours_sweep(
         sweep_matrix=(("gorjashhie-tury", -1),),
     )
@@ -132,6 +138,8 @@ async def test_happy_path_inserts_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     assert insert_mock.await_count == 1
     call_kwargs = insert_mock.await_args.kwargs
     assert len(call_kwargs["tours"]) == 2
+    # Fully successful sweep stamps the staleness gauge.
+    assert _staleness_gauge() > gauge_before
 
 
 async def test_records_no_operator_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -196,9 +204,11 @@ async def test_unresolved_hotel_keys_are_dropped(
 # ── breaker / cap stop iteration ────────────────────────────────────────
 
 
-async def test_breaker_open_aborts_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the breaker fires mid-sweep, the rest of the matrix is skipped
-    AND a `partial`/`failed` row is recorded — not silently lost."""
+async def test_breaker_open_full_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the breaker aborts the sweep before any pair completed, the
+    run is a full failure: a `failed` row is recorded, the staleness
+    gauge is NOT stamped, and the job raises so track_job_metrics counts
+    outcome="failure" instead of success."""
     monkeypatch.setattr(sweep, "_farvater_operator_id", AsyncMock(return_value=42))
     record_mock = AsyncMock()
     monkeypatch.setattr(sweep, "_record_sweep_run", record_mock)
@@ -227,17 +237,68 @@ async def test_breaker_open_aborts_sweep(monkeypatch: pytest.MonkeyPatch) -> Non
         AsyncMock(side_effect=sweep.BreakerOpen("open for 3600s")),
     )
 
-    result = await sweep.static_tours_sweep(
-        sweep_matrix=(
-            ("gorjashhie-tury", -1),
-            ("rannee-bronirovanie", -1),
-        ),
-    )
-    assert result == 0
+    gauge_before = _staleness_gauge()
+    with pytest.raises(RuntimeError, match="all pairs failed"):
+        await sweep.static_tours_sweep(
+            sweep_matrix=(
+                ("gorjashhie-tury", -1),
+                ("rannee-bronirovanie", -1),
+            ),
+        )
     record_mock.assert_awaited_once()
     args = record_mock.await_args.kwargs
-    assert args["status"] == "partial"
+    assert args["status"] == "failed"
     assert "BreakerOpen" in args["error"]
+    assert _staleness_gauge() == gauge_before
+
+
+async def test_crashed_sweep_records_failed_and_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected crash mid-sweep must propagate (JOB_RUNS failure)
+    after recording a `failed` scrape_runs row."""
+    tours = [_row(hotel_key=1, system_key="sk-a")]
+
+    monkeypatch.setattr(sweep, "_farvater_operator_id", AsyncMock(return_value=42))
+    monkeypatch.setattr(sweep, "_resolve_hotel_ids", AsyncMock(return_value={1: 1001}))
+    monkeypatch.setattr(
+        sweep,
+        "_upsert_promo_offers",
+        AsyncMock(side_effect=RuntimeError("db exploded")),
+    )
+    record_mock = AsyncMock()
+    monkeypatch.setattr(sweep, "_record_sweep_run", record_mock)
+
+    class _NullSession:
+        async def __aenter__(self):
+            return MagicMock(commit=AsyncMock())
+
+        async def __aexit__(self, *_):
+            return None
+
+    monkeypatch.setattr(sweep, "async_session_factory", lambda: _NullSession())
+    monkeypatch.setattr(sweep, "get_redis", MagicMock(return_value=MagicMock()))
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+    monkeypatch.setattr(sweep, "FarvaterProdClient", lambda _r: _FakeClient())
+    monkeypatch.setattr(sweep, "fetch_bucket_all_pages", AsyncMock(return_value=tours))
+
+    gauge_before = _staleness_gauge()
+    with pytest.raises(RuntimeError, match="db exploded"):
+        await sweep.static_tours_sweep(
+            sweep_matrix=(("gorjashhie-tury", -1),),
+        )
+    record_mock.assert_awaited_once()
+    args = record_mock.await_args.kwargs
+    assert args["status"] == "failed"
+    assert "db exploded" in args["error"]
+    assert _staleness_gauge() == gauge_before
 
 
 async def test_one_bucket_429_continues_with_others(
@@ -279,6 +340,7 @@ async def test_one_bucket_429_continues_with_others(
 
     monkeypatch.setattr(sweep, "fetch_bucket_all_pages", AsyncMock(side_effect=_fetch))
 
+    gauge_before = _staleness_gauge()
     result = await sweep.static_tours_sweep(
         sweep_matrix=(
             ("gorjashhie-tury", -1),
@@ -290,3 +352,6 @@ async def test_one_bucket_429_continues_with_others(
     args = record_mock.await_args.kwargs
     assert args["status"] == "partial"
     assert "429" in args["error"]
+    # Partial runs must NOT refresh the staleness gauge — only fully
+    # successful sweeps count as "last successful snapshot".
+    assert _staleness_gauge() == gauge_before

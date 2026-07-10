@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
+import fakeredis
 import httpx
 import pytest
 
+from src.infra import job_lock
 from src.jobs import sitemap_long_tail as sl
 
 
@@ -60,12 +64,33 @@ def test_sitemap_ingest_defaults_match_operator_docs() -> None:
 @pytest.fixture(autouse=True)
 def _fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     """Collapse exponential backoff to zero — tests should run in ms not
-    minutes. The retry-count semantics still get exercised."""
+    minutes. The retry-count semantics still get exercised.
+
+    `sl.asyncio` IS the global asyncio module, so this patch reaches every
+    coroutine in the process — including job_lock's renewal loop. The
+    replacement must still yield to the event loop (real sleep(0)), or any
+    `while True: await sleep(...)` elsewhere becomes a loop that never
+    suspends and freezes the whole test at 100% CPU."""
+    real_sleep = asyncio.sleep
 
     async def _no_sleep(_seconds: float) -> None:
-        return None
+        await real_sleep(0)
 
     monkeypatch.setattr(sl.asyncio, "sleep", _no_sleep)
+
+
+@pytest.fixture(autouse=True)
+def _bypass_ingest_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main() takes the cross-run Redis lock before ingesting. Tests of
+    the ingest body shouldn't need Redis, so acquisition always succeeds
+    here; lock semantics are covered by test_job_lock.py and the
+    dedicated lock tests below (which re-patch this)."""
+
+    @asynccontextmanager
+    async def _held(*_args: object, **_kwargs: object) -> AsyncIterator[bool]:
+        yield True
+
+    monkeypatch.setattr(sl, "try_job_lock", _held)
 
 
 @pytest.fixture
@@ -210,6 +235,54 @@ async def test_record_started_at_is_set(
     started_at = args[3] if len(args) >= 4 else kwargs.get("started_at")
     assert started_at is not None
     assert before <= started_at <= after
+
+
+async def test_main_skips_gracefully_when_lock_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sibling job id (weekly / startup / daily fallback) holds the
+    lock → this invocation must no-op without touching farvater."""
+
+    @asynccontextmanager
+    async def _busy(*_args: object, **_kwargs: object) -> AsyncIterator[bool]:
+        yield False
+
+    monkeypatch.setattr(sl, "try_job_lock", _busy)
+    inner = AsyncMock()
+    monkeypatch.setattr(sl, "_main_locked", inner)
+
+    assert await sl.main(cap=None) == 0
+    inner.assert_not_awaited()
+
+
+async def test_concurrent_mains_are_mutually_exclusive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end over the real lock (fakeredis): while one main() is
+    mid-run, a second invocation skips; after release a new run proceeds."""
+    redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+    monkeypatch.setattr(job_lock, "get_redis", lambda: redis)
+    monkeypatch.setattr(sl, "try_job_lock", job_lock.try_job_lock)  # undo bypass
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _slow_ingest(_cap: int | None) -> int:
+        started.set()
+        await release.wait()
+        return 7
+
+    monkeypatch.setattr(sl, "_main_locked", _slow_ingest)
+
+    first = asyncio.create_task(sl.main(cap=None))
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert await sl.main(cap=None) == 0  # overlapping run skipped
+
+    release.set()
+    assert await asyncio.wait_for(first, timeout=1) == 7
+    # Lock released after the run — the next invocation ingests again.
+    assert await sl.main(cap=None) == 7
 
 
 def test_already_ingested_only_skips_completed_price_probes() -> None:

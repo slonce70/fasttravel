@@ -57,6 +57,18 @@ def get_redis_factory(redis_url: str) -> Callable[[], _Redis]:
                 # request for the default ~30s.
                 socket_connect_timeout=3,
                 socket_keepalive=True,
+                # Bound every reply read so a half-open connection raises
+                # TimeoutError instead of hanging the caller forever (kernel
+                # TCP keepalive alone takes ~2h to notice). Must stay above
+                # the longest blocking-command timeout routed through this
+                # client (scheduler refresh_worker BRPOP timeout=5s): redis-py
+                # applies socket_timeout to the whole BRPOP wait, so a smaller
+                # value would raise spuriously on every idle poll.
+                socket_timeout=10,
+                # Ping connections idle longer than this before reuse, so a
+                # dead pooled connection is replaced instead of failing the
+                # next real command.
+                health_check_interval=30,
             )
             _state["client"] = client
         return client

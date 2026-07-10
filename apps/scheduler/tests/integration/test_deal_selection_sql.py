@@ -104,12 +104,16 @@ async def _seed_deal(
     source: str | None = "farvater_scrape",
     age_hours: int = 1,
     suffix: str | None = None,
+    hotel_id: int | None = None,
+    operator_id: int | None = None,
+    check_in_days: int = 30,
 ) -> int:
-    hotel_id, operator_id, _ = await _seed_market(
-        session,
-        country_iso2=country_iso2,
-        suffix=suffix,
-    )
+    if hotel_id is None or operator_id is None:
+        hotel_id, operator_id, _ = await _seed_market(
+            session,
+            country_iso2=country_iso2,
+            suffix=suffix,
+        )
     deal_id = (
         await session.execute(
             text(
@@ -120,7 +124,8 @@ async def _seed_deal(
                     detected_at, source, detection_method
                 )
                 VALUES (
-                    :hotel_id, :operator_id, CURRENT_DATE + INTERVAL '30 days',
+                    :hotel_id, :operator_id,
+                    CURRENT_DATE + make_interval(days => :check_in_days),
                     7, 'AI', 32000, 39000, :discount_pct,
                     'https://example.test/deal',
                     NOW() - make_interval(hours => :age_hours),
@@ -132,6 +137,7 @@ async def _seed_deal(
             {
                 "hotel_id": hotel_id,
                 "operator_id": operator_id,
+                "check_in_days": check_in_days,
                 "discount_pct": discount_pct,
                 "age_hours": age_hours,
                 "source": source,

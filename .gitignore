@@ -88,3 +88,4 @@ apps/*/uv.lock
 _tmp_*
 apps/*/_tmp_*
 .superpowers/
+graphify-out/

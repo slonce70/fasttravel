@@ -84,6 +84,44 @@ async def test_insert_prices_keeps_room_category_in_conflict_key_and_payload() -
     assert payload[0]["dl"] == "https://farvater.travel/uk/hotel/eg/albatros/?q=2m-full-raw-c42"
 
 
+async def test_insert_prices_takes_per_hotel_advisory_lock_before_dedup_select() -> None:
+    db = _FakeSession()
+
+    await insert_prices(
+        db,
+        hotel_db_id=123,
+        operator_id=18,
+        hotel=_hotel(),
+        rows=[_price()],
+        country_iso2="EG",
+    )
+
+    # The xact advisory lock must be the first statement so concurrent writers
+    # serialize before the non-atomic 12h SELECT-then-INSERT dedup.
+    lock_sql, lock_params = db.calls[0]
+    assert "pg_advisory_xact_lock" in lock_sql
+    assert "hashtext" in lock_sql
+    assert lock_params == {"h": 123}
+    dedup_sql, _ = db.calls[1]
+    assert "SELECT check_in" in dedup_sql
+
+
+async def test_insert_prices_skips_advisory_lock_when_no_rows() -> None:
+    db = _FakeSession()
+
+    inserted = await insert_prices(
+        db,
+        hotel_db_id=123,
+        operator_id=18,
+        hotel=_hotel(),
+        rows=[],
+        country_iso2="EG",
+    )
+
+    assert inserted == 0
+    assert db.calls == []
+
+
 async def test_insert_prices_uses_room_category_when_filtering_recent_duplicates() -> None:
     class _DuplicateSession(_FakeSession):
         async def execute(self, sql, params=None):  # type: ignore[no-untyped-def]

@@ -1,14 +1,21 @@
 """Scheduler entrypoint — wires AsyncIOScheduler to all periodic jobs.
 
-Schedule (Europe/Kyiv):
+Schedule (Europe/Kyiv) — `_build_scheduler` below is the source of truth:
+- sitemap_long_tail_ingest  — weekly Sun 02:00 + daily 04:45 fallback
+                              (+ optional env-gated startup one-shot)
 - snapshot_catalog_farvater — 03:00 (P1-1: catalog HTML-only daily crawl)
+- decay_active_prices       — daily 04:00 (off-peak ladder)
+- refresh_baselines         — daily 04:15 (off-peak ladder)
+- cleanup_partitions        — daily 04:30 (off-peak ladder)
+- canary_farvater_schema    — daily 05:00
 - snapshot_farvater         — 06:00 / 18:00 (full catalog+price snapshot)
-- snapshot_hot              — hourly :30 (P1-3: top-N viewed → refresh queue)
+- post_cheapest_digest      — daily 08:00 (no-op unless env-enabled)
 - refresh_views             — hourly :05
 - detect_deals              — hourly :10
+- notify_subscribers        — hourly :15
+- static_tours_sweep        — every 2h at :20 (no-op unless env-enabled)
+- snapshot_hot              — hourly :30 (P1-3: top-N viewed → refresh queue)
 - post_deals                — every 15 min
-- cleanup_partitions        — daily at 03:00 (NB: shares slot with catalog;
-                              both are idempotent and partman is cheap)
 
 Plus a long-running async task:
 - refresh_worker_loop       — drains `refresh:queue` via BRPOP (P1-4)
