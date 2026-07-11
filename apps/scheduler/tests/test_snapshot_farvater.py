@@ -592,9 +592,9 @@ async def test_wall_clock_break_closes_later_chunk_coroutines(monkeypatch) -> No
         gc.collect()
 
     never_awaited = [w for w in caught if "never awaited" in str(w.message)]
-    assert (
-        not never_awaited
-    ), f"leaked un-awaited coroutines: {[str(w.message) for w in never_awaited]}"
+    assert not never_awaited, (
+        f"leaked un-awaited coroutines: {[str(w.message) for w in never_awaited]}"
+    )
 
     # The first chunk (200 targets) ran, returning 0 inserts; the run is
     # recorded as partial because the budget tripped before the last chunk.
