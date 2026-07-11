@@ -134,9 +134,7 @@ async def test_pause_all_alerts_pauses_active_and_writes_block(monkeypatch) -> N
     assert "is_active = true" in pause_stmt  # WHERE clause guard
 
     # The jsonb merge preserves other keys via `||`, recording paused ids + ISO until.
-    jsonb_stmt, jsonb_params = next(
-        c for c in session.calls if "CAST(:pause AS jsonb)" in c[0]
-    )
+    jsonb_stmt, jsonb_params = next(c for c in session.calls if "CAST(:pause AS jsonb)" in c[0])
     assert "filters_jsonb = filters_jsonb || CAST(:pause AS jsonb)" in jsonb_stmt
     import json as _json
 

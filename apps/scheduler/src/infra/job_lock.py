@@ -32,9 +32,7 @@ log = get_logger(__name__)
 DEFAULT_TTL_S = 15 * 60
 
 
-async def _renew_periodically(
-    redis: Any, key: str, token: str, ttl_s: int, every_s: float
-) -> None:
+async def _renew_periodically(redis: Any, key: str, token: str, ttl_s: int, every_s: float) -> None:
     """Re-arm the lock TTL while the holder is still running.
 
     GET-then-EXPIRE is not atomic, but the race window (key expires and is

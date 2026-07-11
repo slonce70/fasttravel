@@ -394,7 +394,9 @@ async def snapshot_farvater(
         # exception type plus a few samples, so a mass DB-write failure is
         # diagnosable from logs (HTTP-path failures are already logged by
         # the clients, but write-path exceptions surface only here).
-        hotel_error_rate = hotel_task_errors / hotel_tasks_attempted if hotel_tasks_attempted else 0.0
+        hotel_error_rate = (
+            hotel_task_errors / hotel_tasks_attempted if hotel_tasks_attempted else 0.0
+        )
         if hotel_task_errors:
             log.warning(
                 "farvater.snapshot.hotel_task_errors",
@@ -456,9 +458,7 @@ async def snapshot_farvater(
         if hotel_task_errors:
             # Recorded even on threshold-tolerated 'success' runs so
             # dashboards keep seeing the error count.
-            run_errors.append(
-                f"hotel_task_errors={hotel_task_errors} (sample: {error_samples[0]})"
-            )
+            run_errors.append(f"hotel_task_errors={hotel_task_errors} (sample: {error_samples[0]})")
         run_error = "; ".join(run_errors)
         async with async_session_factory() as db:
             await _record_run(

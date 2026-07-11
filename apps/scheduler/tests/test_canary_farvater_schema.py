@@ -175,7 +175,7 @@ async def test_probe_static_tours_fetch_failure_increments_drift_counter() -> No
     client.post_json = AsyncMock(side_effect=RuntimeError("cloudflare 403"))
 
     before = _drift_counter("static_tours", "fetch_failed")
-    ok, missing = await canary._probe_static_tours(client)
+    ok, _missing = await canary._probe_static_tours(client)
 
     assert not ok
     assert _drift_counter("static_tours", "fetch_failed") == before + 1
@@ -217,9 +217,7 @@ async def test_canary_internal_error_increments_drift_counter(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(canary, "_record_run", AsyncMock())
-    monkeypatch.setattr(
-        canary, "get_redis", MagicMock(side_effect=RuntimeError("redis down"))
-    )
+    monkeypatch.setattr(canary, "get_redis", MagicMock(side_effect=RuntimeError("redis down")))
 
     before = _drift_counter("all", "internal_error")
     result = await canary.canary_farvater_schema()

@@ -434,9 +434,7 @@ async def test_snapshot_below_error_threshold_stays_success_and_stamps_gauge(
         return 18
 
     async def fake_refresh_targets(_db, _iso_filter, _max_per_country):  # type: ignore[no-untyped-def]
-        return [
-            (f"/uk/hotel/tr/hotel-{n}/", "TR", 100 + n, str(45000 + n)) for n in range(40)
-        ]
+        return [(f"/uk/hotel/tr/hotel-{n}/", "TR", 100 + n, str(45000 + n)) for n in range(40)]
 
     async def fake_country_dest_id(_db, _iso2):  # type: ignore[no-untyped-def]
         return 7
@@ -594,9 +592,9 @@ async def test_wall_clock_break_closes_later_chunk_coroutines(monkeypatch) -> No
         gc.collect()
 
     never_awaited = [w for w in caught if "never awaited" in str(w.message)]
-    assert not never_awaited, (
-        f"leaked un-awaited coroutines: {[str(w.message) for w in never_awaited]}"
-    )
+    assert (
+        not never_awaited
+    ), f"leaked un-awaited coroutines: {[str(w.message) for w in never_awaited]}"
 
     # The first chunk (200 targets) ran, returning 0 inserts; the run is
     # recorded as partial because the budget tripped before the last chunk.

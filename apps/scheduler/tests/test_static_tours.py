@@ -51,9 +51,9 @@ def test_parse_extracts_all_rows_from_cassette(cassette: dict) -> None:
     of them since they came from the live endpoint and passed
     validation upstream."""
     page = parse_response(cassette, bucket_slug="gorjashhie-tury")
-    assert len(page.tours) >= 45, (
-        f"expected ~50 tours from gorjashhie-tury cassette, got {len(page.tours)}"
-    )
+    assert (
+        len(page.tours) >= 45
+    ), f"expected ~50 tours from gorjashhie-tury cassette, got {len(page.tours)}"
 
 
 def test_parse_first_row_matches_har_snapshot(cassette: dict) -> None:
