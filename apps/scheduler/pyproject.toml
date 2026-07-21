@@ -27,7 +27,7 @@ redis = "^5.2.0"
 # in both processes and must see identical aiogram surface to avoid
 # subtle behavior drift (e.g. MarkdownV2 escaping changes, NotAppKey
 # warnings differing per minor version).
-aiogram = "3.29.1"
+aiogram = "3.30.0"
 aiohttp = "^3.13.5"
 # httpx (with HTTP/2) — outbound calls to farvater.travel from snapshot_farvater.py
 httpx = {extras = ["http2"], version = ">=0.27.2,<0.29.0"}
