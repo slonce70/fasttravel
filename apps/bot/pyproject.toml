@@ -18,7 +18,7 @@ python = ">=3.12,<3.15"
 # Hard-pin so the bot and scheduler that share apps/shared/publishers/
 # resolve identical aiogram surface (prevents subtle MarkdownV2 /
 # DefaultBotProperties drift between processes).
-aiogram = "3.29.1"
+aiogram = "3.30.0"
 aiohttp = "^3.13.5"
 structlog = ">=24.4,<27.0"
 pydantic = "^2.9.2"
